@@ -1,27 +1,24 @@
-import torch, os, dropbox  #pip install dropbox
-from dropbox import DropboxOAuth2FlowNoRedirect
-import pandas as pd
-# import torch.optim as optim
+# External libraries
+import os  
+import torch
 import argparse
-from io import StringIO
-import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.image import MIMEImage
-import inspect, re
+import subprocess
 import numpy as np
 import matplotlib.pyplot as plt
-import torch.distributed as dist
-import subprocess
+import pandas as pd
 import torch.optim as optim
-
+import torch.distributed as dist
+import torchvision.datasets as datasets
+from torch.utils.data import DataLoader
+# User libraries
 from optimizers.TR import TR
 from optimizers.APTS_D import APTS_D
-from optimizers.APTS import APTS_W
+from optimizers.APTS_W import APTS_W
 from models.neural_networks import *
+from data_loaders.Power_DL import *
+from data_loaders.OverlappingDistributedSampler import *
 
-# from ray import tune
-APP_KEY = "f7x2e6fz94aotms"
-APP_SECRET = "44t6i4cth6fooag"
+
 
 
 def flatten_tensor(tensor):
@@ -49,6 +46,162 @@ def average_gradients(model):
         param.grad.data /= size
 
 
+def compute_accuracy(data_loader, net, device=torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")):
+    with torch.no_grad():
+        correct = 0
+        total = 0
+        for inputs, labels in data_loader:
+            inputs, labels = inputs.to(device), labels.to(device)
+
+            outputs = net(inputs)
+            _, predicted = torch.max(outputs.data, 1)
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
+
+    # Reduce accuracy across all processes
+    if dist.is_initialized() and dist.get_world_size() > 1:
+        correct = torch.tensor(correct, device=device)
+        total = torch.tensor(total, device=device)
+        dist.all_reduce(correct)
+        dist.all_reduce(total)
+        correct = correct.cpu().item()
+        total = total.cpu().item()
+
+    accuracy = 100 * correct / total
+    return accuracy
+
+
+def compute_loss(data_loader, net, criterion, device=torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")):
+    with torch.no_grad():
+        loss = 0
+        count = 0
+        for inputs, labels in data_loader:
+            inputs, labels = inputs.to(device), labels.to(device)
+            outputs = net(inputs)  # Forward pass
+            loss += criterion(outputs, labels)  # Compute the loss
+            count += 1
+
+        # Reduce loss across all processes
+        if dist.is_initialized() and dist.get_world_size() > 1:
+            count = torch.tensor(count, device=device)
+            dist.all_reduce(loss)
+            dist.all_reduce(count)
+            # Not doing loss=loss.item() since it's done afterwards in line 171
+            count = count.cpu().item()
+
+        return loss.cpu().item() / count
+
+
+
+
+def do_one_optimizer_test(self, train_loader, test_loader, optimizer, net, num_epochs, criterion, desired_accuracy=100, device=torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")):
+    for epoch in range(0, num_epochs + 1):
+        epoch_train_loss = 0
+        count = 0
+        # Compute epoch train loss and train time, and test accuracy
+        for _, (inputs, labels) in enumerate(train_loader):
+            inputs, labels = inputs.to(device), labels.to(device)
+
+            if "TR" in optimizer.__class__.__name__:
+                def closure():
+                    optimizer.zero_grad()
+                    outputs = net(inputs)
+                    loss = criterion(outputs, labels)
+                    if torch.is_grad_enabled():
+                        loss.backward()
+                    if dist.is_initialized() and dist.get_world_size() > 1:
+                        # Global loss
+                        dist.all_reduce(loss, op=dist.ReduceOp.SUM)
+                        loss /= dist.get_world_size()
+                        average_gradients(net)
+                    return loss  
+            else:
+                def closure():
+                    # Zero the parameter gradients
+                    optimizer.zero_grad()
+                    # Forward + backward + optimize
+                    outputs = net(inputs)
+                    train_loss = criterion(outputs, labels)
+                    if torch.is_grad_enabled():
+                        train_loss.backward()
+                        if dist.is_initialized() and dist.get_world_size() > 1:
+                            # TODO: add all losses together?
+                            # Average gradients in case we are using more than one CUDA device
+                            average_gradients(net) 
+                    return train_loss              
+
+            if epoch == 0:
+                with torch.no_grad():
+                    train_loss = self.__compute_loss(data_loader=train_loader, net=net, criterion=criterion)
+            else:
+                if 'APTS' in str(optimizer) and 'W' in str(optimizer):
+                    train_loss = optimizer.step(inputs, labels)[0]
+                elif 'APTS' in str(optimizer) and 'D' in str(optimizer):
+                    train_loss = optimizer.step(inputs, labels)
+                else:
+                    train_loss = optimizer.step(closure)
+                    if type(train_loss) is list or type(train_loss) is tuple:
+                        train_loss = train_loss[0]
+                if 'torch' in str(type(train_loss)):
+                    train_loss = train_loss.cpu().detach().item()
+
+            epoch_train_loss += train_loss
+            count += 1
+
+        test_accuracy = self.__compute_accuracy(data_loader=test_loader, net=net)
+        # Check if test accuracy meets desired accuracy. If so, break training loop.
+        if test_accuracy >= desired_accuracy:
+            break
+
+    return epoch_train_loss/count, test_accuracy
+
+
+def load_data(dataset="mnist", data_dir=os.path.abspath("./data"), TOT_SAMPLES=False):
+    '''
+    Loads the dataset. Modify this code if you want to add more datasets.
+    '''
+    if dataset.lower() == 'mnist':
+        if TOT_SAMPLES is False:
+            train_set = datasets.MNIST(root=data_dir, train=True, transform=transforms.ToTensor(), download=True)
+            test_set = datasets.MNIST(root=data_dir, train=False, transform=transforms.ToTensor(), download=True)
+        else:
+            return 60000
+    elif dataset.lower() == 'cifar10':
+        if TOT_SAMPLES is False:
+            train_set = datasets.CIFAR10(root=data_dir, train=True, transform=transforms.ToTensor(), download=True)
+            test_set = datasets.CIFAR10(root=data_dir, train=False, transform=transforms.ToTensor(), download=True)
+        else:
+            return 50000
+    else:
+        raise ValueError('Unsupported dataset. Currently supported datasets are: MNIST, CIFAR10')
+
+    return train_set, test_set
+
+
+ # Get train and test loaders
+def create_dataloaders(dataset="mnist", data_dir=os.path.abspath("./data"), mb_size=100, overlap_ratio=0, sequential=True):
+    train_set, test_set = load_data(dataset=dataset, data_dir=data_dir)
+    mb_size = min(len(train_set), int(mb_size))
+    mb_size2 = min(len(test_set), int(mb_size))
+
+    if sequential:
+        train_loader = Power_DL(dataset=train_set, shuffle=True, device=device, minibatch_size=mb_size, overlapping_samples=overlap_ratio)
+        test_loader = Power_DL(dataset=test_set, shuffle=False, device=device, minibatch_size=mb_size2)
+    else:
+        world_size = world_size = dist.get_world_size() if dist.is_initialized() else 1
+        overlapping_samples = int(overlap_ratio * mb_size)
+        local_batch_size = int(mb_size/world_size + overlapping_samples*(world_size - 1)/2)
+        local_test_batch_size = int(mb_size/world_size + overlapping_samples*(world_size - 1)/2)
+
+        train_sampler = OverlappingDistributedSampler(train_set, num_replicas=world_size, shuffle=True, overlapping_samples=overlapping_samples)
+        test_sampler = OverlappingDistributedSampler(test_set, num_replicas=world_size, shuffle=False, overlapping_samples=overlapping_samples)
+
+        train_loader = DataLoader(train_set, batch_size=local_batch_size, sampler=train_sampler, drop_last=False)
+        test_loader = DataLoader(test_set, batch_size=local_test_batch_size, sampler=test_sampler, drop_last=False)
+    
+    return train_loader, test_loader
+
+
 
 def get_optimizer_fun(optimizer_name, op=None):
     if optimizer_name == "SGD":
@@ -61,8 +214,6 @@ def get_optimizer_fun(optimizer_name, op=None):
         return TR
     elif "APTS" in optimizer_name and 'D' in optimizer_name and not '2' in optimizer_name:
         return APTS_D
-    elif "APTS" in optimizer_name and 'D' in optimizer_name and '2' in optimizer_name:
-        return APTS_D_2
     elif "APTS" in optimizer_name and 'W' in optimizer_name:
         return APTS_W
     else:
@@ -98,9 +249,6 @@ def get_net_fun_and_params(dataset, net_nr):
         elif net_nr == 4:
             net = SmallResNet
             net_params = {}
-    # else:
-    #     net_params = {'hidden_sizes':[32, 32], 'input_size': 50, 'output_size': 50}
-    #     net = NetSine
 
     return net, net_params
 
@@ -118,7 +266,7 @@ def prepare_distributed_environment():
     device_id = 0
     if cuda:
         try:
-            # Cluster
+            ## Execute code on a cluster
             os.environ["MASTER_PORT"] = "29501"
             os.environ["WORLD_SIZE"] = os.environ["SLURM_NNODES"]
             os.environ["LOCAL_RANK"] = "0"
@@ -133,6 +281,7 @@ def prepare_distributed_environment():
             device_id = dist.get_rank()
             print(f"Device id: {device_id}")
         except:
+            ## Execute code on a single machine (with one or more GPUs)
             # Or the IP address/hostname of the master node
             os.environ['MASTER_ADDR'] = 'localhost'
             # A free port on the master node
@@ -141,9 +290,7 @@ def prepare_distributed_environment():
             os.environ['WORLD_SIZE'] = str(device_count)
             # The unique identifier for this process (0-indexed)
             os.environ['RANK'] = '0'
-            os.environ["PL_TORCH_DISTRIBUTED_BACKEND"] = "nccl"
-            # dist.init_process_group(backend='gloo') #nccl not worning on home pc
-
+            os.environ["PL_TORCH_DISTRIBUTED_BACKEND"] = "nccl" # or "gloo"
 
 
 # Collect command-line arguments
@@ -153,11 +300,11 @@ def parse_args():
     # Training parameters
     parser.add_argument('--epochs', type=int, default=2, help='Number of epochs.')
     parser.add_argument('--trials', type=int, default=2, help='Number of experiment trials.')
-    parser.add_argument('--net_nr', type=int, default=3, help="Model number (NOT number of models).")
-    parser.add_argument('--dataset', type=str, default="CIFAR10", help='Dataset name. Currently, MNIST and CIFAR10 are supported.')
-    parser.add_argument('--minibatch_size', type=int, default=50000, help='Batch size for training (default 100).')
+    parser.add_argument('--net_nr', type=int, default=0, help="Model number (NOT number of models).")
+    parser.add_argument('--dataset', type=str, default="MNIST", help='Dataset name. Currently, MNIST and CIFAR10 are supported.')
+    parser.add_argument('--minibatch_size', type=int, default=60000, help='Batch size for training (default 100).')
     parser.add_argument('--overlap_ratio', type=float, default=0, help='Overlap ratio for minibatches.')
-    parser.add_argument('--optimizer_name', type=str, default="Adam", help="Main optimizer to be used.")
+    parser.add_argument('--optimizer_name', type=str, default="APTS_W", help="Main optimizer to be used.")
     # Generic optimizer parameters
     parser.add_argument('--lr', type=float, default=0.01, help='Learning rate.')
     parser.add_argument('--momentum', type=float, default=0, help="Momentum value for SGD optimizer/momentum (True, False) for TR/APTS.")
@@ -412,8 +559,6 @@ def get_optimizer_params(args):
     return dict(sorted(optimizer_params.items()))
 
 
-
-
 def get_ignore_params(optimizer_name):
     ignore_params = ["params"] # this is the case for all optimizers
     if "APTS" in optimizer_name or "TR" in optimizer_name:
@@ -423,178 +568,3 @@ def get_ignore_params(optimizer_name):
         ignore_params.append("loss_fn")
         
     return ignore_params
-
-
-def dropbox_save(FILE_PATH, Folder_Name=''):
-    raise ValueError('Not working')
-    # FILE_PATH = 'path/to/file.ext' # Path to the file you want to upload
-    if '\\' in FILE_PATH:
-        name = FILE_PATH.split('\\')[-1]
-    else: # '/'
-        name = FILE_PATH.split('/')[-1]
-    if Folder_Name=='':
-        DESTINATION_PATH = '/ML2_Results/' + name  # Destination path in your Dropbox
-    else:
-        DESTINATION_PATH = '/ML2_Results/' + Folder_Name + '/' + name  # Destination path in your Dropbox
-    dbx = dropbox.Dropbox(ACCESS_TOKEN)
-    try:
-        with open(FILE_PATH, 'rb') as file:
-            dbx.files_upload(file.read(), DESTINATION_PATH, mode=dropbox.files.WriteMode.overwrite)
-    except:
-        print(f"Unable to save file {FILE_PATH}.")
-        return False
-
-
-def dropbox_load(FILE_NAME,Folder_Name=''):
-    raise ValueError('Not working')
-    FILE_NAME=FILE_NAME.split('\\')[-1]
-    FILE_NAME=FILE_NAME.split('/')[-1]
-    # FILE_PATH = 'path/to/file.ext' # Path to the file you want to upload
-    if Folder_Name=='':
-        FILE_PATH = '/ML2_Results/' + FILE_NAME  # Destination path in your Dropbox
-    else:
-        FILE_PATH = '/ML2_Results/' + Folder_Name + '/' + FILE_NAME  # Destination path in your Dropbox
-    ext=FILE_NAME.split('.')[-1]
-    dbx = dropbox.Dropbox(ACCESS_TOKEN)
-    try:
-        metadata, response = dbx.files_download(FILE_PATH)
-        content = response.content.decode('utf-8')
-        if FILE_NAME.endswith('.csv'):
-            return pd.read_csv(StringIO(content))
-        else:
-            # Handle other file types if needed
-            return content
-    except dropbox.exceptions.HttpError as err:
-        if err.error.is_path() and \
-            err.error.get_path().is_not_found():
-            print('File does not exist')
-        else:
-            print('An error occurred:', err)
-    except Exception as e:
-        print('An error occurred:', e)
-
-
-def dropbox_file_exists(FILE_NAME,Folder_Name=''):
-    raise ValueError('Not working')
-    # FILE_PATH = 'path/to/file.ext' # Path to the file you want to upload
-    if '\\' in FILE_NAME:
-        FILE_NAME = FILE_NAME.split('\\')[-1]
-    else: # '/'
-        FILE_NAME = FILE_NAME.split('/')[-1]
-
-    if Folder_Name=='':
-        FILE_PATH = '/ML2_Results/' + FILE_NAME  # Destination path in your Dropbox
-    else:
-        FILE_PATH = '/ML2_Results/' + Folder_Name + '/' + FILE_NAME  # Destination path in your Dropbox
-    # auth_flow = DropboxOAuth2FlowNoRedirect(APP_KEY, APP_SECRET)
-    # oauth_result = auth_flow.finish('ssu1p6imXC8AAAAAAAArECvWkvPQMl8dVSFm8WmuB8A')
-    # with dropbox.Dropbox(oauth2_access_token=oauth_result.access_token) as dbx:
-    dbx2 = dropbox.Dropbox('sl.BfhTM7BWpYBKki0VCxgENM4emk8ckkkEbTAq5DefG8ZDy35r2HhFO_cnEiRt_5VPufQfZd4TsVDx2DjP-ZhlSNlbtKvdMADLJX7sMSZ7fBfnivkK8imsIi62y4wz24qE-ejRGSA')
-    try:
-        metadata, response = dbx.files_download(FILE_PATH)
-        return True
-    except:
-        return False  
-
-
-def Email_sender(OBJ):
-    Gmail_Account={'Username': 'grodt.prj@gmail.com', 'Password': 'dusskqzgvvrnsong'}
-    server = smtplib.SMTP('smtp.gmail.com', 587)
-    server.starttls()
-    server.login(Gmail_Account['Username'], Gmail_Account['Password']) 
-    for Er in ['samuel.adolfo.cruz.alegria@usi.ch', 'ken13889@msn.com']:
-        message = f"Subject: {OBJ}\nFrom: {Gmail_Account['Username']}\nTo: {Er}\n\n"
-        server.sendmail(Gmail_Account['Username'], Er, message)
-    server.quit()
-
-
-
-def get_string_from_class(obj):
-    class_obj = obj.__class__
-    
-    # Get the source code
-    source_code = inspect.getsource(class_obj)
-    
-    # Remove single line comments
-    source_code = re.sub(r"#.*$", "", source_code, flags=re.MULTILINE)
-    
-    # Remove multiline comments
-    source_code = re.sub(r'""".*?"""', '', source_code, flags=re.DOTALL)
-    source_code = re.sub(r"'''.*?'''", '', source_code, flags=re.DOTALL)
-    source_code = '\n'.join([line for line in source_code.split('\n') if line.strip() != ''])
-    return source_code
-    
-def InteractivePlot(legend):
-    # Create the plot
-    # legend = plt.legend(loc='best', shadow=True)
-    # Set interactive mode on
-    plt.ion()
-    def on_legend_click(event):
-        # Get the text associated with the event
-        print(event)
-        text = event.artist
-        # Get the label of the clicked text
-        label = text.get_text()
-        # Find the line associated with the label
-        lines = plt.gca().get_lines()
-        for line in lines:
-            if line.get_label() == label:
-                # Toggle the visibility of the line
-                line.set_visible(not line.get_visible())
-                break
-        plt.draw()
-    # Connect the click event handler to the legend texts
-    for text in legend.get_texts():
-        text.set_picker(True)
-    plt.gcf().canvas.mpl_connect('pick_event', on_legend_click)
-    plt.show()
-
-
-def InteractivePlot2(legend, ax):
-    # Set interactive mode on
-    plt.ion()
-    lines_dict = {}
-
-    def on_legend_click(event):
-        # Get the text associated with the event
-        text = event.artist
-        # Get the label of the clicked text
-        label = text.get_text()
-        # Get the lines associated with the label
-        lines = lines_dict[label]
-        # Toggle the visibility of each line
-        for line in lines:
-            line.set_visible(not line.get_visible())
-        plt.draw()
-
-    # Connect the click event handler to the legend texts
-    for text in legend.get_texts():
-        text.set_picker(True)
-
-    # Populate lines_dict for each label and its associated lines
-    for axis in ax:  # Loop through both axes
-        for line in axis.get_lines():
-            label = line.get_label()
-            if label not in lines_dict:
-                lines_dict[label] = []
-            lines_dict[label].append(line)
-
-    plt.gcf().canvas.mpl_connect('pick_event', on_legend_click)
-    plt.show()
-
-
-# if __name__ == '__main__':
-#     Email_sender('Test','asd',Attached_Fig=[])
-# def main():
-#     # FILE_PATH='G:\\.shortcut-targets-by-id\\1S1Znw8az1dTTW6dO8Ksdp9j5avi6DX7L\\ML_Project\\MultiscAI\ML2\\results\\mega_test_results_CIFAR10.csv'
-#     # dropbox_save(FILE_PATH,Folder_Name='ciao')
-
-#     FILE_NAME='mega_test_results_CIFAR10.csv'
-#     df=dropbox_load(FILE_NAME,Folder_Name='')
-#     print('File uploaded successfully.')
-
-#     print(dropbox_file_exists(FILE_NAME,Folder_Name=''))
-
-# if __name__ == '__main__':
-#     main()
-

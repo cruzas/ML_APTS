@@ -1,42 +1,31 @@
 # External libraries
-import torch
-import torch.nn as nn
 import pprint
 
 # User libraries
 from utils.utility import *
-from utils.Power_Dataframe_SAM import *
 
 
 def main():
-    # Parse arguments from command line
-    args = parse_args()
-
-    if not dist.is_initialized() or (dist.is_initialized() and dist.get_rank() == 0):
-        # Convert the args namespace to a dictionary
-        args_dict = vars(args)
-        # Pretty print the dictionary
-        pprint.pprint(f"Printing all args...")
-        # Print each key value pair in args one by one
-        for key, value in args_dict.items():
-            print(f"{key}: {value}")
-        print(f"Printing all args...done.")
-
-    # Set environment (in case we are doing distributed training).
-    # If not distributed, the function will do nothing.
+    # Set up the distributed environment.
     prepare_distributed_environment()
-
-    # Device
-    device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-    # device = torch.device('cuda')
-    args.device = device
-    # Number of processes in the environment (in case executing in parallel)
-    if dist.is_initialized() and "APTS" in args.optimizer_name and "D" in args.optimizer_name:
-        if args.nr_models != dist.get_world_size():
-            raise ValueError(f"Number of models ({args.nr_models}) is different from the number of processes ({dist.get_world_size()}).")
     # Rank ID
     rank = dist.get_rank() if dist.is_initialized() else 0
-    # args.rank = rank
+    sequential = (
+        True if (dist.is_initialized() and dist.get_world_size() == 1) else False
+    )
+
+    use_default_args = input("Do you want to use the default arguments? (y/n): ")
+    if use_default_args == "y":
+        # NOTE: This will set the arguments to the default ones.
+        args = parse_args()
+    else:
+        print("To be implemented.")
+        exit(0)
+
+    # Device
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    args.device = device
+    args.nr_models = dist.get_world_size() if dist.is_initialized() else args.nr_models
 
     # Training settings
     trials = args.trials  # number of trials
@@ -46,72 +35,41 @@ def main():
     minibatch_size = args.minibatch_size  # size of the mini-batches
     overlap_ratio = args.overlap_ratio  # overlap ratio between mini-batches
     optimizer_name = args.optimizer_name  # name of the optimizer
-
     if "MNIST" in dataset or "CIFAR" in dataset:
         loss_function = nn.CrossEntropyLoss()
-        regression = False
-    else:
-        loss_function = nn.MSELoss()
-        regression = True
-
     args.loss_fn = loss_function
     optimizer_params = get_optimizer_params(args)
-    if not dist.is_initialized() or (dist.is_initialized() and dist.get_rank() == 0):
-        print(f"Printing optimizer params...")
-        for key, value in optimizer_params.items():
-            print(f"{key}: {value}")
-        print(f"Printing optimizer params...done.")
-
     opt_fun = get_optimizer_fun(optimizer_name)
+    net_fun, net_params = get_net_fun_and_params(dataset, net_nr)
 
-    net_fun, net_params = get_net_fun_and_params(dataset, net_nr) # TODO: should we also send the network to device?
-    ignore_optimizer_params = get_ignore_params(args.optimizer_name)
-    
-    # Replace the ".db" in db_path with f"_{args.counter}.db"
-    args.db_path = args.db_path.replace(".db", f"_{args.counter}.db")
+    optimizer = opt_fun(**optimizer_params)
+    network = net_fun(**net_params).to(device)
 
-    pdf = Power_Dataframe(results_filename=args.db_path, sequential=True, regression=regression)
-    df = pdf.get(
+    # Data loading
+    train_loader, test_loader = create_dataloaders(
         dataset=dataset,
+        data_dir=os.path.abspath("./data"),
         mb_size=minibatch_size,
-        opt_fun=opt_fun,
-        optimizer_params=optimizer_params,
-        ignore_optimizer_params=ignore_optimizer_params,
-        network_fun=net_fun,
-        network_params=net_params,
-        loss_function=loss_function,
-        trials=trials,
-        epochs=epochs,
-        pretraining_status=0,
-        overlap_ratio=overlap_ratio
+        overlap_ratio=overlap_ratio,
+        sequential=sequential,
     )
 
-    pdf.plot(dataset=dataset,
-             mb_size=minibatch_size,
-             opt_fun=opt_fun,
-             optimizer_params=optimizer_params,
-             network_fun=net_fun,
-             loss_fun=loss_function,
-             ignore_optimizer_params=ignore_optimizer_params,
-             loss_params={},
-             network_params={},
-             overlap_ratio=overlap_ratio,
-             trials=args.trials,
-             epochs=args.epochs,
-             pretraining_status=0,
-             mode="mean",
-             SAVE=False,
-             OPT_NAME=None,
-             text_size=14,
-             legend_text_size=14,
-             title_text_size=14,
-             linewidth=2,
-             show_variance=False,
-             plot_type=[['loss']],
-             IGNORED_FIELDS=["loss_class_str"])
+    # Training loop
+    for trial in range(trials):
+        loss, accuracy = do_one_optimizer_test(
+            train_loader,
+            test_loader,
+            optimizer,
+            net=network,
+            num_epochs=epochs,
+            criterion=loss_function,
+            desired_accuracy=100,
+            device=device,
+        )
 
-    print("Done")
-
+        print(
+            f"Trial {trial + 1}/{trials} finished. Loss: {loss:.4f}, Accuracy: {accuracy:.4f}"
+        )
 
 if __name__ == "__main__":
     main()
