@@ -5,7 +5,7 @@ import argparse
 import subprocess
 import numpy as np
 import matplotlib.pyplot as plt
-import pandas as pd
+# import pandas as pd
 import torch.optim as optim
 import torch.distributed as dist
 import torchvision.datasets as datasets
@@ -94,7 +94,7 @@ def compute_loss(data_loader, net, criterion, device=torch.device("cuda") if tor
 
 
 
-def do_one_optimizer_test(self, train_loader, test_loader, optimizer, net, num_epochs, criterion, desired_accuracy=100, device=torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")):
+def do_one_optimizer_test(train_loader, test_loader, optimizer, net, num_epochs, criterion, desired_accuracy=100, device=torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")):
     for epoch in range(0, num_epochs + 1):
         epoch_train_loss = 0
         count = 0
@@ -132,7 +132,7 @@ def do_one_optimizer_test(self, train_loader, test_loader, optimizer, net, num_e
 
             if epoch == 0:
                 with torch.no_grad():
-                    train_loss = self.__compute_loss(data_loader=train_loader, net=net, criterion=criterion)
+                    train_loss = compute_loss(data_loader=train_loader, net=net, criterion=criterion)
             else:
                 if 'APTS' in str(optimizer) and 'W' in str(optimizer):
                     train_loss = optimizer.step(inputs, labels)[0]
@@ -148,7 +148,7 @@ def do_one_optimizer_test(self, train_loader, test_loader, optimizer, net, num_e
             epoch_train_loss += train_loss
             count += 1
 
-        test_accuracy = self.__compute_accuracy(data_loader=test_loader, net=net)
+        test_accuracy = compute_accuracy(data_loader=test_loader, net=net)
         # Check if test accuracy meets desired accuracy. If so, break training loop.
         if test_accuracy >= desired_accuracy:
             break
@@ -179,7 +179,7 @@ def load_data(dataset="mnist", data_dir=os.path.abspath("./data"), TOT_SAMPLES=F
 
 
  # Get train and test loaders
-def create_dataloaders(dataset="mnist", data_dir=os.path.abspath("./data"), mb_size=100, overlap_ratio=0, sequential=True):
+def create_dataloaders(dataset="mnist", data_dir=os.path.abspath("./data"), mb_size=100, overlap_ratio=0, sequential=True, device=torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")):
     train_set, test_set = load_data(dataset=dataset, data_dir=data_dir)
     mb_size = min(len(train_set), int(mb_size))
     mb_size2 = min(len(test_set), int(mb_size))
@@ -531,6 +531,8 @@ def get_optimizer_params(args):
         optimizer_params['max_iter'] = args.max_iter
         optimizer_params['global_pass'] = args.global_pass
         optimizer_params['nr_models'] = args.nr_models
+        optimizer_params['model'] = args.model
+        optimizer_params['loss_fn'] = args.loss_fn
 
         optimizer_params['global_opt_params'] = {
             'radius': args.radius,
