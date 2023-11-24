@@ -1,13 +1,13 @@
 import torch
 from torch.optim.optimizer import Optimizer
 import torch.distributed as dist # For parallel training
-from scipy.optimize import minimize_scalar
+# from scipy.optimize import minimize_scalar
 import numpy as np
 import time
-from scipy.optimize._hessian_update_strategy import BFGS, SR1
+# from scipy.optimize._hessian_update_strategy import BFGS, SR1
 from optimizers.Hessian_approx import *
 from hess_approx.LSR1 import *
-from hess_approx.LBGS import *
+# from hess_approx.LBGS import *
 
 
 
