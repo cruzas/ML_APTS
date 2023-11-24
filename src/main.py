@@ -27,6 +27,7 @@ def main():
     optimizer_name = args.optimizer_name  # name of the optimizer
     loss_function = nn.CrossEntropyLoss()
     args.loss_fn = loss_function
+
     
     net_fun, net_params = get_net_fun_and_params(dataset, net_nr)
     network = net_fun(**net_params).to(device)
@@ -69,3 +70,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    print('done')
