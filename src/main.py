@@ -10,17 +10,7 @@ def main():
     prepare_distributed_environment()
     # Rank ID
     rank = dist.get_rank() if dist.is_initialized() else 0
-    sequential = (
-        True if (dist.is_initialized() and dist.get_world_size() == 1) else False
-    )
-
-    use_default_args = input("Do you want to use the default arguments? (y/n): ")
-    if use_default_args == "y":
-        # NOTE: This will set the arguments to the default ones.
-        args = parse_args()
-    else:
-        print("To be implemented.")
-        exit(0)
+    args = parse_args()
 
     # Device
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
@@ -35,15 +25,21 @@ def main():
     minibatch_size = args.minibatch_size  # size of the mini-batches
     overlap_ratio = args.overlap_ratio  # overlap ratio between mini-batches
     optimizer_name = args.optimizer_name  # name of the optimizer
-    if "MNIST" in dataset or "CIFAR" in dataset:
-        loss_function = nn.CrossEntropyLoss()
+    loss_function = nn.CrossEntropyLoss()
     args.loss_fn = loss_function
+    
+    net_fun, net_params = get_net_fun_and_params(dataset, net_nr)
+    network = net_fun(**net_params).to(device)
+    args.model = network
+
     optimizer_params = get_optimizer_params(args)
     opt_fun = get_optimizer_fun(optimizer_name)
-    net_fun, net_params = get_net_fun_and_params(dataset, net_nr)
 
-    optimizer = opt_fun(**optimizer_params)
-    network = net_fun(**net_params).to(device)
+    if optimizer_name == "APTS_W":
+        optimizer = opt_fun(network.parameters(), **optimizer_params)
+    else:
+        optimizer = opt_fun(network.parameters(), **optimizer_params)
+
 
     # Data loading
     train_loader, test_loader = create_dataloaders(
@@ -51,15 +47,15 @@ def main():
         data_dir=os.path.abspath("./data"),
         mb_size=minibatch_size,
         overlap_ratio=overlap_ratio,
-        sequential=sequential,
+        sequential=True,
     )
 
     # Training loop
     for trial in range(trials):
         loss, accuracy = do_one_optimizer_test(
-            train_loader,
-            test_loader,
-            optimizer,
+            train_loader=train_loader,
+            test_loader=test_loader,
+            optimizer=optimizer,
             net=network,
             num_epochs=epochs,
             criterion=loss_function,
