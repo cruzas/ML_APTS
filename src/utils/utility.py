@@ -5,7 +5,7 @@ import argparse
 import subprocess
 import numpy as np
 import matplotlib.pyplot as plt
-import pandas as pd
+# import pandas as pd
 import torch.optim as optim
 import torch.distributed as dist
 import torchvision.datasets as datasets
@@ -58,14 +58,14 @@ def compute_accuracy(data_loader, net, device=torch.device("cuda") if torch.cuda
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
 
-    # Reduce accuracy across all processes
-    if dist.is_initialized() and dist.get_world_size() > 1:
-        correct = torch.tensor(correct, device=device)
-        total = torch.tensor(total, device=device)
-        dist.all_reduce(correct)
-        dist.all_reduce(total)
-        correct = correct.cpu().item()
-        total = total.cpu().item()
+    # # Reduce accuracy across all processes
+    # if dist.is_initialized() and dist.get_world_size() > 1:
+    #     correct = torch.tensor(correct, device=device)
+    #     total = torch.tensor(total, device=device)
+    #     dist.all_reduce(correct)
+    #     dist.all_reduce(total)
+    #     correct = correct.cpu().item()
+    #     total = total.cpu().item()
 
     accuracy = 100 * correct / total
     return accuracy
@@ -81,20 +81,20 @@ def compute_loss(data_loader, net, criterion, device=torch.device("cuda") if tor
             loss += criterion(outputs, labels)  # Compute the loss
             count += 1
 
-        # Reduce loss across all processes
-        if dist.is_initialized() and dist.get_world_size() > 1:
-            count = torch.tensor(count, device=device)
-            dist.all_reduce(loss)
-            dist.all_reduce(count)
-            # Not doing loss=loss.item() since it's done afterwards in line 171
-            count = count.cpu().item()
+        # # Reduce loss across all processes
+        # if dist.is_initialized() and dist.get_world_size() > 1:
+        #     count = torch.tensor(count, device=device)
+        #     dist.all_reduce(loss)
+        #     dist.all_reduce(count)
+        #     # Not doing loss=loss.item() since it's done afterwards in line 171
+        #     count = count.cpu().item()
 
         return loss.cpu().item() / count
 
 
 
 
-def do_one_optimizer_test(self, train_loader, test_loader, optimizer, net, num_epochs, criterion, desired_accuracy=100, device=torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")):
+def do_one_optimizer_test(train_loader, test_loader, optimizer, net, num_epochs, criterion, desired_accuracy=100, device=torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")):
     for epoch in range(0, num_epochs + 1):
         epoch_train_loss = 0
         count = 0
@@ -132,7 +132,7 @@ def do_one_optimizer_test(self, train_loader, test_loader, optimizer, net, num_e
 
             if epoch == 0:
                 with torch.no_grad():
-                    train_loss = self.__compute_loss(data_loader=train_loader, net=net, criterion=criterion)
+                    train_loss = compute_loss(data_loader=train_loader, net=net, criterion=criterion)
             else:
                 if 'APTS' in str(optimizer) and 'W' in str(optimizer):
                     train_loss = optimizer.step(inputs, labels)[0]
@@ -148,7 +148,7 @@ def do_one_optimizer_test(self, train_loader, test_loader, optimizer, net, num_e
             epoch_train_loss += train_loss
             count += 1
 
-        test_accuracy = self.__compute_accuracy(data_loader=test_loader, net=net)
+        test_accuracy = compute_accuracy(data_loader=test_loader, net=net)
         # Check if test accuracy meets desired accuracy. If so, break training loop.
         if test_accuracy >= desired_accuracy:
             break
@@ -179,12 +179,12 @@ def load_data(dataset="mnist", data_dir=os.path.abspath("./data"), TOT_SAMPLES=F
 
 
  # Get train and test loaders
-def create_dataloaders(dataset="mnist", data_dir=os.path.abspath("./data"), mb_size=100, overlap_ratio=0, sequential=True):
+def create_dataloaders(dataset="mnist", data_dir=os.path.abspath("./data"), mb_size=100, overlap_ratio=0, device='cuda' if torch.cuda.is_available() else 'cpu', parameter_decomposition=True):
     train_set, test_set = load_data(dataset=dataset, data_dir=data_dir)
     mb_size = min(len(train_set), int(mb_size))
     mb_size2 = min(len(test_set), int(mb_size))
 
-    if sequential:
+    if parameter_decomposition:
         train_loader = Power_DL(dataset=train_set, shuffle=True, device=device, minibatch_size=mb_size, overlapping_samples=overlap_ratio)
         test_loader = Power_DL(dataset=test_set, shuffle=False, device=device, minibatch_size=mb_size2)
     else:
@@ -275,16 +275,17 @@ def prepare_distributed_environment(rank, master_addr, master_port, world_size):
             f"scontrol show hostname {node_list} | head -n1"
         )
         os.environ["MASTER_ADDR"] = master_node
-
         dist.init_process_group(backend="nccl")
-        device_id = dist.get_rank()
-        print(f"Device id: {device_id}")
     else: # we are on a PC
-        os.environ['MASTER_ADDR'] = 'localhost'
-        os.environ['MASTER_PORT'] = find_free_port() # A free port on the master node
-        os.environ['WORLD_SIZE'] = str(world_size) # The total number of GPUs in the distributed job
-        os.environ['RANK'] = '0' # The unique identifier for this process (0-indexed)
-        os.environ["PL_TORCH_DISTRIBUTED_BACKEND"] = "gloo" # "nccl" or "gloo"
+        os.environ['MASTER_ADDR'] = master_addr
+        os.environ['MASTER_PORT'] = master_port # A free port on the master node
+        # os.environ['WORLD_SIZE'] = str(world_size) # The total number of GPUs in the distributed job
+        # os.environ['RANK'] = '0' # The unique identifier for this process (0-indexed)
+        # os.environ["PL_TORCH_DISTRIBUTED_BACKEND"] = "gloo" # "nccl" or "gloo"
+        dist.init_process_group(backend='gloo', rank=rank, world_size=world_size)
+
+    device_id = dist.get_rank()
+    print(f"Device id: {device_id}")
 
 
 # Collect command-line arguments
@@ -292,13 +293,13 @@ def parse_args():
     # Default value is selected when no command line argument of the same name is provided
     parser = argparse.ArgumentParser(description='PyTorch multi-gpu training.')
     # Training parameters
-    parser.add_argument('--epochs', type=int, default=2, help='Number of epochs.')
-    parser.add_argument('--trials', type=int, default=2, help='Number of experiment trials.')
+    parser.add_argument('--epochs', type=int, default=10, help='Number of epochs.')
+    parser.add_argument('--trials', type=int, default=1, help='Number of experiment trials.')
     parser.add_argument('--net_nr', type=int, default=0, help="Model number (NOT number of models).")
     parser.add_argument('--dataset', type=str, default="MNIST", help='Dataset name. Currently, MNIST and CIFAR10 are supported.')
     parser.add_argument('--minibatch_size', type=int, default=60000, help='Batch size for training (default 100).')
     parser.add_argument('--overlap_ratio', type=float, default=0, help='Overlap ratio for minibatches.')
-    parser.add_argument('--optimizer_name', type=str, default="APTS_W", help="Main optimizer to be used.")
+    parser.add_argument('--optimizer_name', type=str, default="SGD", help="Main optimizer to be used.")
     # Generic optimizer parameters
     parser.add_argument('--lr', type=float, default=0.01, help='Learning rate.')
     parser.add_argument('--momentum', type=float, default=0, help="Momentum value for SGD optimizer/momentum (True, False) for TR/APTS.")
@@ -330,6 +331,7 @@ def parse_args():
     parser.add_argument('--op', type=str, default="sum", help="APTS reduction on local steps to be performed.")
     default_db_path = "./results/blah.db" 
     parser.add_argument('--db_path', type=str, default=default_db_path, help="Local optimizer to be used.")
+    parser.add_argument('--on_cluster', type=str, default="n", help="Are you executing this code on a cluster? Yes or no.")
 
     args = parser.parse_args()
     if "SGD" not in args.optimizer_name:
