@@ -252,45 +252,39 @@ def get_net_fun_and_params(dataset, net_nr):
 
     return net, net_params
 
+def find_free_port():
+    """ https://stackoverflow.com/questions/1365265/on-localhost-how-do-i-pick-a-free-port-number """
+    import socket
+    from contextlib import closing
 
+    with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
+        s.bind(('', 0))
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        return str(s.getsockname()[1])  
 
-def prepare_distributed_environment():
-    cuda = torch.cuda.is_available()
-    if cuda:
-        device_count = torch.cuda.device_count()
-        print(f'Setting cuda "device_count" to {device_count}')
-    else:
-        device_count = 1
-        print(f"Using CPU only.")
-
+def prepare_distributed_environment(rank, master_addr, master_port, world_size):
     device_id = 0
-    if cuda:
-        try:
-            ## Execute code on a cluster
-            os.environ["MASTER_PORT"] = "29501"
-            os.environ["WORLD_SIZE"] = os.environ["SLURM_NNODES"]
-            os.environ["LOCAL_RANK"] = "0"
-            os.environ["RANK"] = os.environ["SLURM_NODEID"]
-            node_list = os.environ["SLURM_NODELIST"]
-            master_node = subprocess.getoutput(
-                f"scontrol show hostname {node_list} | head -n1"
-            )
-            os.environ["MASTER_ADDR"] = master_node
+    if rank is None and master_addr is None and master_port is None and world_size is None: # we are on a cluster
+        ## Execute code on a cluster
+        os.environ["MASTER_PORT"] = "29501"
+        os.environ["WORLD_SIZE"] = os.environ["SLURM_NNODES"]
+        os.environ["LOCAL_RANK"] = "0"
+        os.environ["RANK"] = os.environ["SLURM_NODEID"]
+        node_list = os.environ["SLURM_NODELIST"]
+        master_node = subprocess.getoutput(
+            f"scontrol show hostname {node_list} | head -n1"
+        )
+        os.environ["MASTER_ADDR"] = master_node
 
-            dist.init_process_group(backend="nccl")
-            device_id = dist.get_rank()
-            print(f"Device id: {device_id}")
-        except:
-            ## Execute code on a single machine (with one or more GPUs)
-            # Or the IP address/hostname of the master node
-            os.environ['MASTER_ADDR'] = 'localhost'
-            # A free port on the master node
-            os.environ['MASTER_PORT'] = '12355'
-            # The total number of GPUs in the distributed job
-            os.environ['WORLD_SIZE'] = str(device_count)
-            # The unique identifier for this process (0-indexed)
-            os.environ['RANK'] = '0'
-            os.environ["PL_TORCH_DISTRIBUTED_BACKEND"] = "nccl" # or "gloo"
+        dist.init_process_group(backend="nccl")
+        device_id = dist.get_rank()
+        print(f"Device id: {device_id}")
+    else: # we are on a PC
+        os.environ['MASTER_ADDR'] = 'localhost'
+        os.environ['MASTER_PORT'] = find_free_port() # A free port on the master node
+        os.environ['WORLD_SIZE'] = str(world_size) # The total number of GPUs in the distributed job
+        os.environ['RANK'] = '0' # The unique identifier for this process (0-indexed)
+        os.environ["PL_TORCH_DISTRIBUTED_BACKEND"] = "gloo" # "nccl" or "gloo"
 
 
 # Collect command-line arguments
