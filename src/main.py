@@ -1,8 +1,20 @@
 # External libraries
-import pprint,copy
+import pprint,copy, torch
 import torch.multiprocessing as mp
 # User libraries
 from utils.utility import *
+
+# a=torch.randn(1000000000, device='cuda:0')
+# time.sleep(2)
+# a=torch.randn(1000000000, device='cuda:0')
+# time.sleep(1)
+# a = 0
+# gc.collect()
+# torch.cuda.set_device('cuda:1')
+# 
+# torch.cuda.set_device('cuda:1')
+# torch.cuda.empty_cache()
+
 
 def create_sub_model(local_model, rank, world_size):
     '''
@@ -49,10 +61,11 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     parameter_decomposition = True # TODO: Implement data decomposition
     args = parse_args() # TODO: make this is easier to execute on a personal computer
 
-    # torch.random.manual_seed(rank)
+    torch.random.manual_seed(0)
 
     # Device
     device = torch.device(f"cuda:{rank}")
+    torch.set_default_device(device)
     args.device = device
     args.nr_models = dist.get_world_size()
 
