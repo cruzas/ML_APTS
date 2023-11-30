@@ -4,12 +4,14 @@ from torch.optim.optimizer import Optimizer
 import torch.optim as optim  # Optimizers
 import numpy as np
 from optimizers.TR import *
-
+from torch.multiprocessing import Process
+import pickle
 
 
 class APTS_W(Optimizer):
     def __name__(self):
         return 'APTS_W'
+    
     def __init__(self,
                  params,
                  model=None,
@@ -22,252 +24,184 @@ class APTS_W(Optimizer):
                  local_opt=None,
                  local_opt_params=None,
                  global_pass=True,
-                 R = None,
-                 forced_decreasing_loss=False
+                 forced_decreasing_loss=False,
+                 shuffle_layers=False
                  ):
 
         super(APTS_W, self).__init__(params, {})
 
+        self.rank = dist.get_rank()
         self.device = device if device is not None else torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
         self.model = model
         self.max_iter = max_iter
-        if nr_models is None:
-            nr_models = len(list(self.model.parameters()))
-        self.nr_models = nr_models
+        self.nr_models = nr_models if nr_models is not None else len(list(self.model.parameters()))
         self.global_pass = bool(global_pass) # in case global_pass is 0 or 1
-        self.TRargs = list(inspect.signature(TR).parameters.keys())
         self.loss_fn = loss_fn
         self.iter = 0
-        self.forced_decreasing_loss = bool(forced_decreasing_loss) # in case forced_decreasing_loss is 0 or 1
+        self.fdl = bool(forced_decreasing_loss) # in case forced_decreasing_loss is 0 or 1
 
-        #TODO: The current way to compute the layers is not correct. Many layers are made by two vectors (e.g. bias and weight)
-        tot_layers = len(list(self.model.parameters()))
-        self.tot_params = sum([p.numel() for p in self.model.parameters()])
-        if tot_layers < self.nr_models:
-            self.nr_models = tot_layers
-        
-        index_shuffled = torch.randperm(tot_layers)
-        self.trainable_layers = []
-        params_per_subset = [0]*self.nr_models
-        # self.trainable_params = [0]*self.nr_models
-        for i in range(self.nr_models):
-            params_per_subset[i] = int(tot_layers / (nr_models-i))
-            if i == self.nr_models - 1:
-                self.trainable_layers.append(index_shuffled[sum(params_per_subset[:i]):])
-            else:
-                self.trainable_layers.append(index_shuffled[sum(params_per_subset[:i]):sum(params_per_subset[:i+1])])
-            # for j in self.trainable_layers[i]:
-                # self.trainable_params[i] += list(self.model.parameters())[j].numel()
-            tot_layers -= params_per_subset[i]
+        # Initialize the local models and optimizers
+        self.rank2layer, self.layer2rank = self.define_trainable_layers(shuffle=shuffle_layers)
+        self.set_trainable_layers(False)
 
-        if 'SGD' not in str(local_opt): # local opt options are optim.SGD and whatever else
+        if 'TR' in str(local_opt):
             local_opt_params['min_radius'] = 0 # avoids problems with "radius" being smallers than "min_radius"
             local_opt_params.update({'device': self.device})
-        self.l_o = lambda p: local_opt(params=p, **local_opt_params)
+        self.local_optimizer = local_opt(self.model.parameters(), **local_opt_params)
+        
+        if dist.get_rank() == 0:
+            self.global_optimizer = global_opt(self.model.parameters(), **global_opt_params)
+        self.radius = global_opt_params['radius']
 
-        # Initialize the local optimizers
-        self.SubModels = []; self.streams = []; self.Local_Optimizer = []
+    def set_trainable_layers(self, is_global=False):
+        if is_global and self.rank == 0:
+            for index, param in enumerate(self.model.parameters()):
+                param.requires_grad = True
+        elif not is_global:
+            for index, param in enumerate(self.model.parameters()):
+                param.requires_grad = index in self.rank2layer[self.rank]
+
+    def define_trainable_layers(self, shuffle=False):
+        '''
+        Creates a submodel with trainable layers distributed across ranks.
+        Raises an error if the number of ranks exceeds the number of parameter groups.
+        '''
+        # TODO: For efficiency, change the following (E.g. choose a world size that is just enough, i.e. with every GPU needed filled)
+        # TODO: If enough processes are availalb and each layer is not big enough, distribute even more layers per process...or something like that
+        tot_layers = len(list(self.model.parameters()))
+        if self.nr_models != dist.get_world_size():
+            raise ValueError(f"Number of models ({self.nr_models}) should match world size ({dist.get_world_size()}).")
+        
+        index_shuffled = torch.randperm(tot_layers) if shuffle else list(range(tot_layers))
+
+        trainable_layers = [None]*self.nr_models
+        params_per_subset = [0]*self.nr_models
         for i in range(self.nr_models):
-            self.streams.append(torch.cuda.Stream(device=self.device))
-            self.SubModels.append(self.create_sub_model(self.trainable_layers[i]))
-            self.Local_Optimizer.append(self.l_o(self.SubModels[i].parameters()))
-
-        self.global_optimizer = global_opt(self.model.parameters(), **global_opt_params)
-        self.radius = self.global_optimizer.radius
-
-        self.R = []
-        if R is None:
-            for k in range(self.nr_models):
-                # R[k] is a sparse matrix with "tot_params" columns and "self.trainable_params[k]" rows. 
-                # With 1 in the position of the parameters that are updated by the k-th local optimizer. 
-                # There is no need to build R explicitly, it is enough to restrict the gradient and the parameters according to the trainable layers of the model. 
-                self.R.append(None)
-        else:
-            raise ValueError('R != None not fully implemented yet')
-            for k in range(self.nr_models):
-                self.R.append(R[k])
-
-
-        def l_closure(inputs, targets, model, k=[]):
-            # self.SubModels[k].zero_grad()
-            # get params of self.SubModels[k]
-            # params = [p for p in self.SubModels[k].parameters() if p.requires_grad]
-            J = self.loss_fn(model(inputs), targets)
-            if torch.is_grad_enabled():
-                # print(f'NN is differentiable: {self._is_differentiable(self.SubModels[k])}')
-                J.backward()
-            # print(f' this should be 0 : {(self.restricted_global_grad(k) - self.submodel_grad(k)) @ (self.submodel_params(k) - self.restricted_global_params(k))}')
-            # TODO: Write correctly the following line... note that gradients should be the ones at the begin of the first iteration of the local optimizer
-            return J.detach() #+ (self.restricted_global_grad(k) - self.submodel_grad(k)) @ (self.submodel_params(k) - self.restricted_global_params(k))
-
-        def g_closure(inputs, targets):
-            J = self.loss_fn(self.model(inputs), targets)
-            if torch.is_grad_enabled():
-                J.backward()
-            # return J.detach()
-            return J
-
-        # self.local_closure = lambda inputs, targets, model, k: l_closure(inputs, targets, model, k)
-        self.global_closure = lambda inputs, targets: g_closure(inputs, targets)
-            
-    def local_closure(self, inputs, targets, k):
-        J = self.loss_fn(self.SubModels[k](inputs), targets)
-        if torch.is_grad_enabled():
-            self.SubModels[k].zero_grad()
-            J.backward()
-        # return J.detach()
-        return J
-        
-    def restricted_global_grad(self, k):
-        if self.R[k] is None:
-            sub = list(self.SubModels[k].parameters())
-            return torch.cat([p.grad.flatten().detach() for i,p in enumerate(self.model.parameters()) if sub[i].grad is not None])
-        else:
-            return self.R[k] @ torch.cat([p.grad.flatten().detach() for p in self.model.parameters()])
-
-    def restricted_global_params(self, k):
-        if self.R[k] is None:
-            sub = list(self.SubModels[k].parameters())
-            return torch.cat([p.flatten().detach() for i,p in enumerate(self.model.parameters()) if sub[i].requires_grad is True])
-        else:
-            return self.R[k] @ torch.cat([p.flatten().detach() for p in self.model.parameters()])
-        
-    def submodel_params(self, k):
-        if self.R[k] is None:
-            return torch.cat([p.flatten().detach() for p in self.SubModels[k].parameters() if p.requires_grad is True])
-        else:
-            pass
-
-    def submodel_grad(self, k):
-        if self.R[k] is None:
-            return torch.cat([p.grad.flatten().detach() for p in self.SubModels[k].parameters() if p.grad is not None])
-        else:
-            pass
-
-    def _params(self,model):
-        # return torch.cat([p.flatten().detach() for p in model.parameters()])
-        return torch.cat([p.flatten() for p in model.parameters()])
-    
-    def create_sub_model(self,trainable_layers, k=None):
-        '''
-        Creates a submodel with the trainable layers specified by weight_subset
-        NOTE: Updating the SubNetworks in place of deepcopy seems to yield plenty of errors
-        NOTE 2: if all layers are learnable, for some reason everything works fine
-        '''
-        with torch.no_grad():   
-            if k is None:            
-                local_model = copy.deepcopy(self.model)
-                for index,param in enumerate(local_model.parameters()):
-                    if index in trainable_layers:
-                        param.requires_grad = True
-                    else:
-                        param.requires_grad = False 
-                return local_model
+            params_per_subset[i] = int(tot_layers / (self.nr_models-i))
+            if i == self.nr_models - 1:
+                trainable_layers[i] = index_shuffled[sum(params_per_subset[:i]):]
             else:
-                self.SubModels[k].load_state_dict(self.model.state_dict())
+                trainable_layers[i] = index_shuffled[sum(params_per_subset[:i]):sum(params_per_subset[:i+1])]
+            tot_layers -= params_per_subset[i]
 
+        rank2layer = {k: v for k, v in enumerate(trainable_layers)}
+        layer2rank = {v: k for k, lst in rank2layer.items() for v in lst}
+        return rank2layer, layer2rank
+    
+    def closure(self, inputs, targets):
+        J = self.loss_fn(self.model(inputs), targets)
+        if torch.is_grad_enabled():
+            self.model.zero_grad()
+            J.backward()
+        return J.item()
+        
+    def restricted_global_params(self): # Remove in production
+        sub = list(self.model.parameters())
+        return torch.cat([p.flatten().detach() for i,p in enumerate(self.model.parameters()) if sub[i].requires_grad is True])
+        
+    def local_model_params(self):
+        return torch.cat([p.flatten().detach() for p in self.model.parameters() if p.requires_grad is True])
+
+    # TODO: With layer-pipelining, this will not work
     def local_net_sync(self):
-        # TODO: speed this up by using streams or multiprocessing?
-        for i in range(self.nr_models):
-            # sync the nets
-            self.create_sub_model(self.trainable_layers[i],k=i)
-            # sync the optimizers
-            for key in self.global_optimizer.collection_of_all_variables:
-                if key == 'hessian_approx':
-                    setattr(self.Local_Optimizer[i], key, copy.deepcopy(getattr(self.global_optimizer, key)))
-                    if self.Local_Optimizer[i].hessian_approx.S is not None:
-                        v1 = []; v2 = []; v3 = []
-                        a = 0; a2=0
-                        for j,p in enumerate(self.model.parameters()):
-                            b2 = a2 + p.numel()
-                            if j in self.trainable_layers[i]:
-                                b = a + p.numel()
-                                v1.append( self.Local_Optimizer[i].hessian_approx.S[a2:b2] )
-                                v2.append( self.Local_Optimizer[i].hessian_approx.Y[a2:b2] )
-                                v3.append( self.Local_Optimizer[i].hessian_approx.Psi[a2:b2] )
-                                a = b
-                            a2 = b2
-                        try:
-                            self.Local_Optimizer[i].hessian_approx.S = torch.concatenate(v1)
-                            self.Local_Optimizer[i].hessian_approx.Y = torch.concatenate(v2)
-                            self.Local_Optimizer[i].hessian_approx.Psi = torch.concatenate(v3)
-                        except:
-                            self.Local_Optimizer[i].hessian_approx.S = np.concatenate(v1)
-                            self.Local_Optimizer[i].hessian_approx.Y = np.concatenate(v2)
-                            self.Local_Optimizer[i].hessian_approx.Psi = np.concatenate(v3)
-                elif key in ['var', 'mom']:
-                    v = []
-                    v2 = getattr(self.global_optimizer, key)
+        # Sync the nets
+        if self.rank == 0:
+            self.set_trainable_layers(False) # Set the global model back to the local model settings
+        
+        if self.rank == 0: # start sending
+            global_opt_state_dict = {key: getattr(self.global_optimizer, key) for key in self.global_optimizer.collection_of_all_variables}
+            dumped_dict = pickle.dumps(global_opt_state_dict)
+            byte_dict = torch.ByteTensor(list(dumped_dict))
+            object_list = [byte_dict]
+            print(object_list)
+        else:
+            object_list = [0]
+
+        dist.broadcast_object_list(object_list, src=0) # update the local optimizers
+        global_opt_state_dict = pickle.loads(bytes(object_list[0].tolist()))
+
+        # Sync the optimizers
+        # TODO: for second order or momentum, make sure that collection_of_all_variables is not empty and update correctly the local optimizers
+        for key in global_opt_state_dict:
+            if key == 'hessian_approx':
+                setattr(self.local_optimizer, key, copy.deepcopy(getattr(self.global_optimizer, key))) # TODO: fix this later
+                if self.local_optimizer.hessian_approx.S is not None:
+                    v1 = []; v2 = []; v3 = []
                     a = 0; a2=0
                     for j,p in enumerate(self.model.parameters()):
                         b2 = a2 + p.numel()
-                        if j in self.trainable_layers[i]:
+                        if j in self.trainable_layers:
                             b = a + p.numel()
-                            v.append( v2[a2:b2] )
+                            v1.append( self.local_optimizer.hessian_approx.S[a2:b2] )
+                            v2.append( self.local_optimizer.hessian_approx.Y[a2:b2] )
+                            v3.append( self.local_optimizer.hessian_approx.Psi[a2:b2] )
                             a = b
                         a2 = b2
-                    setattr(self.Local_Optimizer[i], key, torch.cat(v))
-                else:
-                    setattr(self.Local_Optimizer[i], key, getattr(self.global_optimizer, key))
+                        
+                    self.local_optimizer.hessian_approx.S = torch.concatenate(v1)
+                    self.local_optimizer.hessian_approx.Y = torch.concatenate(v2)
+                    self.local_optimizer.hessian_approx.Psi = torch.concatenate(v3)
 
-    def local_steps(self,local_closure):
-        # update the local model 
-        TEMP=2
+            elif key in ['var', 'mom']:
+                v = []
+                v2 = getattr(self.global_optimizer, key)
+                a = 0; a2=0
+                for j,p in enumerate(self.model.parameters()): 
+                    b2 = a2 + p.numel()
+                    if j in self.trainable_layers:
+                        b = a + p.numel()
+                        v.append( v2[a2:b2] )
+                        a = b
+                    a2 = b2
+                setattr(self.local_optimizer, key, torch.cat(v))
+            else:
+                setattr(self.local_optimizer, key, getattr(self.global_optimizer, key))
+            
+
+    def local_steps(self, inputs, targets):
+        start_time = time.time()
+
+        # Update the local model 
+        TEMP = 2
         local_loss = [0 for _ in range(self.nr_models)]
-        lr = [self.radius/TEMP]*self.nr_models
-        g = torch.zeros(self.tot_params, device=self.device); grad_norm2 = 0
-        # start_time = time.time()
-        for i in range(self.nr_models):
-            # with torch.cuda.stream(self.streams[i]):
-                for j in range(self.max_iter): # Iterations of the preconditioning step
-                    if j == 0:
-                        self.Local_Optimizer[i].radius = lr[i]
-                    else:
-                        self.Local_Optimizer[i].radius = lr[i]
-                    self.Local_Optimizer[i].max_radius = lr[i]
-                    # print(f'Iteration {j}: (PRE) max radius {self.Local_Optimizer[i].max_radius}, radius {self.Local_Optimizer[i].radius}')
-                    
-                    try:
-                        assert lr[i].isnan() == False
-                    except:
-                        assert np.isnan(lr[i]) == False
+        lr = [self.radius/TEMP] * self.nr_models
+        # g = torch.zeros(self.tot_params, device=self.device); grad_norm2 = 0
+        g = [0] * len(list(self.model.parameters())); grad_norm2 = 0
 
-                    assert self.submodel_params(i).isnan().sum() == 0
+        for j in range(self.max_iter): # Iterations of the preconditioning step            
+            self.local_optimizer.radius = lr
+            self.local_optimizer.max_radius = lr            
+            print(self.closure(inputs, targets))
+            local_loss, grad, grad_norm = self.local_optimizer.step(lambda dummy=1: self.closure(inputs, targets)) 
+            
+            if j == 0:
+                grad_norm2 = max(grad_norm2, grad_norm)
+                for i, p in enumerate(self.model.parameters()):
+                    if p.requires_grad:
+                        g[i] = grad[i].clone().detach().to('cpu', non_blocking=True)
+                        
+            # Update radius to make sure the update is inside the global trust region radius
+            lr = self.radius/TEMP - torch.norm(self.restricted_global_params())
 
-                    local_loss[i], grad, grad_norm = self.Local_Optimizer[i].step(lambda x=1: local_closure(i))
+            # print(f'Iteration {j}: (POST) radius {lr}, TR radius {self.local_optimizer.radius}')
+            if lr < self.global_optimizer.min_radius/10:
+                break
+            
+        # Final check
+        if torch.norm(self.restricted_global_params()) > self.radius/TEMP+10**-3 or lr < -10**-3:
+            print(f'Step too large or negative radius: {torch.norm(self.restricted_global_params())}>{self.radius/TEMP},   {lr}')
 
-                    assert self.submodel_params(i).isnan().sum() == 0
+        # Sync the local models
+        if self.rank != 0:
+            dist.send(g, dst=0)
+        else:
+            for i in range(1, self.nr_models):
+                g2 = dist.recv(src=i)
+                for j,p in enumerate(self.model.parameters()):
+                    if not p.requires_grad:
+                        g[j].copy_(g2[j])
 
-                    if j==0:
-                        grad_norm2 = max(grad_norm2, grad_norm)
-                        a=0;a2=0
-                        for p in self.SubModels[i].parameters():
-                            b2=a2+p.numel()
-                            if p.requires_grad:
-                                b=a+p.numel()
-                                assert g[a2:b2].abs().sum()==0
-                                assert grad[a:b].abs().sum()!=0
-                                g[a2:b2] = grad[a:b]
-                                a=b
-                            a2=b2
-                            
-                    # Update radius to make sure the update is inside the global trust region radius
-                    lr[i] = self.radius/TEMP - torch.norm(self.restricted_global_params(i) - self.submodel_params(i), p=torch.inf)
-
-                    try:
-                        assert lr[i].isnan() == False
-                    except:
-                        assert np.isnan(lr[i]) == False
-
-                    # print(f'Iteration {j}: (POST) radius {lr[i]}, TR radius {self.Local_Optimizer[i].radius}')
-                    if lr[i] < self.global_optimizer.min_radius/10:
-                        break
-                # Final check
-                if torch.norm(self.restricted_global_params(i) - self.submodel_params(i), p=torch.inf) > self.radius/TEMP+10**-3 or lr[i] < -10**-3:
-                    print(f'Step too large or negative radius: {torch.norm(self.restricted_global_params(i) - self.submodel_params(i), p=torch.inf)}>{self.radius/TEMP},   {lr[i]}')
-
-        # torch.cuda.synchronize(self.streams[i])
-        # print(f'Local steps took {time.time()-start_time} seconds')
+        print(f'Local steps took {time.time()-start_time} seconds')
         return local_loss, g, grad_norm2
     
     def get_local_params(self):
@@ -277,10 +211,11 @@ class APTS_W(Optimizer):
         with torch.no_grad():
             local_params = [0]*len(list(self.model.parameters()))
             for i in range(self.nr_models):
-                for j,p in enumerate(self.Local_Optimizer[i].params):
+                for j,p in enumerate(self.local_optimizer[i].params):
                     if j in self.trainable_layers[i]:
                         local_params[j] = p.data
         return local_params #torch.cat(local_params)
+
 
     def global_params_update(self,local_params):
         '''
@@ -309,29 +244,29 @@ class APTS_W(Optimizer):
             # with torch.no_grad():
                 # initial_loss = [0 for _ in range(self.nr_models)]
                 # for i in range(self.nr_models):
-                #     initial_loss[i] = self.local_closure(inputs,targets,i)
+                #     initial_loss[i] = self.closure(inputs,targets,i)
                 #     initial_loss[i] = round(initial_loss[i].item(),3)
 
             self.local_net_sync() # Sharing weights of the global NN with the local ones
             a = time.time()
-            local_loss, g, g_norm = self.local_steps(lambda k: self.local_closure(inputs,targets,k))
+            local_loss, g, g_norm = self.local_steps(inputs, targets)
             print(f'Local steps took {time.time()-a} seconds')
 
             for i in range(len(local_loss)): ### erease this
                 local_loss[i] = round(local_loss[i],3)###
         
             # check that the loss is decreasing
-            if self.forced_decreasing_loss:
+            if self.fdl:
                 x_loc = torch.cat([p.flatten() for p in self.get_local_params()])
-                x_glob = self._params(self.model)
+                x_glob = torch.cat([p.flatten() for p in self.model.parameters()]) # TODO: this should be initialized before the preconditioning step, and only from rank 0
                 step = x_loc - x_glob
                 step = step/torch.norm(step, p=torch.inf)
                 g = g/torch.norm(g, p=torch.inf)
                 with torch.no_grad():
-                    old_loss = self.global_closure(inputs, targets)
+                    old_loss = self.closure(inputs, targets)
                 self.global_params_update(self.get_local_params()) # update global model
                 with torch.no_grad():
-                    loss = self.global_closure(inputs, targets) # current loss
+                    loss = self.closure(inputs, targets) # current loss
                 radius = self.radius
                 w=0; c=0
                 while loss > old_loss: 
@@ -343,7 +278,7 @@ class APTS_W(Optimizer):
                     x_loc = x_glob + step2/torch.norm(step2, p=torch.inf)*radius
                     self.global_params_update(x_loc)
                     with torch.no_grad():
-                        loss = self.global_closure(inputs, targets)
+                        loss = self.closure(inputs, targets)
                     if c > 5:
                         print(f'Warning: APTS is not decreasing the loss {loss} > {old_loss}')
                         break
@@ -352,7 +287,7 @@ class APTS_W(Optimizer):
 
         # Global smoothing step 
         if self.global_pass:
-            new_loss = self.global_optimizer.step(lambda x=1: self.global_closure(inputs, targets))[0]
+            new_loss = self.global_optimizer.step(lambda x=1: self.closure(inputs, targets))[0]
             self.radius = self.global_optimizer.radius
 
         # print(f'Iteration {self.iter} | initial loss: {initial_loss}, after local steps: {local_loss}, loss before global step {loss}, final loss {new_loss}') ##
@@ -360,7 +295,7 @@ class APTS_W(Optimizer):
             if skip_preconditioning:
                 print('Skipping preconditioning')
             else:
-                if self.forced_decreasing_loss:
+                if self.fdl:
                     print('Modified APTS with forced decreasing loss')
 
         return new_loss, 2 # dummy output

@@ -92,16 +92,13 @@ def compute_loss(data_loader, net, criterion, device=torch.device("cuda") if tor
         return loss.cpu().item() / count
 
 
-
-
 def do_one_optimizer_test(train_loader, test_loader, optimizer, net, num_epochs, criterion, desired_accuracy=100, device=torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")):
     for epoch in range(0, num_epochs + 1):
         epoch_train_loss = 0
         count = 0
         # Compute epoch train loss and train time, and test accuracy
         for _, (inputs, labels) in enumerate(train_loader):
-            inputs, labels = inputs.to(device), labels.to(device)
-
+            inputs, labels = inputs, labels
             if "TR" in optimizer.__class__.__name__:
                 def closure():
                     optimizer.zero_grad()
@@ -109,11 +106,11 @@ def do_one_optimizer_test(train_loader, test_loader, optimizer, net, num_epochs,
                     loss = criterion(outputs, labels)
                     if torch.is_grad_enabled():
                         loss.backward()
-                    if dist.is_initialized() and dist.get_world_size() > 1:
-                        # Global loss
-                        dist.all_reduce(loss, op=dist.ReduceOp.SUM)
-                        loss /= dist.get_world_size()
-                        average_gradients(net)
+                    # if dist.is_initialized() and dist.get_world_size() > 1:
+                    #     # Global loss
+                    #     dist.all_reduce(loss, op=dist.ReduceOp.SUM)
+                    #     loss /= dist.get_world_size()
+                    #     average_gradients(net)
                     return loss  
             else:
                 def closure():
@@ -124,15 +121,15 @@ def do_one_optimizer_test(train_loader, test_loader, optimizer, net, num_epochs,
                     train_loss = criterion(outputs, labels)
                     if torch.is_grad_enabled():
                         train_loss.backward()
-                        if dist.is_initialized() and dist.get_world_size() > 1:
-                            # TODO: add all losses together?
-                            # Average gradients in case we are using more than one CUDA device
-                            average_gradients(net) 
+                    #     if dist.is_initialized() and dist.get_world_size() > 1:
+                    #         # TODO: add all losses together?
+                    #         # Average gradients in case we are using more than one CUDA device
+                    #         average_gradients(net) 
                     return train_loss              
 
             if epoch == 0:
                 with torch.no_grad():
-                    train_loss = compute_loss(data_loader=train_loader, net=net, criterion=criterion)
+                    train_loss = compute_loss(data_loader=train_loader, net=net, criterion=criterion, device=device)
             else:
                 if 'APTS' in str(optimizer) and 'W' in str(optimizer):
                     train_loss = optimizer.step(inputs, labels)[0]
@@ -148,7 +145,7 @@ def do_one_optimizer_test(train_loader, test_loader, optimizer, net, num_epochs,
             epoch_train_loss += train_loss
             count += 1
 
-        test_accuracy = compute_accuracy(data_loader=test_loader, net=net)
+        test_accuracy = compute_accuracy(data_loader=test_loader, net=net, device=device)
         # Check if test accuracy meets desired accuracy. If so, break training loop.
         if test_accuracy >= desired_accuracy:
             break
@@ -226,10 +223,10 @@ def get_net_fun_and_params(dataset, net_nr):
     if dataset == "MNIST":
         if net_nr == 0:
             net = MNIST_FCNN
-            net_params = {"hidden_sizes": [32, 32]}
+            net_params = {"hidden_sizes": [3]}
         elif net_nr == 1:
             net = MNIST_FCNN
-            net_params = {"hidden_sizes": [512, 256]}
+            net_params = {"hidden_sizes": [3]}
         elif net_nr == 2:
             net = MNIST_CNN
             net_params = {}
@@ -299,9 +296,9 @@ def parse_args():
     parser.add_argument('--dataset', type=str, default="MNIST", help='Dataset name. Currently, MNIST and CIFAR10 are supported.')
     parser.add_argument('--minibatch_size', type=int, default=60000, help='Batch size for training (default 100).')
     parser.add_argument('--overlap_ratio', type=float, default=0, help='Overlap ratio for minibatches.')
-    parser.add_argument('--optimizer_name', type=str, default="SGD", help="Main optimizer to be used.")
+    parser.add_argument('--optimizer_name', type=str, default="APTS_W", help="Main optimizer to be used.")
     # Generic optimizer parameters
-    parser.add_argument('--lr', type=float, default=0.01, help='Learning rate.')
+    parser.add_argument('--lr', type=float, default=1.0, help='Learning rate.')
     parser.add_argument('--momentum', type=float, default=0, help="Momentum value for SGD optimizer/momentum (True, False) for TR/APTS.")
     # For Adam/TR/APTS
     parser.add_argument('--beta1', type=float, default=0.9, help="Beta1 for Adam optimizer.")
@@ -527,6 +524,7 @@ def get_optimizer_params(args):
         optimizer_params['max_iter'] = args.max_iter
         optimizer_params['global_pass'] = args.global_pass
         optimizer_params['nr_models'] = args.nr_models
+        optimizer_params['loss_fn'] = args.loss_fn
 
         optimizer_params['global_opt_params'] = {
             'radius': args.radius,
@@ -551,6 +549,7 @@ def get_optimizer_params(args):
         optimizer_params['local_opt_params'] = optimizer_params['global_opt_params'].copy()
         optimizer_params['local_opt_params']['radius'] = optimizer_params['global_opt_params']['radius'] / 10 # TODO: change this if something else desired
         optimizer_params['local_opt_params']['min_radius'] = 0.0
+        optimizer_params['shuffle_layers'] = False
 
     return dict(sorted(optimizer_params.items()))
 
