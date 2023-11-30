@@ -132,7 +132,7 @@ def do_one_optimizer_test(train_loader, test_loader, optimizer, net, num_epochs,
                     train_loss = compute_loss(data_loader=train_loader, net=net, criterion=criterion, device=device)
             else:
                 if 'APTS' in str(optimizer) and 'W' in str(optimizer):
-                    train_loss = optimizer.step(inputs, labels)[0]
+                    train_loss = optimizer.step(inputs, labels)
                 elif 'APTS' in str(optimizer) and 'D' in str(optimizer):
                     train_loss = optimizer.step(inputs, labels)
                 else:
@@ -290,7 +290,7 @@ def parse_args():
     # Default value is selected when no command line argument of the same name is provided
     parser = argparse.ArgumentParser(description='PyTorch multi-gpu training.')
     # Training parameters
-    parser.add_argument('--epochs', type=int, default=10, help='Number of epochs.')
+    parser.add_argument('--epochs', type=int, default=100, help='Number of epochs.')
     parser.add_argument('--trials', type=int, default=1, help='Number of experiment trials.')
     parser.add_argument('--net_nr', type=int, default=0, help="Model number (NOT number of models).")
     parser.add_argument('--dataset', type=str, default="MNIST", help='Dataset name. Currently, MNIST and CIFAR10 are supported.')

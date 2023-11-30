@@ -182,6 +182,7 @@ class TR(Optimizer): # TR optimizer
         weights = [w for w in self.param_groups[0]['params'] if w.requires_grad] # Store the model's parameters
         x = torch.cat([p.flatten() for p in weights]).detach()      # Store the model's parameters (flat)
         g = torch.cat([p.grad.flatten() for p in weights]).detach() # Store the model's gradients (flat)
+        g_list = [p.grad.flatten().detach() if p.requires_grad else torch.tensor(0) for p in [w for w in self.param_groups[0]['params']]]
         g_norm = torch.norm(g, p=self.norm_type)                    # Gradient norm
         assert g.isnan().sum() == 0, "Gradient is NaN"
         assert g_norm != 0, "Gradient is zero. Cannot update the model."
@@ -269,7 +270,7 @@ class TR(Optimizer): # TR optimizer
 
             # print(f"norm of new weights: {torch.norm(torch.cat([p.flatten() for p in weights]), p=2)}")
             # Compute the accuracy factor between predicted and actual change (rho)
-            actual_improvement = loss - new_loss.item()
+            actual_improvement = loss - new_loss
             if self.SECOND_ORDER and self.delayed_second_order<=self.steps:
                 predicted_improvement = (g @ s) * s_incr - 1/2 * (s @ self.hessian_approx.apply(s)) * s_incr**2
             elif self.MOMENTUM: # First order information only
@@ -277,7 +278,7 @@ class TR(Optimizer): # TR optimizer
             else: # First order information only
                 predicted_improvement = g_norm**2 * abs(s_incr) 
                     
-            if actual_improvement>0:
+            if actual_improvement > 0:
                 if self.ADAPTIVE: # Uses a function to adaptively change the radius
                     ratio = max(0,min(1,actual_improvement/predicted_improvement.item()))
                     LR = self.radius * self.r_adaptive(ratio)
@@ -307,10 +308,11 @@ class TR(Optimizer): # TR optimizer
             if self.radius <= self.min_radius+self.min_radius/100 or c>10: #safeguard to avoid infinite loop
                 END = 1
 
+
             if END==1:
                 break
                    
-        return new_loss.item(), g, g_norm
+        return new_loss, g_list, g_norm.item()
     
 
 
