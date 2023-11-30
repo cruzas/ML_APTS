@@ -4,40 +4,46 @@ import torch.multiprocessing as mp
 # User libraries
 from utils.utility import *
 
-def create_sub_model(main_model, rank, world_size):
+def create_sub_model(local_model, rank, world_size):
     '''
     Creates a submodel with trainable layers distributed across ranks.
     Raises an error if the number of ranks exceeds the number of parameter groups.
     '''
-    local_model = copy.deepcopy(main_model)
-    total_params = len(list(main_model.parameters()))
-    
-    # Raise an error if there are more ranks than parameters
     # TODO: For efficiency, change the following (E.g. choose a world size that is just enough, i.e. with every GPU needed filled)
-    if world_size >= total_params:
-        # NOTE: This is here because otherwise we might be wasting computational time on Daint.
-        # However, if the number of GPUs is greater than the number of total_params, perhaps we could simply exit for those processes
-        # and keep going on the other ones.
-        raise ValueError(f"Number of ranks ({world_size}) cannot exceed the number of parameter groups ({total_params}).")
+    # TODO: If enough processes are availalb and each layer is not big enough, distribute even more layers per process...or something like that
+
+    tot_layers = len(list(local_model.parameters()))
+    # tot_params = sum([p.numel() for p in local_model.parameters()])
+    if tot_layers < world_size:
+        raise ValueError(f"Too many GPUs ({world_size}) for {tot_layers} subdomains. Crashing the code to avoid wasting computational time.")
     
-        # TODO: If enough processes are availalb and each layer is not big enough, distribute even more layers per process...or something like that
+    # index_shuffled = torch.randperm(tot_layers)
+    index_shuffled = list(range(tot_layers))
 
-    layers_per_rank = total_params // world_size
-    start_layer = rank * layers_per_rank
-    end_layer = total_params if rank == world_size - 1 else (rank + 1) * layers_per_rank
-    trainable_layers = list(range(start_layer, end_layer))
-
-    print(f"Rank {dist.get_rank()}. Start layer {start_layer}, End layer {end_layer}. Trainable layers {trainable_layers}.")
+    trainable_layers = []
+    params_per_subset = [0]*world_size
+    for i in range(world_size):
+        params_per_subset[i] = int(tot_layers / (world_size-i))
+        if i == world_size - 1:
+            trainable_layers.append(index_shuffled[sum(params_per_subset[:i]):])
+        else:
+            trainable_layers.append(index_shuffled[sum(params_per_subset[:i]):sum(params_per_subset[:i+1])])
+        tot_layers -= params_per_subset[i]
 
     for index, param in enumerate(local_model.parameters()):
-        param.requires_grad = index in trainable_layers
+        param.requires_grad = index in trainable_layers[rank]
 
-    return local_model
+    dict = {k: v for k, v in enumerate(trainable_layers)}
+    del trainable_layers # TODO: do this in a more memory-efficient way next time
+    layer2rank = {v: k for k, lst in dict.items() for v in lst}
+
+    return local_model, layer2rank
 
 
 def main(rank=None, master_addr=None, master_port=None, world_size=None):
     # Set up the distributed environment.
     prepare_distributed_environment(rank, master_addr, master_port, world_size)
+
     # Rank ID
     rank = dist.get_rank() if dist.is_initialized() else 0
     parameter_decomposition = True # TODO: Implement data decomposition
@@ -46,7 +52,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     # torch.random.manual_seed(rank)
 
     # Device
-    device = torch.device("cuda")
+    device = torch.device(f"cuda:{rank}")
     args.device = device
     args.nr_models = dist.get_world_size()
 
@@ -66,9 +72,9 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     net_fun, net_params = get_net_fun_and_params(dataset, net_nr)
 
     network = net_fun(**net_params).to(device)
-    local_network = create_sub_model(network, rank, args.nr_models)
+    local_network,layer2rank = create_sub_model(network, rank, args.nr_models)
 
-    optimizer = opt_fun(network.parameters(), **optimizer_params)
+    optimizer = opt_fun(network.parameters(), model=network, **optimizer_params)
     
     # Data loading
     train_loader, test_loader = create_dataloaders(
@@ -77,6 +83,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         mb_size=minibatch_size,
         overlap_ratio=overlap_ratio,
         parameter_decomposition=parameter_decomposition,
+        device=device
     )
 
     # Training loop
@@ -89,12 +96,40 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             num_epochs=epochs,
             criterion=loss_function,
             desired_accuracy=100,
-            device=device,
+            device=device
         )
 
         print(
             f"Rank {rank}. Trial {trial + 1}/{trials} finished. Loss: {loss:.4f}, Accuracy: {accuracy:.4f}"
         )
+        
+         
+
+        
+        #  # USE CUDA STREAMS???
+        # dist.barrier()
+        # print(f"Rank {rank}: Barrier successful.")
+        # if rank > 0:
+        #     for i,param in enumerate(local_network.parameters()):
+        #         if param.requires_grad is not False:
+        #             # print(f"Rank {rank} norm of layer parameters before sending: {torch.norm([param.flatten() for param in local_network.parameters()][i])}")
+        #             print(f"Rank {rank} sent: {param.data.cpu()}")
+        #             dist.send(param.data.cpu(), dst=0)
+        
+        # if rank == 0:
+           
+        #     for i,param in enumerate(local_network.parameters()):
+        #         if param.requires_grad is False:
+        #             # print(f"Rank {0} norm of layer parameters before receiving: {torch.norm([param.flatten() for param in local_network.parameters()][i])}")
+        #             p = torch.zeros_like(param).cpu()
+        #             dist.recv(p, src=layer2rank[i])
+        #             print(f"Rank {rank} received: {p.data}")
+        #             param.data = p.to(device)
+        #             # print(f"Rank {0} norm of layer parameters after receiving: {torch.norm([param.flatten() for param in local_network.parameters()][i])}")
+        
+        # print(f"Rank {rank}: Receive successful.")
+        # dist.barrier()
+
 
 if __name__ == "__main__":    
     cmd_args = parse_args()

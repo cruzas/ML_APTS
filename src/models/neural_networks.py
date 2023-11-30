@@ -4,18 +4,19 @@ import torch.nn.functional as F
 from collections import OrderedDict
 
 class MNIST_FCNN(nn.Module):
-    def __init__(self, input_size=784, hidden_sizes=[32, 32], output_size=10):
+    def __init__(self, input_size=784, hidden_sizes=[1000], output_size=10):
         super(MNIST_FCNN, self).__init__()
         self.l1 = nn.Linear(input_size, hidden_sizes[0])
-        self.l2 = nn.Linear(hidden_sizes[0], hidden_sizes[1])
-        self.l3 = nn.Linear(hidden_sizes[1], output_size)
+        self.l2 = nn.Linear(hidden_sizes[0], output_size)
         
     def forward(self, x):
         x = x.view(x.size(0), -1)
         x = F.relu(self.l1(x))
-        x = F.relu(self.l2(x))
-        x = torch.sigmoid(self.l3(x))
-        # x = torch.sigmoid(self.l2(x))
+        # x = F.relu(self.l2(x))
+        # x = F.relu(self.l3(x))
+        # x = F.relu(self.l4(x))
+        # x = torch.sigmoid(self.l5(x))
+        x = torch.sigmoid(self.l2(x))
         x = F.log_softmax(x, dim=1)
         return x
 

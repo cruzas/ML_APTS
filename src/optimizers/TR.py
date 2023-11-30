@@ -1,13 +1,12 @@
 import torch
 from torch.optim.optimizer import Optimizer
 import torch.distributed as dist # For parallel training
-# from scipy.optimize import minimize_scalar
 import numpy as np
 import time
-# from scipy.optimize._hessian_update_strategy import BFGS, SR1
-from optimizers.Hessian_approx import *
+from scipy.optimize._hessian_update_strategy import BFGS, SR1
+from hess_approx.OBS import *
 from hess_approx.LSR1 import *
-# from hess_approx.LBGS import *
+from hess_approx.LBGS import *
 
 
 
@@ -64,8 +63,6 @@ class TR(Optimizer): # TR optimizer
         self.prev_g = None # gradient g_{k-1}
         self.hessian_len = self.history_size  # How many iterate/gradient differences to keep in memory
         self.gamma = None # Initial approximation of the Hessian B_{0}.. "None" means adaptive according to book Nocedal
-        self.model_accuracy_lvl = -1 # 2**model_accuracy Needed to average 2nd order direction with 1st order direction
-        self.model_accuracy_range = [0, 0.1, 0.3, 0.5, 0.75, 1] # 2**model_accuracy Needed to average 2nd order direction with 1st order direction
         
         if self.SECOND_ORDER:
             # BFGS
@@ -115,10 +112,13 @@ class TR(Optimizer): # TR optimizer
         if self.SECOND_ORDER:
             if "SR1" in second_order_method:
                 self.hessian_approx = LSR1(ha_memory=self.history_size)
+                # self.hessian_approx2 = LSR1(ha_memory=self.history_size)
             else:
-                self.hessian_approx = LBFGS()
+                raise NotImplementedError
+                # self.hessian_approx = LBFGS()
         
         self.subproblem = OBS()
+        # self.subproblem2 = OBS()
         self.iter_count = 0 # could we use self.steps instead?
 
         self.collection_of_all_variables = []
@@ -150,12 +150,10 @@ class TR(Optimizer): # TR optimizer
             if self.prev_x is not None:
                 x_diff = x - self.prev_x
                 g_diff = g - self.prev_g
-                
-                x_diff = x_diff.cpu().numpy()
-                g_diff = g_diff.cpu().numpy()
 
-                if np.linalg.norm(x_diff) > 10**-6 and np.linalg.norm(g_diff) > 10**-6: #update only if needed
+                if torch.norm(x_diff) > 10**-6 and torch.norm(g_diff) > 10**-6: #update only if needed
                     self.hessian_approx.update_memory(x_diff, g_diff)
+                    # self.hessian_approx2.update_memory(x_diff.cpu().numpy(), g_diff.cpu().numpy())
 
             self.prev_x = x
             self.prev_g = g
@@ -192,13 +190,23 @@ class TR(Optimizer): # TR optimizer
             self.update_hessian_history(x, g) # current weights and gradient
             if self.steps > self.delayed_second_order+1:
                 self.hessian_approx.precompute()
+                # self.hessian_approx2.precompute()
+                r=self.radius
                 try:
-                    r=self.radius.cpu().numpy()
+                    g2 = -self.subproblem.solve_tr_subproblem(g, r, self.hessian_approx.gamma, self.hessian_approx.Psi, self.hessian_approx.M_inv)
                 except:
-                    r=self.radius
-                try:
-                    g2 = -self.subproblem.solve_tr_subproblem(g.cpu().numpy(), r, self.hessian_approx.gamma, self.hessian_approx.Psi, self.hessian_approx.M_inv)
-                except:
+                    # g2 = -self.subproblem.solve_tr_subproblem(g, r, self.hessian_approx.gamma, self.hessian_approx.Psi, self.hessian_approx.M_inv)
+                    
+                    # g2 = -self.subproblem2.solve_tr_subproblem(g.cpu().numpy(), r, self.hessian_approx2.gamma, self.hessian_approx2.Psi, self.hessian_approx2.M_inv)
+                    # print(torch.norm(g2.cpu()-torch.tensor(g3)))
+                    # if torch.norm(g2.cpu()-torch.tensor(g3))>1:
+                    #     print(torch.norm(torch.tensor(self.hessian_approx2.M_inv)-self.hessian_approx.M_inv.cpu()))
+                    #     print(torch.norm(torch.tensor(self.hessian_approx2.Psi)-self.hessian_approx.Psi.cpu()))
+                    #     print(torch.norm(torch.tensor(self.hessian_approx2.gamma)-self.hessian_approx.gamma.cpu()))
+                    #     g2 = -self.subproblem.solve_tr_subproblem(g, r, self.hessian_approx.gamma, self.hessian_approx.Psi, self.hessian_approx.M_inv)
+                    #     g3 = -self.subproblem2.solve_tr_subproblem(g.cpu().numpy(), r, self.hessian_approx2.gamma, self.hessian_approx2.Psi, self.hessian_approx2.M_inv)
+
+                    
                     g2 = g.clone()
                     print('(row 203) subproblem failed')
                 g2 = torch.tensor(g2, device=self.device, dtype=torch.float32)
@@ -228,15 +236,10 @@ class TR(Optimizer): # TR optimizer
             with torch.no_grad():
                 if self.SECOND_ORDER and self.steps > self.delayed_second_order and self.steps > 1:
                     if c > 1:
+                        r=self.radius
                         try:
-                            r=self.radius.cpu().numpy()
+                            g2 = -self.subproblem.solve_tr_subproblem(g, r, self.hessian_approx.gamma, self.hessian_approx.Psi, self.hessian_approx.M_inv)
                         except:
-                            r=self.radius
-                        try:
-                            g2 = -self.subproblem.solve_tr_subproblem(g.cpu().numpy(), r, self.hessian_approx.gamma, self.hessian_approx.Psi, self.hessian_approx.M_inv)
-                        except:
-                            g2 = -self.subproblem.solve_tr_subproblem(g.cpu().numpy(), r, self.hessian_approx.gamma, self.hessian_approx.Psi, self.hessian_approx.M_inv)
-                            
                             g2 = g.clone()
                             print('(row 238) subproblem failed')
                         g2 = torch.tensor(g2, device=self.device, dtype=torch.float32)
@@ -268,7 +271,7 @@ class TR(Optimizer): # TR optimizer
             # Compute the accuracy factor between predicted and actual change (rho)
             actual_improvement = loss - new_loss.item()
             if self.SECOND_ORDER and self.delayed_second_order<=self.steps:
-                predicted_improvement = (g @ s) * s_incr - 1/2 * (s @ torch.tensor(self.hessian_approx.apply(s.cpu().numpy()), device=self.device, dtype=torch.float32)) * s_incr**2
+                predicted_improvement = (g @ s) * s_incr - 1/2 * (s @ self.hessian_approx.apply(s)) * s_incr**2
             elif self.MOMENTUM: # First order information only
                 predicted_improvement = g@(s*s_incr)# g_norm**2 * abs(s_incr) #- 1/2 * g_norm * s**2  # is like considering an identity approx of the Hessian
             else: # First order information only
@@ -301,55 +304,13 @@ class TR(Optimizer): # TR optimizer
 
             c += 1     
             self.iter_count += 1       
-            if c > 10:
-                # print(f"too many iterations. tr radius: {self.radius}")
-                # if self.radius <= self.min_radius:
+            if self.radius <= self.min_radius+self.min_radius/100 or c>10: #safeguard to avoid infinite loop
                 END = 1
 
-            # This is needed to fake dogleg method
             if END==1:
-                # self.model_accuracy_lvl = max(self.model_accuracy_lvl-1,0) # TODO: I think this line is not necessary since it's the same as what's on line 392 after the loop has been broken
                 break
-            else:
-                self.model_accuracy_lvl = min(self.model_accuracy_lvl+1,len(self.model_accuracy_range)-1)
-            
-        self.model_accuracy_lvl = max(self.model_accuracy_lvl-1,0)
-        # if new_loss.item()>loss.item() and not self.ACCEPT_ALL:
-        #     print('Something went wrong... loss is increasing')          
+                   
         return new_loss.item(), g, g_norm
     
-
-
-def biased_average(numbers,perc):
-    sorted_numbers = np.sort(numbers)
-    avg_sup = np.mean(sorted_numbers[-int(len(numbers) * perc/100):])
-    avg_inf = np.mean(sorted_numbers[:int(len(numbers) * perc/100)])
-    return avg_inf,avg_sup
-
-
-
-def find_minima(x, y, r, max_ord=3):
-    """
-    Find the position of the minima in a ball of radius "r" around x[0] using polynomial interpolation of the data.
-
-    Args:
-    x: a list of scalar positions
-    y: a list of the scalar values that an unknown function "f" assumes at each previous "x" position
-    r: the radius where to look for the minima.
-
-    Returns:
-    pos_minima: the position of the minima found in the ball of radius "r"
-    """
-    order = min(len(x)-1, max_ord)    # Compute the order of the polynomial based on the number of data points
-    poly = np.poly1d(np.polyfit(x, y, order))# Interpolate the data using a polynomial of order "order"
-    def poly_func(x):
-        return poly(x)
-    # Find the minimum of the polynomial within the radius
-    a = x[0] - r;    b = x[0] + r
-    result = minimize_scalar(poly_func, bounds=(a, b), method='bounded')
-    if not result.success:
-        raise ValueError("Failed to find minimum of polynomial within radius")
-    return result.x
-
 
 
