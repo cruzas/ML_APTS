@@ -19,6 +19,20 @@ class MNIST_FCNN(nn.Module):
         x = F.log_softmax(x, dim=1)
         return x
 
+class MNIST_FCNN_Small(nn.Module):
+    def __init__(self, input_size=784, hidden_sizes=[32], output_size=10):
+        super(MNIST_FCNN_Small, self).__init__()
+        self.l1 = nn.Linear(input_size, hidden_sizes[0])
+        self.l2 = nn.Linear(hidden_sizes[0], output_size)
+        
+    def forward(self, x):
+        x = x.view(x.size(0), -1)
+        x = F.relu(self.l1(x))
+        x = torch.sigmoid(self.l2(x))
+        x = F.log_softmax(x, dim=1)
+        return x
+
+
 class MNIST_CNN(nn.Module):
     def __init__(self):
         super(MNIST_CNN, self).__init__()

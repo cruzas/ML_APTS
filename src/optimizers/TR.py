@@ -88,7 +88,8 @@ class TR(Optimizer): # TR optimizer
             self.mom = torch.zeros(self.tot_params, device=self.device)
             self.beta1 = torch.tensor(beta1, device=device)
             self.beta2 = torch.tensor(beta2, device=device)
-            self.eps = torch.sqrt(torch.tensor(torch.finfo(list(self.params)[0].dtype).eps, device=device)) # sqrt of the machine precision
+            # self.eps = torch.sqrt(torch.tensor(torch.finfo(list(self.params)[0].dtype).eps, device=device)) # sqrt of the machine precision
+            self.eps = torch.sqrt(torch.finfo(list(self.params)[0].dtype).eps).to(device) # sqrt of the machine precision
 
 
 
@@ -181,7 +182,7 @@ class TR(Optimizer): # TR optimizer
         weights = [w for w in self.param_groups[0]['params'] if w.requires_grad] # Store the model's parameters
         x = torch.cat([p.flatten() for p in weights]).detach()      # Store the model's parameters (flat)
         g = torch.cat([p.grad.flatten() for p in weights]).detach() # Store the model's gradients (flat)
-        g_list = [p.grad.flatten().detach() if p.requires_grad else torch.tensor(0) for p in [w for w in self.param_groups[0]['params']]]
+        g_list = [p.grad.detach() if p.requires_grad else torch.tensor(0) for p in [w for w in self.param_groups[0]['params']]]
         g_norm = torch.norm(g, p=self.norm_type)                    # Gradient norm
         assert g.isnan().sum() == 0, "Gradient is NaN"
         assert g_norm != 0, "Gradient is zero. Cannot update the model."
@@ -209,7 +210,7 @@ class TR(Optimizer): # TR optimizer
                     
                     g2 = g.clone()
                     print('(row 203) subproblem failed')
-                g2 = torch.tensor(g2, device=self.device, dtype=torch.float32)
+                # g2 = torch.tensor(g2, device=self.device, dtype=torch.float32)
                 s = g2.clone()
             else:
                 s = g.clone()
@@ -242,7 +243,7 @@ class TR(Optimizer): # TR optimizer
                         except:
                             g2 = g.clone()
                             print('(row 238) subproblem failed')
-                        g2 = torch.tensor(g2, device=self.device, dtype=torch.float32)
+                        # g2 = torch.tensor(g2, device=self.device, dtype=torch.float32)
                         assert torch.isnan(g2).any() == False, "Nan in the update"
                         g2_norm = torch.norm(g2, p=self.norm_type)
                         s = g2.clone()
