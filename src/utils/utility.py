@@ -223,10 +223,10 @@ def get_net_fun_and_params(dataset, net_nr):
     if dataset == "MNIST":
         if net_nr == 0:
             net = MNIST_FCNN
-            net_params = {"hidden_sizes": [3]}
+            net_params = {"hidden_sizes": [128, 64]}
         elif net_nr == 1:
             net = MNIST_FCNN
-            net_params = {"hidden_sizes": [3]}
+            net_params = {"hidden_sizes": [128, 64]}
         elif net_nr == 2:
             net = MNIST_CNN
             net_params = {}
@@ -291,7 +291,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='PyTorch multi-gpu training.')
     # Training parameters
     parser.add_argument('--epochs', type=int, default=100, help='Number of epochs.')
-    parser.add_argument('--trials', type=int, default=1, help='Number of experiment trials.')
+    parser.add_argument('--trials', type=int, default=3, help='Number of experiment trials.')
     parser.add_argument('--net_nr', type=int, default=0, help="Model number (NOT number of models).")
     parser.add_argument('--dataset', type=str, default="MNIST", help='Dataset name. Currently, MNIST and CIFAR10 are supported.')
     parser.add_argument('--minibatch_size', type=int, default=60000, help='Batch size for training (default 100).')
@@ -304,7 +304,7 @@ def parse_args():
     parser.add_argument('--beta1', type=float, default=0.9, help="Beta1 for Adam optimizer.")
     parser.add_argument('--beta2', type=float, default=0.999, help="Beta2 for Adam optimizer.")
     # TR/APTS specific parameter settings
-    parser.add_argument('--radius', type=float, default=0.01, help='TR radius.')
+    parser.add_argument('--radius', type=float, default=1.0, help='TR radius.')
     parser.add_argument('--max_radius', type=float, default=4.0, help='Maximum learning rate.')
     parser.add_argument('--min_radius', type=float, default=0.001, help='Minimum learning rate.')
     parser.add_argument('--decrease_factor', type=float, default=0.5, help='Learning rate decrease factor.')

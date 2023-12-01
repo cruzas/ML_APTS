@@ -32,7 +32,6 @@ class TR(Optimizer): # TR optimizer
     norm_type=2):                   # Norm type for the trust region radius
 
         super().__init__(params, {})
-        
         self.steps = 0
         self.radius = radius
         self.params = self.param_groups[0]['params']
@@ -178,7 +177,7 @@ class TR(Optimizer): # TR optimizer
         self.steps += 1
         loss = closure() # NOTE: this is the only time we compute the gradient inside step()
 
-        # weights = self.param_groups[0]['params']           
+        # weights = self.param_groups[0]['params'] 
         weights = [w for w in self.param_groups[0]['params'] if w.requires_grad] # Store the model's parameters
         x = torch.cat([p.flatten() for p in weights]).detach()      # Store the model's parameters (flat)
         g = torch.cat([p.grad.flatten() for p in weights]).detach() # Store the model's gradients (flat)

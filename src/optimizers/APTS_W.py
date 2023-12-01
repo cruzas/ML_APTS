@@ -71,10 +71,10 @@ class APTS_W(Optimizer):
                  ):
 
         super(APTS_W, self).__init__(params, {})
-
+        if model is None or loss_fn is None or global_opt is None or global_opt_params is None or local_opt is None or local_opt_params is None:
+            raise ValueError('model, loss_fn, global_opt, global_opt_params, local_opt, local_opt_params must be defined.')
         self.rank = dist.get_rank()
         self.tot_layers = len(list(model.parameters()))
-        self.model = model
         self.backend = dist.get_backend()
 
         self.max_iter = max_iter
@@ -83,6 +83,15 @@ class APTS_W(Optimizer):
         self.loss_fn = loss_fn
         self.iter = 0
         self.fdl = bool(forced_decreasing_loss) # in case forced_decreasing_loss is 0 or 1
+
+        if self.rank == 0:
+            self.global_model = model
+            self.model = copy.deepcopy(model)
+            self.global_optimizer = global_opt(self.global_model.parameters(), **global_opt_params)
+        else:
+            self.model = model
+
+        self.radius = global_opt_params['radius']
 
         # Initialize the local models and optimizers
         self.rank2layer, self.layer2rank = self.define_trainable_layers(shuffle=shuffle_layers)
@@ -98,11 +107,6 @@ class APTS_W(Optimizer):
             local_opt_params.update({'device': 'cuda'}) # TODO: make this more general
             
         self.local_optimizer = local_opt(self.model.parameters(), **local_opt_params)
-        
-        if self.rank == 0:
-            self.global_model = copy.deepcopy(self.model)
-            self.global_optimizer = global_opt(self.global_model.parameters(), **global_opt_params)
-        self.radius = global_opt_params['radius']
         torch.cuda.empty_cache()
 
     def set_trainable_layers(self, is_global=False):
@@ -145,6 +149,13 @@ class APTS_W(Optimizer):
         J = self.loss_fn(model(inputs), targets)
         if torch.is_grad_enabled():
             model.zero_grad()
+            J.backward()
+        return J.item()
+    
+    def global_closure(self, inputs, targets):
+        J = self.loss_fn(self.global_model(inputs), targets)
+        if torch.is_grad_enabled():
+            self.global_model.zero_grad()
             J.backward()
         return J.item()
         
@@ -373,8 +384,18 @@ class APTS_W(Optimizer):
         # Global smoothing step 
         new_loss = 0
         if self.global_pass and self.rank == 0:
-            new_loss = self.global_optimizer.step(lambda dummy=1: self.closure(inputs, targets, self.global_model))[0]
+            # print(f'Norm 1  : {list_norm(list(self.global_model.parameters()), p=torch.inf)}')
+            # self.global_optimizer.param_groups[0]['params'] = self.global_model.parameters()
+            # print(f'Norm 2  : {list_norm(list(self.global_model.parameters()), p=torch.inf)}')
+            new_loss = self.global_optimizer.step(lambda dummy=1: self.global_closure(inputs, targets))[0]
+            # print(f'{self.iter} Norm 3  : {list_norm(list(self.global_model.parameters()), p=torch.inf)} and loss {new_loss}')
             self.radius = self.global_optimizer.radius
+
+        dist.barrier()
+        # Broadcast the radius
+        self.radius = torch.tensor(self.radius, device='cpu')
+        dist.broadcast(self.radius, src=0)
+        # self.radius = self.radius.item()
 
         # print(f'Iteration {self.iter} | initial loss: {initial_loss}, after local steps: {local_loss}, loss before global step {loss}, final loss {new_loss}') ##
         if self.iter == 1:
