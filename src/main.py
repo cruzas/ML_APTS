@@ -15,43 +15,62 @@ from utils.utility import *
 # torch.cuda.set_device('cuda:1')
 # torch.cuda.empty_cache()
 
+def get_apts_w_params(momentum=False, second_order=False, nr_models=2, max_iter=5, fdl=False, global_pass=True, device=None):
+    TR_APTS_W_PARAMS_GLOBAL = {
+        "radius": 0.1,
+        "max_radius": 4.0,
+        "min_radius": 0.0001,
+        "decrease_factor": 0.5,
+        "increase_factor": 2.0,
+        "is_adaptive": False,
+        "second_order": second_order,
+        "delayed_second_order": 0,
+        "device": device,
+        "accept_all": False,
+        "acceptance_ratio": 0.75,
+        "reduction_ratio": 0.25,
+        "history_size": 5,
+        "momentum": momentum,
+        "beta1": 0.9,
+        "beta2": 0.999,
+        "norm_type": torch.inf,
+    }
 
-def create_sub_model(local_model, rank, world_size):
-    '''
-    Creates a submodel with trainable layers distributed across ranks.
-    Raises an error if the number of ranks exceeds the number of parameter groups.
-    '''
-    # TODO: For efficiency, change the following (E.g. choose a world size that is just enough, i.e. with every GPU needed filled)
-    # TODO: If enough processes are availalb and each layer is not big enough, distribute even more layers per process...or something like that
+    TR_APTS_W_PARAMS_LOCAL = {
+        "radius": 0.01,
+        "max_radius": 0.1,
+        "min_radius": 0,  # based on APTS class
+        "decrease_factor": 0.5,
+        "increase_factor": 2.0,
+        "is_adaptive": False,
+        "second_order": second_order,
+        "delayed_second_order": 0,
+        "device": device,
+        "accept_all": False,
+        "acceptance_ratio": 0.75,
+        "reduction_ratio": 0.25,
+        "history_size": 5,
+        "momentum": momentum,
+        "beta1": 0.9,
+        "beta2": 0.999,
+        "norm_type": torch.inf,
+    }
 
-    tot_layers = len(list(local_model.parameters()))
-    # tot_params = sum([p.numel() for p in local_model.parameters()])
-    if tot_layers < world_size:
-        raise ValueError(f"Too many GPUs ({world_size}) for {tot_layers} subdomains. Crashing the code to avoid wasting computational time.")
+    APTS_W_PARAMS = {
+        "device": device,
+        "max_iter": max_iter,
+        "nr_models": nr_models,
+        "global_opt": TR,
+        "global_opt_params": TR_APTS_W_PARAMS_GLOBAL,
+        "local_opt": TR,
+        "local_opt_params": TR_APTS_W_PARAMS_LOCAL,
+        "global_pass": global_pass,
+        "forced_decreasing_loss": fdl,
+        "loss_fn": nn.CrossEntropyLoss(),
+    }
+
+    return APTS_W_PARAMS
     
-    # index_shuffled = torch.randperm(tot_layers)
-    index_shuffled = list(range(tot_layers))
-
-    trainable_layers = []
-    params_per_subset = [0]*world_size
-    for i in range(world_size):
-        params_per_subset[i] = int(tot_layers / (world_size-i))
-        if i == world_size - 1:
-            trainable_layers.append(index_shuffled[sum(params_per_subset[:i]):])
-        else:
-            trainable_layers.append(index_shuffled[sum(params_per_subset[:i]):sum(params_per_subset[:i+1])])
-        tot_layers -= params_per_subset[i]
-
-    for index, param in enumerate(local_model.parameters()):
-        param.requires_grad = index in trainable_layers[rank]
-
-    dict = {k: v for k, v in enumerate(trainable_layers)}
-    del trainable_layers # TODO: do this in a more memory-efficient way next time
-    layer2rank = {v: k for k, lst in dict.items() for v in lst}
-
-    return local_model, layer2rank
-
-
 def main(rank=None, master_addr=None, master_port=None, world_size=None):
     # Set up the distributed environment.
     prepare_distributed_environment(rank, master_addr, master_port, world_size)
@@ -80,13 +99,11 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
 
     loss_function = nn.CrossEntropyLoss()
     args.loss_fn = loss_function
-    optimizer_params = get_optimizer_params(args)
+    optimizer_params = get_apts_w_params(momentum=False, second_order=False, nr_models=2, max_iter=5, fdl=False, global_pass=True, device=None)
     opt_fun = get_optimizer_fun(optimizer_name)
     net_fun, net_params = get_net_fun_and_params(dataset, net_nr)
 
     network = net_fun(**net_params).to(device)
-    local_network,layer2rank = create_sub_model(network, rank, args.nr_models)
-
     optimizer = opt_fun(network.parameters(), model=network, **optimizer_params)
     
     # Data loading
@@ -105,7 +122,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             train_loader=train_loader,
             test_loader=test_loader,
             optimizer=optimizer,
-            net=local_network,
+            net=network,
             num_epochs=epochs,
             criterion=loss_function,
             desired_accuracy=100,
