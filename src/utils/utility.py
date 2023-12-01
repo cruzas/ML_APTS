@@ -93,6 +93,8 @@ def compute_loss(data_loader, net, criterion, device=torch.device("cuda") if tor
 
 
 def do_one_optimizer_test(train_loader, test_loader, optimizer, net, num_epochs, criterion, desired_accuracy=100, device=torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")):
+    train_losses = []
+    test_accuracies = []
     for epoch in range(0, num_epochs + 1):
         epoch_train_loss = 0
         count = 0
@@ -144,13 +146,16 @@ def do_one_optimizer_test(train_loader, test_loader, optimizer, net, num_epochs,
 
             epoch_train_loss += train_loss
             count += 1
+        
+        train_losses.append(epoch_train_loss/count)
 
         test_accuracy = compute_accuracy(data_loader=test_loader, net=net, device=device)
+        test_accuracies.append(test_accuracy)
         # Check if test accuracy meets desired accuracy. If so, break training loop.
         if test_accuracy >= desired_accuracy:
             break
 
-    return epoch_train_loss/count, test_accuracy
+    return train_losses, test_accuracies
 
 
 def load_data(dataset="mnist", data_dir=os.path.abspath("./data"), TOT_SAMPLES=False):
@@ -223,13 +228,16 @@ def get_net_fun_and_params(dataset, net_nr):
     if dataset == "MNIST":
         if net_nr == 0:
             net = MNIST_FCNN
-            net_params = {"hidden_sizes": [128, 64]}
+            net_params = {"hidden_sizes": [32, 32]}
         elif net_nr == 1:
             net = MNIST_FCNN
-            net_params = {"hidden_sizes": [128, 64]}
+            net_params = {"hidden_sizes": [32, 32]}
         elif net_nr == 2:
             net = MNIST_CNN
             net_params = {}
+        elif net_nr == 3:
+            net = MNIST_FCNN_Small
+            net_params = {"hidden_sizes": [3]}
     elif dataset == "CIFAR10":
         if net_nr == 0:
             net = CIFAR_FCNN
@@ -290,9 +298,9 @@ def parse_args():
     # Default value is selected when no command line argument of the same name is provided
     parser = argparse.ArgumentParser(description='PyTorch multi-gpu training.')
     # Training parameters
-    parser.add_argument('--epochs', type=int, default=100, help='Number of epochs.')
+    parser.add_argument('--epochs', type=int, default=50, help='Number of epochs.')
     parser.add_argument('--trials', type=int, default=3, help='Number of experiment trials.')
-    parser.add_argument('--net_nr', type=int, default=0, help="Model number (NOT number of models).")
+    parser.add_argument('--net_nr', type=int, default=3, help="Model number (NOT number of models).")
     parser.add_argument('--dataset', type=str, default="MNIST", help='Dataset name. Currently, MNIST and CIFAR10 are supported.')
     parser.add_argument('--minibatch_size', type=int, default=60000, help='Batch size for training (default 100).')
     parser.add_argument('--overlap_ratio', type=float, default=0, help='Overlap ratio for minibatches.')

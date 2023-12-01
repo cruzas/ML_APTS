@@ -3,6 +3,7 @@ import pprint,copy, torch
 import torch.multiprocessing as mp
 # User libraries
 from utils.utility import *
+from matplotlib import pyplot as plt
 
 # a=torch.randn(1000000000, device='cuda:0')
 # time.sleep(2)
@@ -17,8 +18,8 @@ from utils.utility import *
 
 def get_apts_w_params(momentum=False, second_order=False, nr_models=2, max_iter=5, fdl=False, global_pass=True, device=None):
     TR_APTS_W_PARAMS_GLOBAL = {
-        "radius": 0.1,
-        "max_radius": 4.0,
+        "radius": 0.01, #0.1,
+        "max_radius": 0.1, #4.0
         "min_radius": 0.0001,
         "decrease_factor": 0.5,
         "increase_factor": 2.0,
@@ -99,7 +100,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
 
     loss_function = nn.CrossEntropyLoss()
     args.loss_fn = loss_function
-    optimizer_params = get_apts_w_params(momentum=False, second_order=False, nr_models=2, max_iter=5, fdl=False, global_pass=True, device=None)
+    optimizer_params = get_apts_w_params(momentum=False, second_order=False, nr_models=2, max_iter=5, fdl=True, global_pass=True, device=None)
     opt_fun = get_optimizer_fun(optimizer_name)
     net_fun, net_params = get_net_fun_and_params(dataset, net_nr)
 
@@ -118,7 +119,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
 
     # Training loop
     for trial in range(trials):
-        loss, accuracy = do_one_optimizer_test(
+        losses, accuracies, = do_one_optimizer_test(
             train_loader=train_loader,
             test_loader=test_loader,
             optimizer=optimizer,
@@ -129,11 +130,16 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             device=device
         )
 
-        print(
-            f"Rank {rank}. Trial {trial + 1}/{trials} finished. Loss: {loss:.4f}, Accuracy: {accuracy:.4f}"
-        )
-        
-         
+        if dist.get_rank() == 0:
+            print(
+                f"Rank {rank}. Trial {trial + 1}/{trials} finished. Loss: {losses[-1]:.4f}, Accuracy: {accuracies[-1]:.4f}"
+            )
+            # here we plot the accuracy after the training through matplotlib
+            plt.plot(losses)
+            # hold on:
+
+        plt.show()
+        print(f"Rank {rank}: Plot successful.")
 
         
         #  # USE CUDA STREAMS???
