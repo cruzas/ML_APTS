@@ -397,8 +397,9 @@ class APTS_W(Optimizer):
             print(f'GLOBAL 2 - Preconditioenr: loss {new_loss}, param norm {list_norm(list(self.global_model.parameters()), p=2)}')
             new_loss = self.global_optimizer.step(lambda dummy=1: self.global_closure(inputs, targets))[0]
             print(f'GLOBAL 3 - Preconditioenr: loss {new_loss}, param norm {list_norm(list(self.global_model.parameters()), p=2)}')
-            self.radius = torch.tensor(self.global_optimizer.radius, device='cpu')
+            self.radius = torch.tensor(self.global_optimizer.radius)
 
+        self.radius = self.radius.to('cpu' if self.backend=='gloo' else 'cuda:0')
         dist.barrier()
         dist.broadcast(self.radius, src=0) # Broadcast the radius
 

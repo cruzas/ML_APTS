@@ -83,9 +83,10 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
 
     torch.random.manual_seed(0)
 
-    # Device
-    device = torch.device(f"cuda:{rank}")
-    torch.set_default_device(device)
+    # Device    
+    backend = dist.get_backend()
+    device = torch.device(f"cuda:{rank if backend == 'gloo' else 0}")
+    # torch.set_default_device(device)
     args.device = device
     args.nr_models = dist.get_world_size()
 
