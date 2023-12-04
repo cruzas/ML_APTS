@@ -46,7 +46,7 @@ def average_gradients(model):
         param.grad.data /= size
 
 
-def compute_accuracy(data_loader, net, device=torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")):
+def compute_accuracy(data_loader, net, device=torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")):
     with torch.no_grad():
         correct = 0
         total = 0
@@ -71,7 +71,7 @@ def compute_accuracy(data_loader, net, device=torch.device("cuda") if torch.cuda
     return accuracy
 
 
-def compute_loss(data_loader, net, criterion, device=torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")):
+def compute_loss(data_loader, net, criterion, device=torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")):
     with torch.no_grad():
         loss = 0
         count = 0
@@ -92,7 +92,7 @@ def compute_loss(data_loader, net, criterion, device=torch.device("cuda") if tor
         return loss.cpu().item() / count
 
 
-def do_one_optimizer_test(train_loader, test_loader, optimizer, net, num_epochs, criterion, desired_accuracy=100, device=torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")):
+def do_one_optimizer_test(train_loader, test_loader, optimizer, net, num_epochs, criterion, desired_accuracy=100, device=torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")):
     train_losses = []
     test_accuracies = []
     for epoch in range(0, num_epochs + 1):
@@ -298,9 +298,9 @@ def parse_args():
     # Default value is selected when no command line argument of the same name is provided
     parser = argparse.ArgumentParser(description='PyTorch multi-gpu training.')
     # Training parameters
-    parser.add_argument('--epochs', type=int, default=50, help='Number of epochs.')
-    parser.add_argument('--trials', type=int, default=3, help='Number of experiment trials.')
-    parser.add_argument('--net_nr', type=int, default=3, help="Model number (NOT number of models).")
+    parser.add_argument('--epochs', type=int, default=10, help='Number of epochs.')
+    parser.add_argument('--trials', type=int, default=1, help='Number of experiment trials.')
+    parser.add_argument('--net_nr', type=int, default=0, help="Model number (NOT number of models).")
     parser.add_argument('--dataset', type=str, default="MNIST", help='Dataset name. Currently, MNIST and CIFAR10 are supported.')
     parser.add_argument('--minibatch_size', type=int, default=60000, help='Batch size for training (default 100).')
     parser.add_argument('--overlap_ratio', type=float, default=0, help='Overlap ratio for minibatches.')
