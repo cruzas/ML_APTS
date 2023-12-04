@@ -336,7 +336,7 @@ def parse_args():
     parser.add_argument('--op', type=str, default="sum", help="APTS reduction on local steps to be performed.")
     default_db_path = "./results/blah.db" 
     parser.add_argument('--db_path', type=str, default=default_db_path, help="Local optimizer to be used.")
-    parser.add_argument('--on_cluster', type=str, default="n", help="Are you executing this code on a cluster? Yes or no.")
+    parser.add_argument('--on_cluster', type=str, default="y", help="Are you executing this code on a cluster? Yes or no.")
 
     args = parser.parse_args()
     if "SGD" not in args.optimizer_name:
