@@ -1,6 +1,6 @@
 import torch, copy
 from torch.optim.optimizer import Optimizer
-from optimizers.TR import *
+from optim.TR import *
 import pickle
 import itertools
 import torch.distributed as dist
@@ -33,7 +33,14 @@ def list_sum(list1, list2): #TODO: parallelize maybe through streams (when model
     with torch.no_grad():
         result = [list1[i] + list2[i] for i in range(len(list1))]
     return result
-    
+
+
+def list_scalar_product(list1, list2): #TODO: parallelize maybe through streams (when model pipelining is implemented or even with multiple layers on one GPU)
+    with torch.no_grad():
+        result = 0
+        for i in range(len(list1)):
+            result += torch.sum(list1[i]*list2[i]).item()
+    return result 
 
 def list_norm(list1, p=2): #TODO: parallelize maybe through streams (when model pipelining is implemented or even with multiple layers on one GPU)
     if p == torch.inf:
@@ -57,8 +64,6 @@ class APTS_W(Optimizer):
     def __init__(self,
                  params,
                  model=None,
-                 loss_fn=None,
-                 device=None,
                  max_iter=2,
                  nr_models=None,
                  global_opt=None,
@@ -67,27 +72,30 @@ class APTS_W(Optimizer):
                  local_opt_params=None,
                  global_pass=True,
                  forced_decreasing_loss=False,
-                 shuffle_layers=False
+                 shuffle_layers=False,
+                 sequential_derivative=5,
+                 loss_fn=torch.nn.CrossEntropyLoss
                  ):
 
         super(APTS_W, self).__init__(params, {})
-        if model is None or loss_fn is None or global_opt is None or global_opt_params is None or local_opt is None or local_opt_params is None:
-            raise ValueError('model, loss_fn, global_opt, global_opt_params, local_opt, local_opt_params must be defined.')
+        if model is None or global_opt is None or global_opt_params is None or local_opt is None or local_opt_params is None:
+            raise ValueError('model, global_opt, global_opt_params, local_opt, local_opt_params must be defined.')
         self.rank = dist.get_rank()
-        self.tot_layers = len(list(model.parameters()))
+        with torch.no_grad():
+            self.tot_layers = len(list(model.parameters()))
+        self.loss_fn = loss_fn()
         self.backend = dist.get_backend()
-
+        self.sequential_derivative = sequential_derivative
         self.max_iter = max_iter
         self.nr_models = nr_models if nr_models is not None else self.tot_layers
         self.global_pass = bool(global_pass) # in case global_pass is 0 or 1
-        self.loss_fn = loss_fn
         self.iter = 0
         self.fdl = bool(forced_decreasing_loss) # in case forced_decreasing_loss is 0 or 1
 
         if self.rank == 0:
-            self.global_model = model
-            self.model = copy.deepcopy(model)
-            self.global_optimizer = global_opt(self.global_model.parameters(), **global_opt_params)
+            self.model = model
+            self.global_model_params = copy.deepcopy(list(model.parameters()))
+            self.global_optimizer = global_opt(self.global_model_params, **global_opt_params)
         else:
             self.model = model
 
@@ -97,10 +105,6 @@ class APTS_W(Optimizer):
         self.rank2layer, self.layer2rank = self.define_trainable_layers(shuffle=shuffle_layers)
         self.set_trainable_layers()
         self.restricted_global_params = [torch.tensor(0)]*self.tot_layers
-        params_list = list(self.model.parameters())
-        idx_range = range(self.tot_layers) if self.rank == 0 else self.rank2layer[self.rank]
-        for layer in idx_range:
-            self.restricted_global_params[layer] = params_list[layer].clone().detach()
 
         if 'TR' in str(local_opt):
             local_opt_params['min_radius'] = 0 # avoids problems with "radius" being smallers than "min_radius"
@@ -145,23 +149,59 @@ class APTS_W(Optimizer):
         return rank2layer, layer2rank
     
 
-    def closure(self, inputs, targets, model):
-        J = self.loss_fn(model(inputs), targets)
-        if torch.is_grad_enabled():
+    def closure(self, inputs, targets, model, sequential_derivative=None):
+        # model.train()
+        # model.eval()
+        if sequential_derivative is not None:
+            # here we compute the derivative using microbatches to reduce memory usage
             model.zero_grad()
-            J.backward()
-        return J.item()
-    
-    def global_closure(self, inputs, targets):
-        J = self.loss_fn(self.global_model(inputs), targets)
-        if torch.is_grad_enabled():
-            self.global_model.zero_grad()
-            J.backward()
-        return J.item()
+            micro_batch_size = inputs.shape[0] // sequential_derivative
+            J_total = 0
+            for i in range(sequential_derivative):
+                if i == sequential_derivative - 1:
+                    inp = inputs[i*micro_batch_size:]
+                    tar = targets[i*micro_batch_size:]
+                else:
+                    inp = inputs[i*micro_batch_size:(i+1)*micro_batch_size]        
+                    tar = targets[i*micro_batch_size:(i+1)*micro_batch_size]
+                maybe_dict = self.model(inp, tar, False)
+                if isinstance(maybe_dict, dict):
+                    J = maybe_dict['loss']
+                else:
+                    J = self.loss_fn(inp, tar)
+
+                J = J/sequential_derivative
+                J_total += J.item()
+                if torch.is_grad_enabled():
+                    # print(f"Rank {self.rank} J is a leaf node: {J.is_leaf}")
+                    J.backward()
+                    torch.cuda.empty_cache()    
+        else:
+            maybe_dict = model(inputs,targets,False)
+            if isinstance(maybe_dict, dict):
+                J = maybe_dict['loss']
+            else:
+                J = self.loss_fn(inp, tar)
+
+            if torch.is_grad_enabled():
+                model.zero_grad()
+                # print(f"Rank {self.rank} J is a leaf node: {J.is_leaf}")
+                J.backward()
+                torch.cuda.empty_cache()
+            J_total = J.item()
+
+        # print gradient norm:
+        # if torch.is_grad_enabled():
+        #     print(f'Rank {self.rank} seq_der {sequential_derivative} - J_tot {J_total} - grad norm {list_norm([p.grad for p in model.parameters() if p.requires_grad is True], p=torch.inf)}')
+        # else:
+        #     print(f'Rank {self.rank} seq_der {sequential_derivative} - J_tot {J_total}')
+        # if sequential_derivative is not None:
+        #     self.closure( inputs, targets, model, sequential_derivative=None)
+        return J_total
         
-    def restricted_global_params(self): # Remove in production
-        sub = list(self.model.parameters())
-        return torch.cat([p.flatten().detach() for i,p in enumerate(self.model.parameters()) if sub[i].requires_grad is True])
+    # def restricted_global_params(self): # Remove in production
+    #     sub = list(self.model.parameters())
+    #     return torch.cat([p.flatten().detach() for i,p in enumerate(self.model.parameters()) if sub[i].requires_grad is True])
         
     def local_model_params(self):
         return torch.cat([p.flatten().detach() for p in self.model.parameters() if p.requires_grad is True])
@@ -236,27 +276,35 @@ class APTS_W(Optimizer):
             
         grad_norm2 = 0
 
-        global_params_list = list(self.model.parameters())
+        global_params_list = [p.clone().detach() for p in self.model.parameters() if p.requires_grad is True]
+        OLD_LOSS= self.closure(inputs, targets, self.model, self.sequential_derivative)
         for j in range(self.max_iter): # Iterations of the preconditioning step            
             self.local_optimizer.radius = lr
-            self.local_optimizer.max_radius = lr            
-            local_loss, grad, grad_norm = self.local_optimizer.step(lambda dummy=1: self.closure(inputs, targets, self.model)) 
-            
+            self.local_optimizer.max_radius = lr        
+            # print(f'rank {self.rank} - iter {j} - lr {lr}')    
+            local_loss, grad, grad_norm = self.local_optimizer.step(lambda dummy=1: self.closure(inputs, targets, self.model, self.sequential_derivative)) 
+            # print(f'rank {self.rank} - iter {j} - lr {lr} - loss {local_loss} - grad norm {grad_norm}')
             if j == 0:
                 grad_norm2 = max(grad_norm2, grad_norm)
-                for i in self.rank2layer[self.rank]:
-                    if self.rank != 0:
-                        send_device = 'cpu' if self.backend == 'gloo' else grad[i].device
-                        g[i] = grad[i].clone().detach().to(send_device, non_blocking=True)
+                for i in range(self.tot_layers):
+                    send_device = 'cpu' if self.backend == 'gloo' else grad[i].device
+                    if i in self.rank2layer[self.rank]:
+                        if self.rank != 0:
+                            g[i] = grad[i].clone().detach().to(send_device, non_blocking=True)
+                        else:
+                            g[i] = grad[i].clone().detach().to('cuda', non_blocking=True)
                     else:
-                        g[i] = grad[i].clone().detach().to('cuda', non_blocking=True)
+                        if self.rank != 0:
+                            g[i] = torch.tensor(0.0, device=send_device)
                         
             # Update radius to make sure the update is inside the global trust region radius
-            lr = self.radius - list_norm(list_linear_comb(1, self.restricted_global_params, -1, global_params_list), p=torch.inf)
+            # print(f'rank {self.rank} - !!!!!!!!!!! {list_norm(list_linear_comb(1, [p for p in self.model.parameters() if p.requires_grad is True], -1, global_params_list), p=torch.inf)}')
+            lr = self.radius - list_norm(list_linear_comb(1, [p for p in self.model.parameters() if p.requires_grad is True], -1, global_params_list), p=torch.inf)
             if lr < torch.finfo(torch.get_default_dtype()).eps:
                 break
-                
+        print(f' Rank {self.rank} - OLD_LOSS {OLD_LOSS} - local loss {local_loss} - grad norm {grad_norm2} - radius {self.radius} - lr {lr} - max_iter {j+1}')
         # Collect the gradients from local models
+        # print(f'Rank {self.rank} - norm gradient {list_norm(g, p=2)}')
         if self.rank != 0:
             for layer in self.rank2layer[self.rank]:
                 send_device = 'cpu' if self.backend == 'gloo' else g[layer].device
@@ -268,56 +316,66 @@ class APTS_W(Optimizer):
                     g2 = torch.zeros_like(g[layer]).to(receive_device)
                     dist.recv(g2, src=i, tag=layer)
                     if self.backend == 'gloo':
-                        g[layer] = g[layer].copy_(g2).to('cuda:0')
+                        g[layer] = g[layer].copy_(g2).to('cuda:0') # because only main process should receive (i.e. process 0)
                     else: # Daint
                         g[layer] = g[layer].copy_(g2).to('cuda')
-
         return local_loss, g, grad_norm2
     
+    
     def synchronize_global_to_local(self):
+        '''
+        Synchronize the local models with global model parameters
+        '''
         with torch.no_grad():
             if self.rank == 0:
+                # Save the global model parameters
+                self.global_model_params = copy.deepcopy(list(self.model.parameters()))
                 # Send to other ranks
-                global_model_params_list = list(self.global_model.parameters())
-                dist.broadcast_object_list(global_model_params_list, src=0)
+                dist.broadcast_object_list(self.global_model_params, src=0)
 
-                # Update its own local model
-                for layer,p in enumerate(self.model.parameters()):  
-                    p.copy_(global_model_params_list[layer])
+                # Update the model on rank 0 to be the local model
+                for layer, p in enumerate(self.model.parameters()):  
                     if layer in self.rank2layer[self.rank]:
-                        p.requires_grad = True
+                        p.requires_grad = True  
                     else:
                         p.requires_grad = False
             else:
+                # Placeholder to receive global parameters
                 params_list = list(self.model.parameters())
+                # Receive update global parameters from rank 0
                 dist.broadcast_object_list(params_list, src=0)
-                for layer,p in enumerate(self.model.parameters()):
+                for layer, p in enumerate(self.model.parameters()):
                     p.copy_(params_list[layer])
-                    if layer not in self.rank2layer[self.rank]:
+                    if layer in self.rank2layer[self.rank]: # Trainable layer locally
+                        p.requires_grad = True 
+                    else: # Non-trainable layer locally
                         p.requires_grad = False
-                    else:
-                        p.requires_grad = True
-            
+        # Ensure all processes have reached this point
         dist.barrier()
             
-
-    def synchronize_new_params_to_rank0_local(self):
+    def synchronize_local_to_global(self):
         with torch.no_grad():
-            if self.rank != 0:
+            if self.rank == 0:
+                for i in range(1, self.nr_models):
+                    for layer, p in enumerate(self.model.parameters()):
+                        if layer in self.rank2layer[i]:
+                            orig_device = p.device
+                            receive_device = 'cpu' if self.backend == 'gloo' else p.device
+                            # layer_from_i = torch.zeros_like(p).to(receive_device)
+                            dist.recv(p.to(receive_device), src=i, tag=layer)
+                            p.copy_(p.to(orig_device))
+                            # dist.recv(layer_from_i, src=i, tag=layer)
+                            # assert p.shape == layer_from_i.shape
+                            # p.copy_(layer_from_i) # TODO: test if this modifies things
+                            p.requires_grad = True
+                            # p = p.to(orig_device) <- this needs further testing TODO
+            else:
                 for layer, p in enumerate(self.model.parameters()):
                     if layer in self.rank2layer[self.rank]:
                         send_device = 'cpu' if self.backend == 'gloo' else p.device
                         dist.send(p.to(send_device), dst=0, tag=layer)
-            else:
-                for i in range(1, self.nr_models):
-                    for layer, p in enumerate(self.model.parameters()):
-                        if layer in self.rank2layer[i]:
-                            receive_device = 'cpu' if self.backend == 'gloo' else p.device
-                            layer_from_i = torch.zeros_like(p).to(receive_device)
-                            dist.recv(layer_from_i, src=i, tag=layer)
-                            assert p.shape == layer_from_i.shape
-                            p.copy_(layer_from_i) # TODO: test if this modifies things
-                            p.requires_grad = True
+
+        # Ensure all processes have reached this point
         dist.barrier()
     
     def step(self, inputs, targets):  
@@ -326,85 +384,79 @@ class APTS_W(Optimizer):
         '''
         self.iter += 1
         skip_preconditioning = False
-        if skip_preconditioning is False:
-            self.local_optimizers_sync() # Sharing weights of the global NN with the local ones
-            self.synchronize_global_to_local() # Synchronize the local models with global model parameters
-            torch.cuda.empty_cache()
-            
-            print(f'Rank {self.rank} - trainable layers {[p.requires_grad for p in self.model.parameters()]}')
-            print(f'Rank {self.rank} - param norm {torch.norm(torch.cat([p.flatten() for p in self.model.parameters()]), p=2)}')
-            loss, g, _ = self.local_steps(inputs, targets)
-
-            print(f'Rank {self.rank} - Preconditioenr: loss {loss}, param norm {torch.norm(torch.cat([p.flatten() for p in self.model.parameters()]), p=2)}')
-            # sync the local models with the global model
-            # print(f'Rank {self.rank}, Local steps took {time.time()-a} seconds')
-            self.synchronize_new_params_to_rank0_local()
-            # print(f'Rank {self.rank}, sync took {time.time()-a} seconds')
         
-            # check that the loss is decreasing
-            if self.fdl: # TODO: make this parallel, do some dogleg iterations  in parallel and only keep the longest step which satisfies the decreasing loss condition
-                with torch.no_grad():
-                    if self.rank == 0:
-                        old_params = list(self.global_model.parameters())
-                        for i,p in enumerate(self.model.parameters()):
-                            p.copy_(old_params[i])
-
-                        step = list_linear_comb(1, list(self.model.parameters()), -1, old_params) # new_params - old_params
-                        print(f'GLOBAL-1: step norm {list_norm(step, p=2)}')
+        if skip_preconditioning is False: 
+            self.synchronize_global_to_local() # Synchronize the local models with global model parameters
+            if self.rank == 0 and self.fdl: # Here self.model is the global model
+                old_loss = self.closure(inputs, targets, self.model, self.sequential_derivative)
+                
+            # Compute local losses, global gradient at the previous iteration and new local params
+            loss, g, _ = self.local_steps(inputs, targets) 
+            
+            # Check that the loss is decreasing
+            with torch.no_grad():
+                self.synchronize_local_to_global() # Update self.model with new params from "local trained models" -> global_model_params = old params
+                if self.fdl: # TODO: make this parallel, do some dogleg iterations in parallel and only keep the longest step which satisfies the decreasing loss condition
+                    if self.rank == 0:        
+                        # Compute step and step norm
+                        step = list_linear_comb(1, list(self.model.parameters()), -1, self.global_model_params) # new global params - old global params                
                         step_norm = list_norm(step, p=torch.inf)
-                        g = list_linear_comb(step_norm/list_norm(g, p=torch.inf), g) # g/torch.norm(g, p=torch.inf)
-                        old_loss = self.closure(inputs, targets, self.global_model)
-                        print(f'GLOBAL 0 : param norm before sync {list_norm(list(self.global_model.parameters()), p=2)}')
-                        with torch.no_grad():
-                            for i,p in enumerate(self.global_model.parameters()):
-                                p.add_(step[i]) # update global model
-                                p.requires_grad = True
-                    
-                    if self.rank == 0:
+
+                        # Compute gradient scaled by step norm, so that in Dogleg, both have a similar contribution
+                        g = list_linear_comb(step_norm/list_norm(g, p=torch.inf), g) 
                         
-                        loss = self.closure(inputs, targets, self.global_model) # current loss
-                        print(f'GLOBAL 1 : loss {loss}, old_loss {old_loss} param norm after sync {list_norm(list(self.global_model.parameters()), p=2)}')
+                        # Compute new loss
+                        new_loss = self.closure(inputs, targets, self.model, self.sequential_derivative)
+
+                        # Compute the dogleg step with the hope that new_loss <= old_loss
                         radius = self.radius
                         w = 0; c = 0
-                        while loss > old_loss: 
+                        while new_loss > old_loss: 
                             c += 1
-                            print(f'----------> Loss is increasing ({loss} > {old_loss}), reducing step size. W = '+ str(w))
+                            # Decrease radius to decrease size of step...
                             radius = radius/2
+                            # ... while moving towards the steepest descent direction (-g)
                             w = min(w + 0.2, 1)
-                            step2 = list_linear_comb(1-w, step, w, g) 
-                            step2 = list_linear_comb(1/list_norm(step2, p=torch.inf), step2)
-                            with torch.no_grad():
-                                for i,p in enumerate(self.global_model.parameters()):
-                                    p.copy_(list_linear_comb(1, old_params, 1, step2))
-                                    p.requires_grad = True
-                            loss = self.closure(inputs, targets, self.global_model)
+                            step2 = list_linear_comb(1-w, step, -w, g) 
+                            # The step length is "radius", with   radius <= self.radius   (global TR radius)
+                            step2 = list_linear_comb(radius/list_norm(step2, p=torch.inf), step2)
+                            
+                            # Compute new global params, summing the old params with the new step
+                            new_params = list_linear_comb(1, self.global_model_params, 1, step2)
+                            # Update the model with the new params
+                            for i,p in enumerate(self.model.parameters()):
+                                p.copy_(new_params[i])
+                                p.requires_grad = True # Just making sure not to lose the differentiability of the model
+                                
+                            # Compute new global loss
+                            new_loss = self.closure(inputs, targets, self.model, self.sequential_derivative)
+                            # Empty cache to avoid memory problems
+                            torch.cuda.empty_cache()
                             if c > 5:
-                                print(f'Warning: APTS is not decreasing the loss {loss} > {old_loss}')
+                                # In this case, we did not manage to decrease the global loss compared to the old global loss after 5 iterations (steep descent direction)
+                                print(f'Warning: APTS is not decreasing the loss {new_loss} > {old_loss}')
                                 break
-                        print(c)
-            elif not self.fdl:
-                # self.synchronize_local_to_global() # update global model
-                with torch.no_grad():
-                    for i,p in enumerate(self.global_model.parameters()):
-                        p.add_(step[i])
-                        p.requires_grad = True
-                    
+                        print(f' FDL : loss {new_loss} - old loss {old_loss} - c {c}')
+        else:
+            print('Skipping preconditioning')
+            
+        # Empty cache to avoid memory problems
         torch.cuda.empty_cache()
+        # Ensure all processes have reached this point
         dist.barrier()
-        # Global smoothing step 
+        # ------------------------------- Global smoothing step -------------------------------
         new_loss = 0
         if self.global_pass and self.rank == 0:
-            print(f'GLOBAL 2 - Preconditioenr: loss {new_loss}, param norm {list_norm(list(self.global_model.parameters()), p=2)}')
-            new_loss = self.global_optimizer.step(lambda dummy=1: self.global_closure(inputs, targets))[0]
-            print(f'GLOBAL 3 - Preconditioenr: loss {new_loss}, param norm {list_norm(list(self.global_model.parameters()), p=2)}')
+            self.global_optimizer.param_groups[0]['params'] = list(self.model.parameters())
+            new_loss = self.global_optimizer.step(lambda dummy=1: self.closure(inputs, targets, self.model, self.sequential_derivative))[0]
             self.radius = torch.tensor(self.global_optimizer.radius)
 
         self.radius = self.radius.to('cpu' if self.backend=='gloo' else 'cuda:0')
         dist.barrier()
         dist.broadcast(self.radius, src=0) # Broadcast the radius
-
+        print(f'Rank {self.rank} - loss {new_loss}')
         # print(f'Iteration {self.iter} | initial loss: {initial_loss}, after local steps: {local_loss}, loss before global step {loss}, final loss {new_loss}') ##
-        print('-----------------------------------------------------------------------------------')
+        #print('-----------------------------------------------------------------------------------')
         if self.iter == 1:
             if skip_preconditioning:
                 print('Skipping preconditioning')
