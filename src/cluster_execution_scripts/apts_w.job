@@ -33,42 +33,6 @@ while [[ -n "$arg_string" ]]; do
     IFS="=" read -r key value <<< "$first_arg"
     # echo "Parsing: Key [$key] Value [$value]"  # Debug print
     case $key in
-        --optimizer_name)
-            optimizer_name="$value"
-            ;;
-        --epochs)
-            epochs="$value"
-            ;;
-        --trials)
-            trials="$value"
-            ;;
-        --db_path)
-            db_path="$value"
-            ;;
-        --counter)
-            counter="$value"
-            ;;
-        --net_nr)
-            net_nr="$value"
-            ;;
-        --dataset)
-            dataset="$value"
-            ;;
-        --minibatch_size)
-            minibatch_size="$value"
-            ;;
-        --overlap_ratio)
-            overlap_ratio="$value"
-            ;;
-        --radius)
-            radius="$value"
-            ;;
-        --second_order)
-            second_order="$value"
-            ;;
-        --momentum)
-            momentum="$value"
-            ;;
         --nr_models)
             nr_models="$value"
             ;;
@@ -86,9 +50,8 @@ while [[ -n "$arg_string" ]]; do
     fi
 done
 
-ARGS="--optimizer_name=$optimizer_name --epochs=$epochs --trials=$trials --db_path=$db_path --net_nr=$net_nr --dataset=$dataset --minibatch_size=$minibatch_size --overlap_ratio=$overlap_ratio --radius=$radius --second_order=$second_order --momentum=$momentum --nr_models=$nr_models --counter=$counter"
 echo "Activating pytorch_daint_multigpu `date`"
 source activate pytorch_daint_multigpu
 echo "Calling python script `date`"
-srun python3 -u ./src/main.py;
+srun python3 -u ./src/main_APTS_ResNET.py;
 echo "All done $(date)"

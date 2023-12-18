@@ -9,15 +9,74 @@ import matplotlib.pyplot as plt
 import torch.optim as optim
 import torch.distributed as dist
 import torchvision.datasets as datasets
+import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
 # User libraries
 from optimizers.TR import TR
 from optimizers.APTS_D import APTS_D
 from optimizers.APTS_W import APTS_W
 from models.neural_networks import *
+import torchvision.models as models
 from data_loaders.Power_DL import *
 from data_loaders.OverlappingDistributedSampler import *
 
+
+# Collect command-line arguments
+def parse_args():
+    # Default value is selected when no command line argument of the same name is provided
+    parser = argparse.ArgumentParser(description='PyTorch multi-gpu training.')
+    # Training parameters
+    parser.add_argument('--epochs', type=int, default=10, help='Number of epochs.')
+    parser.add_argument('--trials', type=int, default=1, help='Number of experiment trials.')
+    parser.add_argument('--net_nr', type=int, default=4, help="Model number (NOT number of models).")
+    parser.add_argument('--dataset', type=str, default="CIFAR10", help='Dataset name. Currently, MNIST and CIFAR10 are supported.')
+    parser.add_argument('--minibatch_size', type=int, default=60000, help='Batch size for training (default 100).')
+    parser.add_argument('--overlap_ratio', type=float, default=0, help='Overlap ratio for minibatches.')
+    parser.add_argument('--optimizer_name', type=str, default="APTS_W", help="Main optimizer to be used.")
+    # Generic optimizer parameters
+    parser.add_argument('--lr', type=float, default=1.0, help='Learning rate.')
+    parser.add_argument('--momentum', type=float, default=0, help="Momentum value for SGD optimizer/momentum (True, False) for TR/APTS.")
+    # For Adam/TR/APTS
+    parser.add_argument('--beta1', type=float, default=0.9, help="Beta1 for Adam optimizer.")
+    parser.add_argument('--beta2', type=float, default=0.999, help="Beta2 for Adam optimizer.")
+    # TR/APTS specific parameter settings
+    parser.add_argument('--radius', type=float, default=1.0, help='TR radius.')
+    parser.add_argument('--max_radius', type=float, default=4.0, help='Maximum learning rate.')
+    parser.add_argument('--min_radius', type=float, default=0.001, help='Minimum learning rate.')
+    parser.add_argument('--decrease_factor', type=float, default=0.5, help='Learning rate decrease factor.')
+    parser.add_argument('--increase_factor', type=float, default=2.0, help='Learning rate increase factor.')
+    parser.add_argument('--is_adaptive', type=int, default=0, help='Choice of whether optimizer is adaptive or not.')
+    parser.add_argument('--second_order', type=int, default=0, help='Choice of whether to use second order information or not.')
+    parser.add_argument('--second_order_method', type=str, default="SR1", help="TR second-order strategy.")
+    parser.add_argument('--delayed_second_order', type=int, default=0, help="How many epochs to wait before using second-order information.")
+    parser.add_argument('--accept_all', type=int, default=0, help='Choice of whether to accept all steps produced by local optimizer or not.')
+    parser.add_argument('--acceptance_ratio', type=float, default=0.75, help='Trust-region model acceptance ratio.')
+    parser.add_argument('--reduction_ratio', type=float, default=0.25, help='Trust-region model reduction ratio.')
+    parser.add_argument('--history_size', type=int, default=5, help="How many vectors to keep track of for second-order information.")
+    parser.add_argument('--norm_type', type=int, default=2, help="Norm type for TR radius computation.")
+    # APTS specific parameter settings
+    parser.add_argument('--local_optimizer', type=str, default="TR", help="Local optimizer to be used.")
+    parser.add_argument('--max_iter', type=int, default=5, help='Numer of optimizer iterations per micro-batch.')
+    parser.add_argument('--global_pass', type=int, default=1, help="Choice of whether to do global pass or not.")
+    parser.add_argument('--foc', type=int, default=1, help="Choice of whether to have first-order consistency or not.")
+    parser.add_argument('--nr_models', type=int, default=1, help="Number of models to be used in APTS.")
+    parser.add_argument('--counter', type=int, default=0, help="Counter for filename in case of parallel execution.")
+    parser.add_argument('--op', type=str, default="sum", help="APTS reduction on local steps to be performed.")
+    default_db_path = "./results/blah.db" 
+    parser.add_argument('--db_path', type=str, default=default_db_path, help="Local optimizer to be used.")
+    parser.add_argument('--on_cluster', type=str, default="y", help="Are you executing this code on a cluster? Yes or no.")
+
+    args = parser.parse_args()
+    if "SGD" not in args.optimizer_name:
+        args.momentum = True if (args.momentum != 0) else False
+
+    # Convert relevant arguments to boolean type after parsing
+    args.is_adaptive = bool(args.is_adaptive)
+    args.second_order = bool(args.second_order)
+    args.accept_all = bool(args.accept_all)
+    args.global_pass = bool(args.global_pass)
+    args.foc = bool(args.foc)
+    return args
 
 
 
@@ -89,15 +148,17 @@ def compute_loss(data_loader, net, criterion, device=torch.device("cuda:0") if t
         #     # Not doing loss=loss.item() since it's done afterwards in line 171
         #     count = count.cpu().item()
 
-        return loss.cpu().item() / count
+        return loss / count
 
 
 def do_one_optimizer_test(train_loader, test_loader, optimizer, net, num_epochs, criterion, desired_accuracy=100, device=torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")):
     train_losses = []
     test_accuracies = []
+    cummulative_times = []
     for epoch in range(0, num_epochs + 1):
         epoch_train_loss = 0
         count = 0
+        start_time = time.time()
         # Compute epoch train loss and train time, and test accuracy
         for _, (inputs, labels) in enumerate(train_loader):
             inputs, labels = inputs, labels
@@ -148,14 +209,20 @@ def do_one_optimizer_test(train_loader, test_loader, optimizer, net, num_epochs,
             count += 1
         
         train_losses.append(epoch_train_loss/count)
+        t = time.time() - start_time
 
+        cummulative_times.append(t)
         test_accuracy = compute_accuracy(data_loader=test_loader, net=net, device=device)
+        t2= time.time() - start_time
+        print(f'Rank {dist.get_rank()} - CPU time {t:.3f} - Acc time {t2-t:.3f} - Epoch {epoch} - Test accuracy: {test_accuracy:.4f}')
         test_accuracies.append(test_accuracy)
         # Check if test accuracy meets desired accuracy. If so, break training loop.
         if test_accuracy >= desired_accuracy:
             break
 
-    return train_losses, test_accuracies
+    # Here we sum the elements of cummulative times 
+    cummulative_times = np.cumsum(cummulative_times)
+    return train_losses, test_accuracies, cummulative_times
 
 
 def load_data(dataset="mnist", data_dir=os.path.abspath("./data"), TOT_SAMPLES=False):
@@ -170,8 +237,13 @@ def load_data(dataset="mnist", data_dir=os.path.abspath("./data"), TOT_SAMPLES=F
             return 60000
     elif dataset.lower() == 'cifar10':
         if TOT_SAMPLES is False:
-            train_set = datasets.CIFAR10(root=data_dir, train=True, transform=transforms.ToTensor(), download=True)
-            test_set = datasets.CIFAR10(root=data_dir, train=False, transform=transforms.ToTensor(), download=True)
+            transform = transforms.Compose([
+                        transforms.ToTensor(),
+                        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+            ])
+
+            train_set = datasets.CIFAR10(root=data_dir, train=True, transform=transform, download=True)
+            test_set = datasets.CIFAR10(root=data_dir, train=False, transform=transform, download=True)
         else:
             return 50000
     else:
@@ -252,8 +324,11 @@ def get_net_fun_and_params(dataset, net_nr):
             net = CifarNet
             net_params = {}
         elif net_nr == 4:
-            net = SmallResNet
-            net_params = {}
+            # net = SmallResNet
+            net = models.resnet18
+            # num_classes = 10
+            # net.fc = torch.nn.Linear(net.fc.in_features, num_classes)
+            net_params = {'num_classes':10}
 
     return net, net_params
 
@@ -291,64 +366,6 @@ def prepare_distributed_environment(rank, master_addr, master_port, world_size):
 
     device_id = dist.get_rank()
     print(f"Device id: {device_id}")
-
-
-# Collect command-line arguments
-def parse_args():
-    # Default value is selected when no command line argument of the same name is provided
-    parser = argparse.ArgumentParser(description='PyTorch multi-gpu training.')
-    # Training parameters
-    parser.add_argument('--epochs', type=int, default=10, help='Number of epochs.')
-    parser.add_argument('--trials', type=int, default=1, help='Number of experiment trials.')
-    parser.add_argument('--net_nr', type=int, default=0, help="Model number (NOT number of models).")
-    parser.add_argument('--dataset', type=str, default="MNIST", help='Dataset name. Currently, MNIST and CIFAR10 are supported.')
-    parser.add_argument('--minibatch_size', type=int, default=60000, help='Batch size for training (default 100).')
-    parser.add_argument('--overlap_ratio', type=float, default=0, help='Overlap ratio for minibatches.')
-    parser.add_argument('--optimizer_name', type=str, default="APTS_W", help="Main optimizer to be used.")
-    # Generic optimizer parameters
-    parser.add_argument('--lr', type=float, default=1.0, help='Learning rate.')
-    parser.add_argument('--momentum', type=float, default=0, help="Momentum value for SGD optimizer/momentum (True, False) for TR/APTS.")
-    # For Adam/TR/APTS
-    parser.add_argument('--beta1', type=float, default=0.9, help="Beta1 for Adam optimizer.")
-    parser.add_argument('--beta2', type=float, default=0.999, help="Beta2 for Adam optimizer.")
-    # TR/APTS specific parameter settings
-    parser.add_argument('--radius', type=float, default=1.0, help='TR radius.')
-    parser.add_argument('--max_radius', type=float, default=4.0, help='Maximum learning rate.')
-    parser.add_argument('--min_radius', type=float, default=0.001, help='Minimum learning rate.')
-    parser.add_argument('--decrease_factor', type=float, default=0.5, help='Learning rate decrease factor.')
-    parser.add_argument('--increase_factor', type=float, default=2.0, help='Learning rate increase factor.')
-    parser.add_argument('--is_adaptive', type=int, default=0, help='Choice of whether optimizer is adaptive or not.')
-    parser.add_argument('--second_order', type=int, default=0, help='Choice of whether to use second order information or not.')
-    parser.add_argument('--second_order_method', type=str, default="SR1", help="TR second-order strategy.")
-    parser.add_argument('--delayed_second_order', type=int, default=0, help="How many epochs to wait before using second-order information.")
-    parser.add_argument('--accept_all', type=int, default=0, help='Choice of whether to accept all steps produced by local optimizer or not.')
-    parser.add_argument('--acceptance_ratio', type=float, default=0.75, help='Trust-region model acceptance ratio.')
-    parser.add_argument('--reduction_ratio', type=float, default=0.25, help='Trust-region model reduction ratio.')
-    parser.add_argument('--history_size', type=int, default=5, help="How many vectors to keep track of for second-order information.")
-    parser.add_argument('--norm_type', type=int, default=2, help="Norm type for TR radius computation.")
-    # APTS specific parameter settings
-    parser.add_argument('--local_optimizer', type=str, default="TR", help="Local optimizer to be used.")
-    parser.add_argument('--max_iter', type=int, default=5, help='Numer of optimizer iterations per micro-batch.')
-    parser.add_argument('--global_pass', type=int, default=1, help="Choice of whether to do global pass or not.")
-    parser.add_argument('--foc', type=int, default=1, help="Choice of whether to have first-order consistency or not.")
-    parser.add_argument('--nr_models', type=int, default=1, help="Number of models to be used in APTS.")
-    parser.add_argument('--counter', type=int, default=0, help="Counter for filename in case of parallel execution.")
-    parser.add_argument('--op', type=str, default="sum", help="APTS reduction on local steps to be performed.")
-    default_db_path = "./results/blah.db" 
-    parser.add_argument('--db_path', type=str, default=default_db_path, help="Local optimizer to be used.")
-    parser.add_argument('--on_cluster', type=str, default="y", help="Are you executing this code on a cluster? Yes or no.")
-
-    args = parser.parse_args()
-    if "SGD" not in args.optimizer_name:
-        args.momentum = True if (args.momentum != 0) else False
-
-    # Convert relevant arguments to boolean type after parsing
-    args.is_adaptive = bool(args.is_adaptive)
-    args.second_order = bool(args.second_order)
-    args.accept_all = bool(args.accept_all)
-    args.global_pass = bool(args.global_pass)
-    args.foc = bool(args.foc)
-    return args
 
         
 ### YOU SHOULD ADD ALL OPTIMIZERS YOU WISH TO SUPPORT IN THE FOLLOWING FUNCTIONS ###
