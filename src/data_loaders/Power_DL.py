@@ -92,7 +92,7 @@ class Power_DL():
             exec(f"self.dataset.data = self.dataset.data.to(torch.float{self.precision})")
 
         self.dataset.data = change_channel_position(self.dataset.data)
-        self.dataset.data = normalize_dataset(self.dataset.data, mean, std) # Data normalization
+        # self.dataset.data = normalize_dataset(self.dataset.data, mean, std) # Data normalization
 
         dtype = torch.LongTensor
         if torch.cuda.is_available() and ('MNIST' in str(dataset.__class__) or 'CIFAR' in str(dataset.__class__)):

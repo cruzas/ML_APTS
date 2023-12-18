@@ -1,10 +1,10 @@
 import torch, copy
 from torch.optim.optimizer import Optimizer
-from optim.TR import *
+from optimizers.TR import *
 import pickle
 import itertools
 import torch.distributed as dist
-
+import inspect
 
 # TODO: We noticed that not using in-place operations creates highly unnecessary memory usage. 
 # For example: a = torch.randn(100000); b = [a]; b[0] = b[0] + 1 will create a new vector for computing b[0] + 1. 
@@ -73,7 +73,7 @@ class APTS_W(Optimizer):
                  global_pass=True,
                  forced_decreasing_loss=False,
                  shuffle_layers=False,
-                 sequential_derivative=5,
+                 sequential_derivative=None,
                  loss_fn=torch.nn.CrossEntropyLoss
                  ):
 
@@ -91,7 +91,8 @@ class APTS_W(Optimizer):
         self.global_pass = bool(global_pass) # in case global_pass is 0 or 1
         self.iter = 0
         self.fdl = bool(forced_decreasing_loss) # in case forced_decreasing_loss is 0 or 1
-
+        self.total_args = len(inspect.getfullargspec(model.forward).args)
+        
         if self.rank == 0:
             self.model = model
             self.global_model_params = copy.deepcopy(list(model.parameters()))
@@ -164,11 +165,14 @@ class APTS_W(Optimizer):
                 else:
                     inp = inputs[i*micro_batch_size:(i+1)*micro_batch_size]        
                     tar = targets[i*micro_batch_size:(i+1)*micro_batch_size]
-                maybe_dict = self.model(inp, tar, False)
-                if isinstance(maybe_dict, dict):
-                    J = maybe_dict['loss']
-                else:
-                    J = self.loss_fn(inp, tar)
+                    
+                type_ctx = torch.amp.autocast(device_type='cuda', dtype=torch.bfloat16)
+                with type_ctx:
+                    output = self.model(inp, tar)
+                    if isinstance(output, dict): # This is needed for LLMs 
+                        J = output['loss']
+                    else:
+                        J = self.loss_fn(output, tar)
 
                 J = J/sequential_derivative
                 J_total += J.item()
@@ -177,11 +181,16 @@ class APTS_W(Optimizer):
                     J.backward()
                     torch.cuda.empty_cache()    
         else:
-            maybe_dict = model(inputs,targets,False)
-            if isinstance(maybe_dict, dict):
-                J = maybe_dict['loss']
-            else:
-                J = self.loss_fn(inp, tar)
+            type_ctx = torch.amp.autocast(device_type='cuda', dtype=torch.bfloat16)
+            with type_ctx:
+                if self.total_args == 3:
+                    output = model(inputs,targets) # FOR LLMs 
+                else:
+                    output = model(inputs)
+                if isinstance(output, dict): # This is needed for LLMs 
+                    J = output['loss']
+                else:
+                    J = self.loss_fn(output, targets)
 
             if torch.is_grad_enabled():
                 model.zero_grad()
@@ -302,9 +311,11 @@ class APTS_W(Optimizer):
             lr = self.radius - list_norm(list_linear_comb(1, [p for p in self.model.parameters() if p.requires_grad is True], -1, global_params_list), p=torch.inf)
             if lr < torch.finfo(torch.get_default_dtype()).eps:
                 break
-        print(f' Rank {self.rank} - OLD_LOSS {OLD_LOSS} - local loss {local_loss} - grad norm {grad_norm2} - radius {self.radius} - lr {lr} - max_iter {j+1}')
+        # print(f' Rank {self.rank} - OLD_LOSS {OLD_LOSS} - local loss {local_loss} - grad norm {grad_norm2} - radius {self.radius} - lr {lr} - max_iter {j+1}')
         # Collect the gradients from local models
         # print(f'Rank {self.rank} - norm gradient {list_norm(g, p=2)}')
+        # TODO: https://chat.openai.com/share/0b9fd09a-3d18-448b-b9ba-24d29d3fa622
+        # https://pytorch.org/docs/stable/distributed.html#torch.distributed.irecv
         if self.rank != 0:
             for layer in self.rank2layer[self.rank]:
                 send_device = 'cpu' if self.backend == 'gloo' else g[layer].device
@@ -436,7 +447,7 @@ class APTS_W(Optimizer):
                                 # In this case, we did not manage to decrease the global loss compared to the old global loss after 5 iterations (steep descent direction)
                                 print(f'Warning: APTS is not decreasing the loss {new_loss} > {old_loss}')
                                 break
-                        print(f' FDL : loss {new_loss} - old loss {old_loss} - c {c}')
+                        # print(f' FDL : loss {new_loss} - old loss {old_loss} - c {c}')
         else:
             print('Skipping preconditioning')
             
@@ -454,7 +465,7 @@ class APTS_W(Optimizer):
         self.radius = self.radius.to('cpu' if self.backend=='gloo' else 'cuda:0')
         dist.barrier()
         dist.broadcast(self.radius, src=0) # Broadcast the radius
-        print(f'Rank {self.rank} - loss {new_loss}')
+        # print(f'Rank {self.rank} - loss {new_loss}')
         # print(f'Iteration {self.iter} | initial loss: {initial_loss}, after local steps: {local_loss}, loss before global step {loss}, final loss {new_loss}') ##
         #print('-----------------------------------------------------------------------------------')
         if self.iter == 1:

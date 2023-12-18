@@ -142,32 +142,6 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         plt.show()
         print(f"Rank {rank}: Plot successful.")
 
-        
-        #  # USE CUDA STREAMS???
-        # dist.barrier()
-        # print(f"Rank {rank}: Barrier successful.")
-        # if rank > 0:
-        #     for i,param in enumerate(local_network.parameters()):
-        #         if param.requires_grad is not False:
-        #             # print(f"Rank {rank} norm of layer parameters before sending: {torch.norm([param.flatten() for param in local_network.parameters()][i])}")
-        #             print(f"Rank {rank} sent: {param.data.cpu()}")
-        #             dist.send(param.data.cpu(), dst=0)
-        
-        # if rank == 0:
-           
-        #     for i,param in enumerate(local_network.parameters()):
-        #         if param.requires_grad is False:
-        #             # print(f"Rank {0} norm of layer parameters before receiving: {torch.norm([param.flatten() for param in local_network.parameters()][i])}")
-        #             p = torch.zeros_like(param).cpu()
-        #             dist.recv(p, src=layer2rank[i])
-        #             print(f"Rank {rank} received: {p.data}")
-        #             param.data = p.to(device)
-        #             # print(f"Rank {0} norm of layer parameters after receiving: {torch.norm([param.flatten() for param in local_network.parameters()][i])}")
-        
-        # print(f"Rank {rank}: Receive successful.")
-        # dist.barrier()
-
-
 if __name__ == "__main__":    
     cmd_args = parse_args()
     if cmd_args.on_cluster.lower() == "y" or cmd_args.on_cluster.lower() == "yes":

@@ -248,14 +248,14 @@ if __name__ == "__main__":
     torch.set_default_device(1)
     torch.random.manual_seed(0)
 
-    sequential_gradient_computation()
+    # sequential_gradient_computation()
 
 
 
     #print the total memory available on the GPU in gigabytes
     print(f'Average memory available: {torch.cuda.get_device_properties(1).total_memory/1e9} GB')
     
-    memory_needed_for_backward()
+    # memory_needed_for_backward()
 
     M=[];C=[];P=[]
     for i in range(0, 62): #[5]:#
@@ -291,7 +291,7 @@ if __name__ == "__main__":
     color = 'tab:green'
     ax3.spines["right"].set_position(("axes", 1.2))
     ax3.set_ylabel('Number of parameters', color=color)  # we already handled the x-label with ax1
-    ax3.plot(P, color=color)
+    ax3.semilogy(P, color=color)
     ax3.tick_params(axis='y', labelcolor=color)
 
     fig.tight_layout()  # otherwise the right y-label is slightly clipped
