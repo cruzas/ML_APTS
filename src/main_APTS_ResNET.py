@@ -91,7 +91,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
 
     # Training settings
     trials = 2  # number of trials
-    epochs = 10  # number of epochs to run per trial
+    epochs = 3  # number of epochs to run per trial
     net_nr = 4  # model number to choose
     dataset = 'CIFAR10'  # name of the dataset
     minibatch_size = int(10000)  # size of the mini-batches
@@ -119,8 +119,11 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     )
 
     # Training loop
+    losses=[]
+    accuracies=[]
+    cum_times=[]
     for trial in range(trials):
-        losses, accuracies, cum_times = do_one_optimizer_test(
+        losses[trial], accuracies[trial], cum_times[trial] = do_one_optimizer_test(
             train_loader=train_loader,
             test_loader=test_loader,
             optimizer=optimizer,
@@ -131,22 +134,22 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             device=device
         )
 
-        if dist.get_rank() == 0:
-            print(
-                f"Rank {rank}. Trial {trial + 1}/{trials} finished. Loss: {losses[-1]:.4f}, Accuracy: {accuracies[-1]:.4f}. Cum. time: {[round(t, 2) for t in cum_times]}"
-            )
-            # here we plot the accuracy after the training through matplotlib
-            # plt.plot(losses)
-            # hold on:
-            # Here we plot the test accuracies vs cum times
-            # plt.plot(cum_times, accuracies)
-            # plt.show()
-            
-            # Save losses, accuracies, and cum times to a CSV file using Pandas
-            df = pd.DataFrame({"losses": losses, "accuracies": accuracies, "cum_times": cum_times})
-            df.to_csv(f"results_APTS_W_{nr_models}.csv", index=False)
-            
-        print(f"Rank {rank}: Plot successful.")
+    if dist.get_rank() == 0:
+        print(
+            f"Rank {rank}. Trial {trial + 1}/{trials} finished. Loss: {losses[-1]:.4f}, Accuracy: {accuracies[-1]:.4f}. Cum. time: {[round(t, 2) for t in cum_times]}"
+        )
+        # here we plot the accuracy after the training through matplotlib
+        # plt.plot(losses)
+        # hold on:
+        # Here we plot the test accuracies vs cum times
+        # plt.plot(cum_times, accuracies)
+        # plt.show()
+        
+        # Save losses, accuracies, and cum times to a CSV file using Pandas
+        df = pd.DataFrame({"losses": losses, "accuracies": accuracies, "cum_times": cum_times})
+        df.to_csv(f"results_APTS_W_{nr_models}.csv", index=False)
+        
+    # print(f"Rank {rank}: Plot successful.")
 
 if __name__ == "__main__":    
     if 1==1:
