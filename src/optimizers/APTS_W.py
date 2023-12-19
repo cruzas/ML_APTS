@@ -166,7 +166,7 @@ class APTS_W(Optimizer):
                     inp = inputs[i*micro_batch_size:(i+1)*micro_batch_size]        
                     tar = targets[i*micro_batch_size:(i+1)*micro_batch_size]
                     
-                type_ctx = torch.amp.autocast(device_type='cuda', dtype=torch.bfloat16)
+                type_ctx = torch.amp.autocast(device_type='cuda', dtype=torch.float32)
                 with type_ctx:
                     output = self.model(inp, tar)
                     if isinstance(output, dict): # This is needed for LLMs 
@@ -181,7 +181,7 @@ class APTS_W(Optimizer):
                     J.backward()
                     torch.cuda.empty_cache()    
         else:
-            type_ctx = torch.amp.autocast(device_type='cuda', dtype=torch.bfloat16)
+            type_ctx = torch.amp.autocast(device_type='cuda', dtype=torch.float32)
             with type_ctx:
                 if self.total_args == 3:
                     output = model(inputs,targets) # FOR LLMs 
