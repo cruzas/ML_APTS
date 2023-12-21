@@ -202,8 +202,9 @@ def do_one_optimizer_test(train_loader, test_loader, optimizer, net, num_epochs,
                     train_loss = optimizer.step(closure)
                     if type(train_loss) is list or type(train_loss) is tuple:
                         train_loss = train_loss[0]
-                if 'torch' in str(type(train_loss)):
-                    train_loss = train_loss.cpu().detach().item()
+            
+            if 'torch' in str(type(train_loss)):
+                train_loss = train_loss.cpu().detach().item()
 
             epoch_train_loss += train_loss
             count += 1

@@ -80,7 +80,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     parameter_decomposition = True # TODO: Implement data decomposition
     # args = parse_args() # TODO: make this is easier to execute on a personal computer
 
-    torch.random.manual_seed(0)
+    torch.random.manual_seed(9158)
 
     # Device    
     backend = dist.get_backend()
@@ -90,24 +90,21 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     # args.nr_models = dist.get_world_size()
 
     # Training settings
-    trials = 3  # number of trials
-    epochs = 50  # number of epochs to run per trial
-    net_nr = 4  # model number to choose
+    trials = 2  # number of trials
+    epochs = 2  # number of epochs to run per trial
+    # net_nr = 4  # model number to choose
     dataset = 'CIFAR10'  # name of the dataset
-    minibatch_size = int(10000)  # size of the mini-batches
-    overlap_ratio = 0  # overlap ratio between mini-batches
-    optimizer_name = 'APTS_W'  # name of the optimizer
+    minibatch_size = int(2500)  # size of the mini-batches
+    overlap_ratio = 0.01  # overlap ratio between mini-batches
+    # optimizer_name = 'APTS_W'  # name of the optimizer
     nr_models = world_size # amount of subdomains to use in the optimizer
 
     loss_function = nn.CrossEntropyLoss
     loss_fn = loss_function
-    optimizer_params = get_apts_w_params(momentum=False, second_order=False, nr_models=nr_models, max_iter=5, fdl=True, global_pass=True, device=None)
-    net_fun, net_params = get_net_fun_and_params(dataset, net_nr)
+    optimizer_params = get_apts_w_params(momentum=False, second_order=False, nr_models=nr_models, max_iter=5, fdl=False, global_pass=True, device=None)
     
-    network = net_fun(**net_params).to(device)
-    optimizer = APTS_W(network.parameters(), model=network, loss_fn=loss_fn, **optimizer_params)
-    # optimizer = optim.Adam(network.parameters())
-    
+    net_fun, net_params = models.resnet18, {'weights':None, 'progress':True}#get_net_fun_and_params(dataset, net_nr)
+        
     # Data loading
     train_loader, test_loader = create_dataloaders(
         dataset=dataset,
@@ -117,12 +114,15 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         parameter_decomposition=parameter_decomposition,
         device=device
     )
-
+    
     # Training loop
     losses=[None]*trials
     accuracies=[None]*trials
     cum_times=[None]*trials
     for trial in range(trials):
+        network = net_fun(**net_params).to(device)
+        optimizer = APTS_W(network.parameters(), model=network, loss_fn=loss_fn, **optimizer_params)
+        # optimizer = optim.Adam(network.parameters())
         losses[trial], accuracies[trial], cum_times[trial] = do_one_optimizer_test(
             train_loader=train_loader,
             test_loader=test_loader,
@@ -153,7 +153,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     # print(f"Rank {rank}: Plot successful.")
 
 if __name__ == "__main__":    
-    if 1==1:
+    if 2==1:
         main()
     else:
         world_size = torch.cuda.device_count() if torch.cuda.is_available() else 0
