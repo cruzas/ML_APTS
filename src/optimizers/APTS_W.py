@@ -21,11 +21,19 @@ def list_linear_comb(a, list1, b=0, list2=[]): #TODO: parallelize maybe through 
     with torch.no_grad():
         result = [0] * len(list1)
         for i in range(len(list1)):
-            a = torch.tensor(a, device=list1[i].device) 
+            if type(a) is not torch.Tensor:
+                a = torch.tensor(a, device=list1[i].device) 
+            else:
+                a = a.to(list1[i].device)
+
             if b == 0:
                 result[i] = a*list1[i]
             else:
-                b = torch.tensor(b, device=list2[i].device) # Remember: list1[i] and list2[i] can NOT be on different devices
+                if type(b) is not torch.Tensor:
+                    b = torch.tensor(b, device=list2[i].device) # Remember: list1[i] and list2[i] can NOT be on different devices
+                else:
+                    b = b.to(list2[i].device)
+                
                 result[i] = a*list1[i] + b*list2[i]
     return result
 
