@@ -90,8 +90,8 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     # args.nr_models = dist.get_world_size()
 
     # Training settings
-    trials = 2  # number of trials
-    epochs = 2  # number of epochs to run per trial
+    trials = 3  # number of trials
+    epochs = 25  # number of epochs to run per trial
     # net_nr = 4  # model number to choose
     dataset = 'CIFAR10'  # name of the dataset
     minibatch_size = int(2500)  # size of the mini-batches
@@ -153,7 +153,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     # print(f"Rank {rank}: Plot successful.")
 
 if __name__ == "__main__":    
-    if 2==1:
+    if 1==1:
         main()
     else:
         world_size = torch.cuda.device_count() if torch.cuda.is_available() else 0
