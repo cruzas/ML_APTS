@@ -32,7 +32,7 @@ for path in paths:
     avg_accs = np.mean(np.stack(temp2), axis=0)
     plt.plot(avg_times, avg_accs, label=path.split("/")[-1].split(".")[0])
     # Add x and y labels
-    plt.xlabel("Time (s)")
+    plt.xlabel("Avg. Time (s)")
     plt.ylabel("Avg. Accuracy (%)")
     # Use the labels array to add a legend
     plt.legend(labels)
