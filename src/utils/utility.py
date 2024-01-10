@@ -215,7 +215,8 @@ def do_one_optimizer_test(train_loader, test_loader, optimizer, net, num_epochs,
         cummulative_times.append(t)
         test_accuracy = compute_accuracy(data_loader=test_loader, net=net, device=device)
         t2= time.time() - start_time
-        print(f'Rank {dist.get_rank()} - CPU time {t:.3f} - Acc time {t2-t:.3f} - Epoch {epoch} - Test accuracy: {test_accuracy:.4f}')
+        if dist.get_rank() == 0:
+            print(f'Epoch {epoch} - CPU time {t:.3f} - Acc time {t2-t:.3f} - Epoch {epoch} - Test accuracy: {test_accuracy:.4f}')
         test_accuracies.append(test_accuracy)
         # Check if test accuracy meets desired accuracy. If so, break training loop.
         if test_accuracy >= desired_accuracy:
