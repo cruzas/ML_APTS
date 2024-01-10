@@ -18,5 +18,5 @@ module load daint-gpu
 source /users/scruzale/anaconda3/etc/profile.d/conda.sh
 conda activate llms
 echo "Calling main `date`"
-srun python -u main.py
-echo "Deepspeed main `date`"
+srun python -u test_dtensor.py
+echo "Finished with main `date`"

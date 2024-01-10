@@ -25,7 +25,6 @@ def test_for_loop_parallel(rank, mesh):
             if rank == 0:
                 print(i)
 
-            torch.cuda.set_device(rank)
             allocated = bytes_to_gb(torch.cuda.memory_allocated())
             reserved = bytes_to_gb(torch.cuda.memory_reserved())
             print(f"Device {rank}. Memory Allocated before: {allocated:.2f} GB. Memory Reserved before: {reserved:.2f} GB")
@@ -44,7 +43,7 @@ def test_for_loop_parallel(rank, mesh):
             print(f"Device {rank}. Elapsed time: {elapsed_time/1000} seconds")
 
 
-def my_prep():
+def my_prep(rank=None, master_addr=None, master_port=None, world_size=None):
     prepare_distributed_environment(rank, master_addr, master_port, world_size)
 
     if rank is None:
@@ -58,31 +57,30 @@ def my_prep():
 
 
 def main(rank=None, master_addr=None, master_port=None, world_size=None):
-    my_prep()
+    my_prep(rank, master_addr, master_port, world_size)
 
     # Rank ID
     rank = dist.get_rank() if dist.is_initialized() else 0
 
     # Mesh with Nodes 0 and 1
     if rank in [0, 1]:
-        mesh1 = init_device_mesh(f"cuda:{rank}", (2,))
+        mesh1 = init_device_mesh(f"cuda:0", (2,))
         test_for_loop_parallel(rank, mesh1)
 
     # Mesh with Nodes 2 and 3
     if rank in [2, 3]:
-        mesh2 = init_device_mesh(f"cuda:{rank}", (2,))
+        mesh2 = init_device_mesh(f"cuda:0", (2,))
         test_for_loop_parallel(rank, mesh2)
 
 
 def main2(rank=None, master_addr=None, master_port=None, world_size=None):
-    my_prep()
-    big_tensor = torch.randn(int(2e4), int(2e4), device=f"cuda:{rank}")
+    my_prep(rank, master_addr, master_port, world_size)
+    big_tensor = torch.randn(int(2e4), int(2e4), device=f"cuda:0")
     with torch.no_grad():
         for i in range(10):
             if rank == 0:
                 print(i)
 
-            torch.cuda.set_device(rank)
             allocated = bytes_to_gb(torch.cuda.memory_allocated())
             reserved = bytes_to_gb(torch.cuda.memory_reserved())
             print(f"Device {rank}. Memory Allocated before: {allocated:.2f} GB. Memory Reserved before: {reserved:.2f} GB")
