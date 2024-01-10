@@ -10,10 +10,10 @@ from utils import *
 from torch import nn
 import pandas as pd
 
-def get_apts_w_params(momentum=False, second_order=False, nr_models=2, max_iter=5, fdl=True, global_pass=True, device=None):
+def get_apts_w_params(momentum=False, second_order=False, nr_models=2, max_iter=5, fdl=False, global_pass=True, device=None):
     TR_APTS_W_PARAMS_GLOBAL = {
-        "radius": 0.1, #0.1,
-        "max_radius": 4.0, #4.0
+        "radius": 0.01, #0.1,
+        "max_radius": 0.1, #4.0
         "min_radius": 0.0001,
         "decrease_factor": 0.5,
         "increase_factor": 2.0,
@@ -31,8 +31,8 @@ def get_apts_w_params(momentum=False, second_order=False, nr_models=2, max_iter=
     }
 
     TR_APTS_W_PARAMS_LOCAL = {
-        "radius": 0.1,
-        "max_radius": 4.0,
+        "radius": 0.01,
+        "max_radius": 0.1,
         "min_radius": 0,  # based on APTS class
         "decrease_factor": 0.5,
         "increase_factor": 2.0,
@@ -58,7 +58,7 @@ def get_apts_w_params(momentum=False, second_order=False, nr_models=2, max_iter=
         "local_opt_params": TR_APTS_W_PARAMS_LOCAL,
         "global_pass": global_pass,
         "forced_decreasing_loss": fdl,
-        }
+    }
 
     return APTS_W_PARAMS
     
@@ -80,7 +80,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     parameter_decomposition = True # TODO: Implement data decomposition
     # args = parse_args() # TODO: make this is easier to execute on a personal computer
 
-    torch.random.manual_seed(9158)
+    torch.random.manual_seed(0)
 
     # Device    
     backend = dist.get_backend()
@@ -93,7 +93,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     trials = 3  # number of trials
     epochs = 25  # number of epochs to run per trial
     # net_nr = 4  # model number to choose
-    dataset = 'CIFAR10'  # name of the dataset
+    dataset = 'MNIST'  # name of the dataset
     minibatch_size = int(2500)  # size of the mini-batches
     overlap_ratio = 0.01  # overlap ratio between mini-batches
     # optimizer_name = 'APTS_W'  # name of the optimizer
@@ -103,8 +103,13 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     loss_fn = loss_function
     optimizer_params = get_apts_w_params(momentum=False, second_order=False, nr_models=nr_models, max_iter=5, fdl=False, global_pass=True, device=None)
     
-    net_fun, net_params = models.resnet18, {'weights':None, 'progress':True}#get_net_fun_and_params(dataset, net_nr)
+    net_fun, net_params = MNIST_FCNN_Small, {}#models.resnet18, {'weights':None, 'progress':True}#get_net_fun_and_params(dataset, net_nr)
         
+        
+    # print parameters norm:
+    # torch.random.manual_seed(0)
+    # print("Parameters norm: ", torch.norm(torch.cat([torch.flatten(p) for p in net_fun(**net_params).parameters()])))
+    
     # Data loading
     train_loader, test_loader = create_dataloaders(
         dataset=dataset,
@@ -153,7 +158,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     # print(f"Rank {rank}: Plot successful.")
 
 if __name__ == "__main__":    
-    if 1==1:
+    if 1==2:
         main()
     else:
         world_size = torch.cuda.device_count() if torch.cuda.is_available() else 0
