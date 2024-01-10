@@ -281,7 +281,7 @@ class APTS_W(Optimizer):
 
     def local_steps(self, inputs, targets):
         # Update the local model 
-        TEMP = 1 # TODO: test whether having TEMP=2 here is beneficial
+        TEMP = 2 # TODO: test whether having TEMP=2 here is beneficial
         local_loss = 0
         lr = self.radius/TEMP
         # g = torch.zeros(self.tot_params, device=self.device); grad_norm2 = 0
@@ -316,7 +316,9 @@ class APTS_W(Optimizer):
                         
             # Update radius to make sure the update is inside the global trust region radius
             # print(f'rank {self.rank} - !!!!!!!!!!! {list_norm(list_linear_comb(1, [p for p in self.model.parameters() if p.requires_grad is True], -1, global_params_list), p=torch.inf)}')
-            lr = self.radius - list_norm(list_linear_comb(1, [p for p in self.model.parameters() if p.requires_grad is True], -1, global_params_list), p=torch.inf)
+            lr = self.radius/TEMP - list_norm(list_linear_comb(1, [p for p in self.model.parameters() if p.requires_grad is True], -1, global_params_list), p=torch.inf)
+            # if self.rank == 0:
+            #     print(f'{self.iter} - lr = {lr}')
             if lr < torch.finfo(torch.get_default_dtype()).eps:
                 break
         # print(f' Rank {self.rank} - OLD_LOSS {OLD_LOSS} - local loss {local_loss} - grad norm {grad_norm2} - radius {self.radius} - lr {lr} - max_iter {j+1}')
@@ -411,6 +413,8 @@ class APTS_W(Optimizer):
                 
             # Compute local losses, global gradient at the previous iteration and new local params
             loss, g, _ = self.local_steps(inputs, targets) 
+            
+            print(f'Rank {self.rank} - loss {loss}')
             
             # Check that the loss is decreasing
             with torch.no_grad():
