@@ -18,12 +18,12 @@ class MyModel(nn.Module):
         return self.x4
 
 def train_corrected_v2():
-    # Create model 
-    model = MyModel()
-
     # Dummy input and target
+    torch.random.manual_seed(0)
     x = torch.randn(1, 10)
     target = torch.randn(1, 10)
+    # Create model 
+    model = MyModel()
 
     ## 1. Gradient computed as usual
     output_1 = model(x)
