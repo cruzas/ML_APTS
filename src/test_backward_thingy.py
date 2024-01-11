@@ -60,6 +60,9 @@ def train_corrected_v2():
 # Example usage
 grad_1, grad_2 = train_corrected_v2()
 
+# Print norm of entire grad_1
+print(torch.norm(torch.cat([g.flatten() for g in grad_1])).item())
+
 # Calculating the difference in norms
 norm_diff = [torch.norm(g1 - g2).item() for g1, g2 in zip(grad_1, grad_2)]
 print(norm_diff)
