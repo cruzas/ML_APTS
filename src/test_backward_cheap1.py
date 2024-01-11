@@ -57,8 +57,9 @@ def train():
 
             # Forward + backward + optimize
             outputs = model(inputs)
-            loss = criterion(outputs, labels)
-            loss.backward()
+            loss_old = criterion(outputs, labels)
+            loss_old.backward()
+            grad0 = [param.grad for param in model.parameters()]
             grad = torch.cat([param.grad.flatten() for param in model.parameters()])
             # optimizer.step()
             
@@ -66,7 +67,8 @@ def train():
             output = model(inputs)
             loss = torch.nn.functional.cross_entropy(output, labels)
             
-            grad2 = autograd.grad(outputs=loss, inputs=model.parameters())
+            # grad2 = autograd.grad(outputs=loss, inputs=model.parameters())
+            grad2 = autograd.grad(outputs=loss, inputs=model.parameters(), grad_outputs=loss_old)
             concat_grad2 = torch.cat([grad.flatten() for grad in grad2])
             # partial_derivatives = autograd.grad(outputs=output, inputs=model.parameters(), grad_outputs=grad, only_inputs=True)[0]
 
