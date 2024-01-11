@@ -1,17 +1,30 @@
 # to run this file (i.e. dtensor_example.py):
 # torchrun --standalone --nnodes=1 --nproc-per-node=4 dtensor_example.py
 import os
-
+import math
 import torch, time
 from torch.distributed._tensor import init_device_mesh, Shard, distribute_tensor
 import torch.multiprocessing as mp
 from utils.utility import prepare_distributed_environment
 from torch import distributed as dist
+from utils.new_mesh import *
 
 # Create a mesh topology with the available devices:
 # 1. We can directly create the mesh using elastic launcher, (recommended)
 # 2. If using mp.spawn, one need to initialize the world process_group first and set device
 #   i.e. torch.distributed.init_process_group(backend="nccl", world_size=world_size)
+
+
+
+# new "init_device_mesh" function
+
+
+
+
+
+
+
+
 
 def bytes_to_gb(bytes):
     return bytes / (1024 ** 3)
@@ -25,10 +38,11 @@ def test_for_loop_parallel(rank, mesh):
     my_dtensor = distribute_tensor(big_tensor, mesh, [Shard(dim=0)])
     if rank in [0, 1]:
         vector = torch.tensor([1, 2, 3, 4], dtype=torch.float32).unsqueeze(-1) # torch.ones(4,1) #torch.randn(int(2e4),1, device=f"cpu")
+        my_vector = distribute_tensor(vector, mesh, [Shard(dim=0)])
     elif rank in [2, 3]:
         vector = torch.tensor([2, 4, 6, 8], dtype=torch.float32).unsqueeze(-1) # torch.ones(4,1) #torch.randn(int(2e4),1, device=f"cpu")
-        
-    my_vector = distribute_tensor(vector, mesh, [Shard(dim=0)])
+        my_vector = distribute_tensor(vector, mesh, [Shard(dim=0)])
+
     with torch.no_grad():
         for i in range(10):
             if rank == 0:
@@ -105,7 +119,9 @@ def main2(rank=None, master_addr=None, master_port=None, world_size=None):
 
 
 if __name__ == '__main__':
-    if 1==1:
+    if "snx" in os.getcwd():
+        main()
+    else:
         world_size = torch.cuda.device_count() if torch.cuda.is_available() else 0
         if world_size == 0:
             print("No CUDA device(s) detected.")
@@ -113,5 +129,4 @@ if __name__ == '__main__':
         master_addr = 'localhost'
         master_port = '12345'
         mp.spawn(main, args=(master_addr, master_port, world_size), nprocs=world_size, join=True)
-    else:
-        main()
+        
