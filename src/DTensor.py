@@ -39,6 +39,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             end_event = torch.cuda.Event(enable_timing=True)
             start_event.record()
             multiplier = my_dtensor @ my_dtensor
+            print(f'Device {rank} matrix norm: {multiplier.norm()}')
             end_event.record()
             torch.cuda.synchronize()
             allocated = bytes_to_gb(torch.cuda.memory_allocated())
