@@ -17,27 +17,37 @@ class MyModel(nn.Module):
         self.x4 = self.layer4(self.x3)
         return self.x4
 
+def print_memory_usage(device_id):
+    allocated = torch.cuda.memory_allocated(device_id) / (1024 ** 3)  # Convert bytes to GB
+    reserved = torch.cuda.memory_reserved(device_id) / (1024 ** 3)    # Convert bytes to GB
+    print(f"Device cuda:{device_id} - Allocated Memory: {allocated:.2f} GB, Reserved Memory: {reserved:.2f} GB")
+
 def train_corrected_v2():
-    # Dummy input and target
-    torch.random.manual_seed(0)
-    x = torch.randn(1, 10)
-    target = torch.randn(1, 10)
     # Create model 
-    model = MyModel()
+    model = MyModel().to(f'cuda:1')
+
+    # Dummy input and target
+    samples = int(1e7)
+    x = torch.randn(samples, 10).to(f'cuda:1')
+    target = torch.randn(samples, 10).to(f'cuda:1')
 
     ## 1. Gradient computed as usual
     output_1 = model(x)
     loss_1 = torch.nn.functional.mse_loss(output_1, target)
+    print_memory_usage(1)
     loss_1.backward()
+
     # Gradients of the entire network
     grad_1 = [param.grad.clone() for param in model.parameters() if param.requires_grad]
+    print_memory_usage(1)
 
     # Reset gradients to zero
     model.zero_grad()
 
+    print_memory_usage(1)
     ## 2. Gradient computed sequentially
     output = model(x)
-
+    print_memory_usage(1)
     # Compute output gradients
     loss = torch.nn.functional.mse_loss(output, target)
     grad_output = autograd.grad(loss, model.x4, create_graph=True)[0]
