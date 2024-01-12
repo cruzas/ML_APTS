@@ -20,16 +20,21 @@ class MyModel(nn.Module):
         self.x4 = self.layer4(self.x3)
         return self.x4
 
+def print_memory_usage(device_id):
+    allocated = torch.cuda.memory_allocated(device_id) / (1024 ** 3)  # Convert bytes to GB
+    reserved = torch.cuda.memory_reserved(device_id) / (1024 ** 3)    # Convert bytes to GB
+    print(f"Device cuda:{device_id} - Allocated Memory: {allocated:.2f} GB, Reserved Memory: {reserved:.2f} GB")
+
+
 def train(rank, master_addr=None, master_port=None, world_size=None):
     # Set up the distributed environment
     prepare_distributed_environment(rank, master_addr, master_port, world_size)
 
-
-
     # Dummy input and target
     torch.manual_seed(0)
-    x = torch.randn(1, 10).to(f'cuda:{rank}')
-    target = torch.randn(1, 10).to(f'cuda:{rank}')
+    samples = int(1e7)
+    x = torch.randn(samples, 10).to(f'cuda:{rank}')
+    target = torch.randn(samples, 10).to(f'cuda:{rank}')
     
     # Create model
     model = MyModel().to(f'cuda:{rank}')
@@ -44,6 +49,8 @@ def train(rank, master_addr=None, master_port=None, world_size=None):
         grad_x3 = autograd.grad(model.x4, model.x3, grad_outputs=grad_output, retain_graph=True)[0]
         model.layer4.weight.grad = autograd.grad(model.x4, model.layer4.weight, grad_outputs=grad_output)[0]
         model.layer3.weight.grad = autograd.grad(model.x3, model.layer3.weight, grad_outputs=grad_x3)[0]
+
+        print_memory_usage(rank)
 
         # Send grad_x3 to rank 0
         dist.send(tensor=grad_x3.cpu(), dst=0)
@@ -60,6 +67,8 @@ def train(rank, master_addr=None, master_port=None, world_size=None):
         grad_x1 = autograd.grad(model.x2, model.x1, grad_outputs=grad_x2, retain_graph=True)[0]
         model.layer2.weight.grad = autograd.grad(model.x2, model.layer2.weight, grad_outputs=grad_x2)[0]
         model.layer1.weight.grad = autograd.grad(model.x1, model.layer1.weight, grad_outputs=grad_x1)[0]
+
+        print_memory_usage(rank)
 
     # Gather gradients on rank 0
     dist.barrier()
