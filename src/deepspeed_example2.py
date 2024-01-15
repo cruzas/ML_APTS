@@ -227,7 +227,7 @@ ds_config = {
 
 
 deepspeed_args = {
-    "train_micro_batch_size_per_gpu": 8,
+    "train_micro_batch_size_per_gpu": 500,
     "pipeline_parallel_size": 2,
     "tensor_parallel_size": 2
     }
