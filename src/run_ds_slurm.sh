@@ -18,5 +18,5 @@ module load daint-gpu
 source /users/scruzale/anaconda3/etc/profile.d/conda.sh
 conda activate deepspeed
 echo "Calling deepspeed `date`"
-srun deepspeed --bind_cores_to_rank deepspeed_example.py --deepspeed $@
+srun deepspeed --bind_cores_to_rank deepspeed_example2.py --deepspeed $@
 echo "Deepspeed finished `date`"
