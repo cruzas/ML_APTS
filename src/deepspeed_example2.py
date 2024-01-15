@@ -134,12 +134,6 @@ def add_argument():
     parser = deepspeed.add_config_arguments(parser)
     args = parser.parse_args()
 
-    deepspeed_args = {
-    "train_micro_batch_size_per_gpu": 8,
-    "pipeline_parallel_size": 2,
-    "tensor_parallel_size": 2
-    }
-    args.update(deepspeed_args)
     return args
 
 def create_moe_param_groups(model):
@@ -230,6 +224,19 @@ ds_config = {
       "cpu_offload": False
   }
 }
+
+
+deepspeed_args = {
+    "train_micro_batch_size_per_gpu": 8,
+    "pipeline_parallel_size": 2,
+    "tensor_parallel_size": 2
+    }
+
+ds_config.update({
+    "train_micro_batch_size_per_gpu": deepspeed_args["train_micro_batch_size_per_gpu"],
+    "pipeline_parallel_size": deepspeed_args["pipeline_parallel_size"],
+    "tensor_parallel_size": deepspeed_args["tensor_parallel_size"]
+})
 
 model_engine, optimizer, trainloader, __ = deepspeed.initialize(
     args=args, model=net, model_parameters=parameters, training_data=trainset, config=ds_config)
