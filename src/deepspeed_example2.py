@@ -176,7 +176,7 @@ if args.moe_param_group:
 # 2) Distributed data loader
 # 3) DeepSpeed optimizer
 ds_config = {
-  "train_batch_size": 16,
+  "train_batch_size": args.batch_size,
   "steps_per_print": 2000,
   "optimizer": {
     "type": "Adam",
