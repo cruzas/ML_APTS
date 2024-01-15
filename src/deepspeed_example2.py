@@ -7,64 +7,28 @@ import deepspeed
 from deepspeed.accelerator import get_accelerator
 from torch.utils.data import Dataset
 
-
-class Net(nn.Module):
-    def __init__(self):
-        super(Net, self).__init__()
-        self.conv1 = nn.Conv2d(3, 6, 5)
-        self.pool = nn.MaxPool2d(2, 2)
-        self.conv2 = nn.Conv2d(6, 16, 5)
-        self.fc1 = nn.Linear(16 * 5 * 5, 120)
-        self.fc2 = nn.Linear(120, 84)
-        if args.moe:
-            fc3 = nn.Linear(84, 84)
-            self.moe_layer_list = []
-            for n_e in args.num_experts:
-                # create moe layers based on the number of experts
-                self.moe_layer_list.append(
-                    deepspeed.moe.layer.MoE(
-                        hidden_size=84,
-                        expert=fc3,
-                        num_experts=n_e,
-                        ep_size=args.ep_world_size,
-                        use_residual=args.mlp_type == 'residual',
-                        k=args.top_k,
-                        min_capacity=args.min_capacity,
-                        noisy_gate_policy=args.noisy_gate_policy))
-            self.moe_layer_list = nn.ModuleList(self.moe_layer_list)
-            self.fc4 = nn.Linear(84, 10)
-        else:
-            self.fc3 = nn.Linear(84, 10)
-
-    def forward(self, x):
-        x = self.pool(F.relu(self.conv1(x)))
-        x = self.pool(F.relu(self.conv2(x)))
-        x = x.view(-1, 16 * 5 * 5)
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        if args.moe:
-            for layer in self.moe_layer_list:
-                x, _, _ = layer(x)
-            x = self.fc4(x)
-        else:
-            x = self.fc3(x)
-        return x
-
 class SyntheticDataset(Dataset):
-    def __init__(self, size, image_dim, num_classes):
+    def __init__(self, size, input_dim, output_dim):
         self.size = size
-        self.image_dim = image_dim
-        self.num_classes = num_classes
+        self.data = torch.randn(size, input_dim)
+        self.labels = torch.randint(0, output_dim, (size,))
 
     def __len__(self):
         return self.size
 
     def __getitem__(self, idx):
-        # Generate a random image (3 channels, 32x32 pixels)
-        image = torch.randn(self.image_dim)
-        # Generate a random label
-        label = torch.randint(0, self.num_classes, (1,))
-        return image, label
+        return self.data[idx], self.labels[idx]
+    
+class SimpleNN(nn.Module):
+    def __init__(self):
+        super(SimpleNN, self).__init__()
+        self.layer1 = nn.Linear(10, 10)
+        self.layer2 = nn.Linear(10, 10)
+
+    def forward(self, x):
+        x = self.layer1(x)
+        x = self.layer2(x)
+        return x
 
 def add_argument():
 
@@ -190,24 +154,19 @@ if torch.distributed.get_rank() != 0:
     torch.distributed.barrier()
 
 # Parameters for synthetic dataset
-dataset_size = 50000  # Adjust the size as needed
-image_dim = (3, 32, 32)  # CIFAR10 image dimensions
-num_classes = 10  # CIFAR10 has 10 classes
+dataset_size = 1000  # number of data points in the dataset
+input_dim = 10       # input dimension
+output_dim = 10      # output dimension (for classification, number of classes)
 
 # Create synthetic datasets
-trainset = SyntheticDataset(dataset_size, image_dim, num_classes)
+trainset = SyntheticDataset(dataset_size, input_dim, output_dim)
 
 if torch.distributed.get_rank() == 0:
     # cifar data is downloaded, indicate other ranks can proceed
     torch.distributed.barrier()
 
-########################################################################
-# 2. Define a Convolutional Neural Network
-# ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-# Copy the neural network from the Neural Networks section before and modify it to
-# take 3-channel images (instead of 1-channel images as it was defined).
 args = add_argument()
-net = Net()
+net = SimpleNN()
 
 parameters = filter(lambda p: p.requires_grad, net.parameters())
 if args.moe_param_group:
