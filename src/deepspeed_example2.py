@@ -48,12 +48,12 @@ def add_argument():
     # train
     parser.add_argument('-b',
                         '--batch_size',
-                        default=32,
+                        default=1000,
                         type=int,
                         help='mini-batch size (default: 32)')
     parser.add_argument('-e',
                         '--epochs',
-                        default=30,
+                        default=5,
                         type=int,
                         help='number of total epochs (default: 30)')
     parser.add_argument('--local_rank',
@@ -132,9 +132,14 @@ def add_argument():
 
     # Include DeepSpeed configuration arguments
     parser = deepspeed.add_config_arguments(parser)
-
     args = parser.parse_args()
 
+    deepspeed_args = {
+    "train_micro_batch_size_per_gpu": 8,
+    "pipeline_parallel_size": 2,
+    "tensor_parallel_size": 2
+    }
+    args.update(deepspeed_args)
     return args
 
 def create_moe_param_groups(model):
@@ -257,11 +262,9 @@ for epoch in range(args.epochs):  # loop over the dataset multiple times
 
         # print statistics
         running_loss += loss.item()
-        if local_rank == 0 and i % args.log_interval == (
-                args.log_interval -
-                1):  # print every log_interval mini-batches
+        if local_rank == 0 :  # print every log_interval mini-batches
             print('[%d, %5d] loss: %.3f' %
-                  (epoch + 1, i + 1, running_loss / args.log_interval))
+                  (epoch + 1, i + 1, loss))
             running_loss = 0.0
 
 print('Finished Training')
