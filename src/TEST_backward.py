@@ -13,10 +13,10 @@ class MyModel(nn.Module):
         self.layer4 = nn.Linear(2, 1, bias=True)
 
     def forward(self, x):
-        self.f1 = torch.sigmoid(self.layer1(x))
-        self.f2 = torch.sigmoid(self.layer2(self.f1))
-        self.f3 = torch.sigmoid(self.layer3(self.f2))
-        self.f4 = torch.sigmoid(self.layer4(self.f3))
+        self.f1 = torch.relu(self.layer1(x))
+        self.f2 = torch.relu(self.layer2(self.f1))
+        self.f3 = torch.relu(self.layer3(self.f2))
+        self.f4 = torch.relu(self.layer4(self.f3))
         return self.f4
 
 class SubModel_working(nn.Module):

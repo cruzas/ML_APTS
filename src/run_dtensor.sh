@@ -10,7 +10,7 @@
 #SBATCH --cpus-per-task=1
 #SBATCH --hint=nomultithread
 #SBATCH --constraint=gpu
-#SBATCH --partition=normal
+#SBATCH --partition=debug
 #SBATCH --exclusive
 
 module load daint-gpu
@@ -18,5 +18,5 @@ module load daint-gpu
 source /users/scruzale/anaconda3/etc/profile.d/conda.sh
 conda activate llms
 echo "Calling main `date`"
-srun python -u test_dtensor.py
+srun python -u deepspeed_example.py
 echo "Finished with main `date`"
