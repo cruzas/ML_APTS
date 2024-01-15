@@ -4,6 +4,7 @@ import torch.nn as nn
 import deepspeed
 import torch.multiprocessing as mp
 from torch.utils.data import Dataset, DataLoader
+from utils.utility import prepare_distributed_environment
 
 deepspeed_args = {
     "train_batch_size": 32,
@@ -36,7 +37,9 @@ class SimpleNN(nn.Module):
         return x
 
 
-def main(rank, master_addr, master_port, world_size):
+def main(rank=None, master_addr=None, master_port=None, world_size=None):
+    prepare_distributed_environment(rank, master_addr, master_port, world_size)
+
     model = SimpleNN()
 
     # Initialize DeepSpeed
@@ -67,6 +70,7 @@ def main(rank, master_addr, master_port, world_size):
         optimizer.zero_grad()  # Reset gradients
         output = model_engine(data)
         loss = loss_fn(output, labels)  # Define your loss function (e.g., nn.CrossEntropyLoss)
+        print(f"Rank {dist.get_rank()}. Loss: {loss}")
         model_engine.backward(loss)
         model_engine.step()
 

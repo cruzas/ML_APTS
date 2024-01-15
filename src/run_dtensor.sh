@@ -13,10 +13,18 @@
 #SBATCH --partition=debug
 #SBATCH --exclusive
 
+echo "Loading daint-gpu `date`"
 module load daint-gpu
+echo "Finished loading daint-gpu `date`"
 
+echo "Sourcing conda.sh `date`"
 source /users/scruzale/anaconda3/etc/profile.d/conda.sh
-conda activate llms
+echo "Finished sourcing conda.sh `date`"
+
+echo "Activating deepspeed `date`"
+conda activate deepspeed
+echo "Finished activating deepspeed `date`"
+
 echo "Calling main `date`"
 srun python -u deepspeed_example.py
 echo "Finished with main `date`"
