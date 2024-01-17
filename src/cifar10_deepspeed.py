@@ -331,6 +331,7 @@ for epoch in range(1, args.epochs + 1):  # loop over the dataset multiple times
 
 # After all epochs, print profiling results
 torch.distributed.barrier()
+print(f"Rank {torch.distributed.get_rank()} finished training")
 if torch.distributed.get_rank() == 0:
     print('Finished Training')
     print('Printing training results...')
@@ -367,5 +368,6 @@ if torch.distributed.get_rank() == 0:
     results_df.to_csv(csv_file_name, index=False)
     print(f"Results saved to {csv_file_name}")
 torch.distributed.barrier()
+print(f"Rank {torch.distributed.get_rank()} should be exiting now")
 exit(0)
 
