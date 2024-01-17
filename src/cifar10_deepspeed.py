@@ -338,13 +338,6 @@ if torch.distributed.get_rank() == 0:
         # Print loss to 5 decimal places and accuracy as a percentage
         print(f"Epoch {i+1} Loss: {losses[i]:.5f} Accuracy: {accuracies[i]:.2f}%")
 
-    print('Printing profiling results...')
-    for epoch, prof in enumerate(profiling_results, 1):
-        print(f"Epoch {epoch} Profiling Results:")
-        print(prof.table(sort_by="cuda_time_total", row_limit=-1))
-        print(prof.table(sort_by="self_cuda_memory_usage", row_limit=-1))
-        print("\n")
-
     # Save results to CSV
     print("Saving results to CSV...")
     # Create a DataFrame for losses and accuracies
@@ -373,4 +366,5 @@ if torch.distributed.get_rank() == 0:
     csv_file_name = f"cifar10_deepspeed_{world_size}.csv"
     results_df.to_csv(csv_file_name, index=False)
     print(f"Results saved to {csv_file_name}")
+    exit(0)
 
