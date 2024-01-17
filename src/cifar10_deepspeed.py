@@ -34,7 +34,7 @@ def add_argument():
                         help='mini-batch size (default: 32)')
     parser.add_argument('-e',
                         '--epochs',
-                        default=1,
+                        default=10,
                         type=int,
                         help='number of total epochs (default: 30)')
     parser.add_argument('--local_rank',
@@ -104,7 +104,7 @@ def add_argument():
     )
     parser.add_argument(
         '--stage',
-        default=0,
+        default=1,
         type=int,
         choices=[0, 1, 2, 3],
         help=
@@ -276,9 +276,10 @@ elif model_engine.fp16_enabled():
     target_dtype=torch.half
 
 criterion = nn.CrossEntropyLoss()
-profiling_results = []
 losses = []
 accuracies = []
+cumulative_times_s = []  # Array for cumulative times
+memory_usage_gb = []  # Array for memory usage
 for epoch in range(1, args.epochs + 1):  # loop over the dataset multiple times
     with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
                  profile_memory=True, record_shapes=True) as prof:
@@ -313,11 +314,26 @@ for epoch in range(1, args.epochs + 1):  # loop over the dataset multiple times
             correct += (predicted == labels.to(local_device)).sum().item()
         accuracy = 100 * correct / total
 
+    # Append to arrays
     losses.append(avg_loss)
     accuracies.append(accuracy)
 
-    # Add profiling result of the current epoch to the list
-    profiling_results.append(prof.key_averages())
+    # Extract profiling metrics
+    total_cuda_time_us = prof.total_average().cuda_time_total # in micro-seconds
+    total_cuda_memory_usage_bytes = prof.total_average().self_cuda_memory_usage # in bytes
+    # Convert and accumulate
+    total_cuda_time_s = total_cuda_time_us / 1e6 # in seconds
+    total_cuda_memory_usage_gb = total_cuda_memory_usage_bytes / 1e9 # in gigabytes
+
+    # If it's the first epoch, initialize cumulative time
+    if epoch == 1:
+        cumulative_cuda_time_s = total_cuda_time_s
+    else:
+        cumulative_cuda_time_s += total_cuda_time_s
+
+    # Append to arrays
+    cumulative_times_s.append(cumulative_cuda_time_s)
+    memory_usage_gb.append(total_cuda_memory_usage_gb)
 
 # After all epochs, print profiling results
 torch.distributed.barrier()
@@ -326,39 +342,23 @@ if torch.distributed.get_rank() == 0:
     print('Finished Training')
     print('Printing training results...')
     for i in range(len(losses)):
-        # Print loss to 5 decimal places and accuracy as a percentage
-        print(f"Epoch {i+1} Loss: {losses[i]:.5f} Accuracy: {accuracies[i]:.2f}%")
+        print(f"Epoch {i + 1}: {losses[i]:.5f} {accuracies[i]:.2f}% {cumulative_times_s[i]:.3f} {memory_usage_gb[i]:.5f}")
 
-    # Save results to CSV
+    # Save to CSV    
     print("Saving results to CSV...")
-    # Create a DataFrame for losses and accuracies
     results_df = pd.DataFrame({
         'Epoch': range(1, args.epochs + 1),
         'Loss': losses,
-        'Accuracy': accuracies
+        'Accuracy': accuracies,
+        'Cumulative CUDA Time (s)': cumulative_times_s,
+        'Total CUDA Memory Usage (GB)': memory_usage_gb
     })
 
-    # Extract key metrics from profiling data
-    for epoch, prof in enumerate(profiling_results, 1):
-        total_cuda_time_us = prof.total_average().cuda_time_total
-        total_cuda_memory_usage_bytes = prof.total_average().self_cuda_memory_usage
-
-        # Convert CUDA time from microseconds to seconds
-        total_cuda_time_s = total_cuda_time_us / 1e6
-
-        # Convert CUDA memory usage from bytes to gigabytes
-        total_cuda_memory_usage_gb = total_cuda_memory_usage_bytes / 1e9
-
-        results_df.loc[epoch - 1, 'Total CUDA Time (s)'] = total_cuda_time_s
-        results_df.loc[epoch - 1, 'Total CUDA Memory Usage (GB)'] = total_cuda_memory_usage_gb
-
-    # Save to CSV
-    world_size = torch.distributed.get_world_size()
-    csv_file_name = f"cifar10_deepspeed_{world_size}.csv"
+    csv_file_name = f"cifar10_deepspeed_{torch.distributed.get_world_size()}.csv"
     results_df.to_csv(csv_file_name, index=False)
     print(f"Results saved to {csv_file_name}")
+
 torch.distributed.barrier()
 print(f"Rank {torch.distributed.get_rank()} should be exiting now")
 exit(0)
-print("This should not be possible")
 
