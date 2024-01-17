@@ -3,7 +3,7 @@
 #SBATCH --job-name=deepspeed
 #SBATCH --output=ds_output.txt
 #SBATCH --error=ds_error.txt
-#SBATCH --nodes=4
+#SBATCH --nodes=2
 #SBATCH --time=00:30:00
 #SBATCH --ntasks-per-core=1
 #SBATCH --ntasks-per-node=1
@@ -15,8 +15,10 @@
 
 module load daint-gpu
 
+set -x  # Enable debugging
 source /users/scruzale/anaconda3/etc/profile.d/conda.sh
 conda activate deepspeed
 echo "Calling deepspeed `date`"
-srun deepspeed --bind_cores_to_rank deepspeed_example2.py --deepspeed $@
+srun deepspeed --bind_cores_to_rank cifar10_deepspeed.py --deepspeed $@
 echo "Deepspeed finished `date`"
+exit 0
