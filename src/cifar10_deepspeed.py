@@ -310,24 +310,24 @@ for epoch in range(1, args.epochs + 1):  # loop over the dataset multiple times
 
         avg_loss = running_loss / count
 
-        correct = 0
-        total = 0
-        with torch.no_grad():
-            for data in testloader:
-                images, labels = data
-                if target_dtype != None:
-                    images = images.to(target_dtype)
-                outputs = net(images.to(local_device))
-                _, predicted = torch.max(outputs.data, 1)
-                total += labels.size(0)
-                correct += (predicted == labels.to(local_device)).sum().item()
-            accuracy = 100 * correct / total
+    correct = 0
+    total = 0
+    with torch.no_grad():
+        for data in testloader:
+            images, labels = data
+            if target_dtype != None:
+                images = images.to(target_dtype)
+            outputs = net(images.to(local_device))
+            _, predicted = torch.max(outputs.data, 1)
+            total += labels.size(0)
+            correct += (predicted == labels.to(local_device)).sum().item()
+        accuracy = 100 * correct / total
 
-        losses.append(avg_loss)
-        accuracies.append(accuracy)
+    losses.append(avg_loss)
+    accuracies.append(accuracy)
 
-        # Add profiling result of the current epoch to the list
-        profiling_results.append(prof.key_averages())
+    # Add profiling result of the current epoch to the list
+    profiling_results.append(prof.key_averages())
 
 # After all epochs, print profiling results
 torch.distributed.barrier()
