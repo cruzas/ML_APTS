@@ -225,7 +225,7 @@ if args.moe_param_group:
 # 2) Distributed data loader
 # 3) DeepSpeed optimizer
 ds_config = {
-  "train_batch_size": 16,
+  "train_batch_size": 10000,
   "steps_per_print": 10000,
   "optimizer": {
     "type": "Adam",
@@ -249,18 +249,18 @@ ds_config = {
 #   },
 #   "gradient_clipping": 1.0,
 #   "prescale_gradients": False,
-  "bf16": {
-      "enabled": args.dtype == "bf16"
-  },
-  "fp16": {
-      "enabled": args.dtype == "fp16",
-      "fp16_master_weights_and_grads": False,
-      "loss_scale": 0,
-      "loss_scale_window": 10000,
-      "hysteresis": 2,
-      "min_loss_scale": 1,
-      "initial_scale_power": 15
-  },
+#   "bf16": {
+#       "enabled": args.dtype == "bf16"
+#   },
+#   "fp16": {
+#       "enabled": args.dtype == "fp16",
+#       "fp16_master_weights_and_grads": False,
+#       "loss_scale": 0,
+#       "loss_scale_window": 10000,
+#       "hysteresis": 2,
+#       "min_loss_scale": 1,
+#       "initial_scale_power": 15
+#   },
   "wall_clock_breakdown": False,
   "zero_optimization": {
       "stage": args.stage,
