@@ -6,6 +6,8 @@ import deepspeed
 from deepspeed.accelerator import get_accelerator
 from torch.profiler import profile, ProfilerActivity
 import pandas as pd
+import numpy as np
+import random
 
 def add_argument():
 
@@ -114,6 +116,15 @@ def add_argument():
 
     return args
 
+
+# Set seed
+SEED = 42
+random.seed(SEED)
+np.random.seed(SEED)
+torch.manual_seed(SEED)
+torch.cuda.manual_seed_all(SEED)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
 
 deepspeed.init_distributed()
 
@@ -307,6 +318,7 @@ for epoch in range(1, args.epochs + 1):  # loop over the dataset multiple times
         # profiling_results.append(prof.key_averages())
 
 # After all epochs, print profiling results
+torch.distributed.barrier()
 if local_rank == 0:
     print('Finished Training')
     print('Printing training results...')
