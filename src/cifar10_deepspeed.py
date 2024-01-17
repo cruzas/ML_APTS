@@ -366,5 +366,6 @@ if torch.distributed.get_rank() == 0:
     csv_file_name = f"cifar10_deepspeed_{world_size}.csv"
     results_df.to_csv(csv_file_name, index=False)
     print(f"Results saved to {csv_file_name}")
-    exit(0)
+torch.distributed.barrier()
+exit(0)
 
