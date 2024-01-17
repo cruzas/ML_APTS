@@ -179,13 +179,6 @@ def create_moe_param_groups(model):
 
         return split_params_into_different_moe_groups_for_optimizer(parameters)
 
-deepspeed.init_distributed()
-
-transform = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-])
-
 
 
 def trial():
@@ -197,6 +190,11 @@ def trial():
     torch.cuda.manual_seed_all(SEED)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+
+    transform = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+    ])
 
     if torch.distributed.get_rank() != 0:
         # might be downloading cifar data, let rank 0 download first
@@ -224,7 +222,7 @@ def trial():
                                             batch_size=4,
                                             shuffle=False,
                                             num_workers=2)
-    net = Net(args)
+    net = Net()
 
     parameters = filter(lambda p: p.requires_grad, net.parameters())
     if args.moe_param_group:
@@ -308,6 +306,9 @@ def trial():
 
 
 def main():
+    print("Initializing deepspeed...")
+    deepspeed.init_distributed()
+    print("Finished initializing deepspeed...")
     num_trials = 3
     all_losses = []
     all_accuracies = []
@@ -356,4 +357,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
