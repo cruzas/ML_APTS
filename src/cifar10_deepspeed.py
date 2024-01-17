@@ -319,7 +319,7 @@ for epoch in range(1, args.epochs + 1):  # loop over the dataset multiple times
 
 # After all epochs, print profiling results
 torch.distributed.barrier()
-if local_rank == 0:
+if torch.distributed.get_rank() == 0:
     print('Finished Training')
     print('Printing training results...')
     for i in range(len(losses)):
