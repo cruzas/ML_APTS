@@ -25,7 +25,7 @@ def add_argument():
     # train
     parser.add_argument('-b',
                         '--batch_size',
-                        default=32,
+                        default=10000,
                         type=int,
                         help='mini-batch size (default: 32)')
     parser.add_argument('-e',
@@ -40,7 +40,7 @@ def add_argument():
 
     parser.add_argument('--log-interval',
                         type=int,
-                        default=2000,
+                        default=1,
                         help="output logging information at a given interval")
 
     parser.add_argument('--moe',
@@ -244,7 +244,7 @@ ds_config = {
     "params": {
       "warmup_min_lr": 0,
       "warmup_max_lr": 0.001,
-      "warmup_num_steps": 1000
+      "warmup_num_steps": 1
     }
   },
   "gradient_clipping": 1.0,
