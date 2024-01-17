@@ -21,11 +21,10 @@ source /users/scruzale/anaconda3/etc/profile.d/conda.sh
 conda activate deepspeed
 echo "Calling deepspeed `date`"
 
-# srun deepspeed --bind_cores_to_rank cifar10_deepspeed.py --deepspeed $@
 srun bash -c 'python -m torch.distributed.run \
  --nproc_per_node $GPUS_PER_NODE --nnodes $SLURM_NNODES --node_rank $SLURM_PROCID \
  --master_addr $MASTER_ADDR --master_port $MASTER_PORT \
-cifar10_deepspeed.py --deepspeed ds_config.json'
+cifar10_deepspeed.py --deepspeed'
 
 echo "Deepspeed finished `date`"
 exit 0

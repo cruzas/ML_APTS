@@ -13,8 +13,6 @@ import random
 import torch.nn as nn
 import torch.nn.functional as F
 
-
-
 def add_argument():
 
     parser = argparse.ArgumentParser(description='CIFAR')
@@ -227,9 +225,34 @@ def trial():
     parameters = filter(lambda p: p.requires_grad, net.parameters())
     if args.moe_param_group:
         parameters = create_moe_param_groups(net)
+    
 
+    ds_config = {
+    "train_batch_size": 256,  
+    "steps_per_print": 100,  
+    "optimizer": {
+        "type": "Adam",
+        "params": {
+        "lr": 0.001,
+        "betas": [0.8, 0.999],
+        "eps": 1e-8,
+        "weight_decay": 3e-7
+        }
+    },
+    "wall_clock_breakdown": False,
+    "zero_optimization": {
+        "stage": 1,  
+        "allgather_partitions": True,
+        "reduce_scatter": True,
+        "allgather_bucket_size": 50000000,
+        "reduce_bucket_size": 50000000,
+        "overlap_comm": False,  
+        "contiguous_gradients": True,
+        "cpu_offload": False
+    }
+    }
     model_engine, _, trainloader, __ = deepspeed.initialize(
-        args=args, model=net, model_parameters=parameters, training_data=trainset)
+        args=args, model=net, model_parameters=parameters, training_data=trainset, config=ds_config)
 
     local_device = get_accelerator().device_name(model_engine.local_rank)
 
@@ -306,9 +329,6 @@ def trial():
 
 
 def main():
-    print("Initializing deepspeed...")
-    deepspeed.init_distributed()
-    print("Finished initializing deepspeed...")
     num_trials = 3
     all_losses = []
     all_accuracies = []
@@ -356,4 +376,7 @@ def main():
 
 
 if __name__ == "__main__":
+    print("Initializing deepspeed...")
+    deepspeed.init_distributed()
+    print("Finished initializing deepspeed...")
     main()
