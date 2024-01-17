@@ -350,3 +350,10 @@ def main():
     torch.distributed.barrier()
     print(f"Rank {torch.distributed.get_rank()} should be exiting now")
     exit(0)
+
+
+
+
+if __name__ == "__main__":
+    main()
+    
