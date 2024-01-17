@@ -290,44 +290,44 @@ profiling_results = []
 losses = []
 accuracies = []
 for epoch in range(1, args.epochs + 1):  # loop over the dataset multiple times
-    # with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-    #              profile_memory=True, record_shapes=True) as prof:
-    running_loss = 0.0
-    count = 0
-    for i, data in enumerate(trainloader):
-        # get the inputs; data is a list of [inputs, labels]
-        inputs, labels = data[0].to(local_device), data[1].to(local_device)
-        if target_dtype != None:
-            inputs = inputs.to(target_dtype)
-        outputs = model_engine(inputs)
-        loss = criterion(outputs, labels)
-
-        running_loss += loss.item()
-        count += 1
-
-        model_engine.backward(loss)
-        model_engine.step()
-
-    avg_loss = running_loss / count
-
-    correct = 0
-    total = 0
-    with torch.no_grad():
-        for data in testloader:
-            images, labels = data
+    with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+                 profile_memory=True, record_shapes=True) as prof:
+        running_loss = 0.0
+        count = 0
+        for i, data in enumerate(trainloader):
+            # get the inputs; data is a list of [inputs, labels]
+            inputs, labels = data[0].to(local_device), data[1].to(local_device)
             if target_dtype != None:
-                images = images.to(target_dtype)
-            outputs = net(images.to(local_device))
-            _, predicted = torch.max(outputs.data, 1)
-            total += labels.size(0)
-            correct += (predicted == labels.to(local_device)).sum().item()
-        accuracy = 100 * correct / total
+                inputs = inputs.to(target_dtype)
+            outputs = model_engine(inputs)
+            loss = criterion(outputs, labels)
 
-    losses.append(avg_loss)
-    accuracies.append(accuracy)
+            running_loss += loss.item()
+            count += 1
+
+            model_engine.backward(loss)
+            model_engine.step()
+
+        avg_loss = running_loss / count
+
+        correct = 0
+        total = 0
+        with torch.no_grad():
+            for data in testloader:
+                images, labels = data
+                if target_dtype != None:
+                    images = images.to(target_dtype)
+                outputs = net(images.to(local_device))
+                _, predicted = torch.max(outputs.data, 1)
+                total += labels.size(0)
+                correct += (predicted == labels.to(local_device)).sum().item()
+            accuracy = 100 * correct / total
+
+        losses.append(avg_loss)
+        accuracies.append(accuracy)
 
         # Add profiling result of the current epoch to the list
-        # profiling_results.append(prof.key_averages())
+        profiling_results.append(prof.key_averages())
 
 # After all epochs, print profiling results
 torch.distributed.barrier()
@@ -338,12 +338,12 @@ if torch.distributed.get_rank() == 0:
         # Print loss to 5 decimal places and accuracy as a percentage
         print(f"Epoch {i+1} Loss: {losses[i]:.5f} Accuracy: {accuracies[i]:.2f}%")
 
-    # print('Printing profiling results...')
-    # for epoch, prof in enumerate(profiling_results, 1):
-    #     print(f"Epoch {epoch} Profiling Results:")
-    #     print(prof.table(sort_by="cuda_time_total", row_limit=-1))
-    #     print(prof.table(sort_by="self_cuda_memory_usage", row_limit=-1))
-    #     print("\n")
+    print('Printing profiling results...')
+    for epoch, prof in enumerate(profiling_results, 1):
+        print(f"Epoch {epoch} Profiling Results:")
+        print(prof.table(sort_by="cuda_time_total", row_limit=-1))
+        print(prof.table(sort_by="self_cuda_memory_usage", row_limit=-1))
+        print("\n")
 
     # Save results to CSV
     print("Saving results to CSV...")
@@ -355,9 +355,9 @@ if torch.distributed.get_rank() == 0:
     })
 
     # Extract key metrics from profiling data
-    # for epoch, prof in enumerate(profiling_results, 1):
-    #     results_df.loc[epoch - 1, 'Total CUDA Time (s)'] = prof.total_average().cuda_time_total
-    #     results_df.loc[epoch - 1, 'Total CUDA Memory Usage (Bytes)'] = prof.total_average().self_cuda_memory_usage
+    for epoch, prof in enumerate(profiling_results, 1):
+        results_df.loc[epoch - 1, 'Total CUDA Time (s)'] = prof.total_average().cuda_time_total
+        results_df.loc[epoch - 1, 'Total CUDA Memory Usage (Bytes)'] = prof.total_average().self_cuda_memory_usage
 
     # Save to CSV
     world_size = torch.distributed.get_world_size()
