@@ -356,8 +356,17 @@ if torch.distributed.get_rank() == 0:
 
     # Extract key metrics from profiling data
     for epoch, prof in enumerate(profiling_results, 1):
-        results_df.loc[epoch - 1, 'Total CUDA Time (s)'] = prof.total_average().cuda_time_total
-        results_df.loc[epoch - 1, 'Total CUDA Memory Usage (Bytes)'] = prof.total_average().self_cuda_memory_usage
+        total_cuda_time_us = prof.total_average().cuda_time_total
+        total_cuda_memory_usage_bytes = prof.total_average().self_cuda_memory_usage
+
+        # Convert CUDA time from microseconds to seconds
+        total_cuda_time_s = total_cuda_time_us / 1e6
+
+        # Convert CUDA memory usage from bytes to gigabytes
+        total_cuda_memory_usage_gb = total_cuda_memory_usage_bytes / 1e9
+
+        results_df.loc[epoch - 1, 'Total CUDA Time (s)'] = total_cuda_time_s
+        results_df.loc[epoch - 1, 'Total CUDA Memory Usage (GB)'] = total_cuda_memory_usage_gb
 
     # Save to CSV
     world_size = torch.distributed.get_world_size()
