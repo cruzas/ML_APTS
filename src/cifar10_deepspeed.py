@@ -30,7 +30,7 @@ def add_argument():
                         help='mini-batch size (default: 32)')
     parser.add_argument('-e',
                         '--epochs',
-                        default=3,
+                        default=1,
                         type=int,
                         help='number of total epochs (default: 30)')
     parser.add_argument('--local_rank',
@@ -226,7 +226,7 @@ if args.moe_param_group:
 # 3) DeepSpeed optimizer
 ds_config = {
   "train_batch_size": 16,
-  "steps_per_print": 2000,
+  "steps_per_print": 10000,
   "optimizer": {
     "type": "Adam",
     "params": {
@@ -239,16 +239,16 @@ ds_config = {
       "weight_decay": 3e-7
     }
   },
-  "scheduler": {
-    "type": "WarmupLR",
-    "params": {
-      "warmup_min_lr": 0,
-      "warmup_max_lr": 0.001,
-      "warmup_num_steps": 1
-    }
-  },
-  "gradient_clipping": 1.0,
-  "prescale_gradients": False,
+#   "scheduler": {
+#     "type": "WarmupLR",
+#     "params": {
+#       "warmup_min_lr": 0,
+#       "warmup_max_lr": 0.001,
+#       "warmup_num_steps": 1
+#     }
+#   },
+#   "gradient_clipping": 1.0,
+#   "prescale_gradients": False,
   "bf16": {
       "enabled": args.dtype == "bf16"
   },
@@ -256,7 +256,7 @@ ds_config = {
       "enabled": args.dtype == "fp16",
       "fp16_master_weights_and_grads": False,
       "loss_scale": 0,
-      "loss_scale_window": 500,
+      "loss_scale_window": 10000,
       "hysteresis": 2,
       "min_loss_scale": 1,
       "initial_scale_power": 15
