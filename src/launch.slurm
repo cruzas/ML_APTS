@@ -25,7 +25,7 @@ echo "Calling deepspeed `date`"
 srun bash -c 'python -m torch.distributed.run \
  --nproc_per_node $GPUS_PER_NODE --nnodes $SLURM_NNODES --node_rank $SLURM_PROCID \
  --master_addr $MASTER_ADDR --master_port $MASTER_PORT \
-cifar10_deepspeed.py --deepspeed'
+cifar10_deepspeed.py --deepspeed ds_config.json'
 
 echo "Deepspeed finished `date`"
 exit 0
