@@ -3,11 +3,12 @@
 #SBATCH --job-name=deepspeed
 #SBATCH --output=ds_output.txt
 #SBATCH --error=ds_error.txt
-#SBATCH --nodes=2
+#SBATCH --nodes=4
 #SBATCH --time=00:30:00
 #SBATCH --ntasks-per-core=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=1
+#SBATCH --gres=gpu:1
 #SBATCH --hint=nomultithread
 #SBATCH --constraint=gpu
 #SBATCH --partition=debug
@@ -26,7 +27,7 @@ conda activate deepspeed
 echo "Calling deepspeed `date`"
 
 # srun deepspeed --bind_cores_to_rank cifar10_deepspeed.py --deepspeed $@
-srun --jobid $SLURM_JOBID bash -c 'python -m torch.distributed.run \
+srun bash -c 'python -m torch.distributed.run \
  --nproc_per_node $GPUS_PER_NODE --nnodes $SLURM_NNODES --node_rank $SLURM_PROCID \
  --master_addr $MASTER_ADDR --master_port $MASTER_PORT \
 cifar10_deepspeed.py --deepspeed'
