@@ -265,6 +265,10 @@ for epoch in range(args.epochs):  # loop over the dataset multiple times
         loss = criterion(outputs, labels)
 
         model_engine.backward(loss)
+        if torch.cuda.is_available():
+            allocated_memory = torch.cuda.memory_allocated(args.local_rank)
+            reserved_memory = torch.cuda.memory_reserved(args.local_rank)
+            print(f"Rank {args.local_rank}: Allocated memory: {allocated_memory} bytes, Reserved memory: {reserved_memory} bytes")
         model_engine.step()
 
         # print statistics
