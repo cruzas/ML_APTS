@@ -24,7 +24,7 @@ def add_argument():
     # train
     parser.add_argument('-b',
                         '--batch_size',
-                        default=1000,
+                        default=32,
                         type=int,
                         help='mini-batch size (default: 32)')
     parser.add_argument('-e',
@@ -142,16 +142,16 @@ if torch.distributed.get_rank() == 0:
     torch.distributed.barrier()
 
 trainloader = torch.utils.data.DataLoader(trainset,
-                                          batch_size=16,
+                                          batch_size=32,
                                           shuffle=True,
-                                          num_workers=2)
+                                          num_workers=1)
 
 testset = torchvision.datasets.CIFAR10(root='./data',
                                        train=False,
                                        download=True,
                                        transform=transform)
 testloader = torch.utils.data.DataLoader(testset,
-                                         batch_size=1000,
+                                         batch_size=32,
                                          shuffle=False,
                                          num_workers=1)
 
@@ -239,7 +239,7 @@ if args.moe_param_group:
 # 2) Distributed data loader
 # 3) DeepSpeed optimizer
 ds_config = {
-  "train_batch_size": 1000,
+  "train_batch_size": 32,
   "steps_per_print": 100,
   "optimizer": {
     "type": "Adam",
