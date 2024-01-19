@@ -4,6 +4,8 @@ import torchvision.transforms as transforms
 import argparse
 import deepspeed
 from deepspeed.accelerator import get_accelerator
+from torch.profiler import profile, ProfilerActivity
+import pandas as pd
 
 
 def add_argument():
@@ -286,26 +288,32 @@ elif model_engine.fp16_enabled():
     target_dtype=torch.half
 
 criterion = nn.CrossEntropyLoss()
+losses = []
+accuracies = []
+cumulative_times_s = []  # Array for cumulative times
+memory_usage_gb = []  # Array for memory usage
 print(f"Rank {rank} started training...") 
 for epoch in range(1, args.epochs+1):  # loop over the dataset multiple times
-    epoch_loss = 0.0
-    count = 0
-    print(f"Epoch {epoch}. Rank {rank}. Training...")
-    for i, data in enumerate(trainloader):
-        # get the inputs; data is a list of [inputs, labels]
-        inputs, labels = data[0].to(local_device), data[1].to(local_device)
-        if target_dtype != None:
-            inputs = inputs.to(target_dtype)
-        outputs = model_engine(inputs)
-        loss = criterion(outputs, labels)
+    with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+                    profile_memory=True, record_shapes=True) as prof:
+        epoch_loss = 0.0
+        count = 0
+        print(f"Epoch {epoch}. Rank {rank}. Training...")
+        for i, data in enumerate(trainloader):
+            # get the inputs; data is a list of [inputs, labels]
+            inputs, labels = data[0].to(local_device), data[1].to(local_device)
+            if target_dtype != None:
+                inputs = inputs.to(target_dtype)
+            outputs = model_engine(inputs)
+            loss = criterion(outputs, labels)
 
-        model_engine.backward(loss)
-        model_engine.step()
+            model_engine.backward(loss)
+            model_engine.step()
 
-        # print statistics
-        epoch_loss += loss.item()
-        count += 1
-    epoch_loss /= count 
+            # print statistics
+            epoch_loss += loss.item()
+            count += 1
+        epoch_loss /= count 
     
     print(f"Epoch {epoch}. Rank {rank}. Computing accuracy...")
     # Compute accuracy after epoch has concluded
@@ -337,5 +345,41 @@ for epoch in range(1, args.epochs+1):  # loop over the dataset multiple times
         
         print(f"Epoch {epoch}, rank {rank}, loss {epoch_loss:.4f}, accuracy {accuracy:.2f}%")
 
+        # Append to arrays
+        losses.append(epoch_loss)
+        accuracies.append(accuracy)
+
+        # Extract profiling metrics
+        total_cuda_time_us = prof.total_average().cuda_time_total # in micro-seconds
+        total_cuda_memory_usage_bytes = prof.total_average().self_cuda_memory_usage # in bytes
+        # Convert and accumulate
+        total_cuda_time_s = total_cuda_time_us / 1e6 # in seconds
+        total_cuda_memory_usage_gb = total_cuda_memory_usage_bytes / 1e9 # in gigabytes
+
+        # If it's the first epoch, initialize cumulative time
+        if epoch == 1:
+            cumulative_cuda_time_s = total_cuda_time_s
+        else:
+            cumulative_cuda_time_s += total_cuda_time_s
+
+        # Append to arrays
+        cumulative_times_s.append(cumulative_cuda_time_s)
+        memory_usage_gb.append(total_cuda_memory_usage_gb)
+
 torch.distributed.barrier()
 print(f'Rank {rank} finished Training')
+
+# Save to CSV    
+print("Saving results to CSV...")
+results_df = pd.DataFrame({
+    'Epoch': range(1, args.epochs + 1),
+    'Loss': losses,
+    'Accuracy': accuracies,
+    'Cumulative CUDA Time (s)': cumulative_times_s,
+    'Total CUDA Memory Usage (GB)': memory_usage_gb
+})
+
+# TODO: add batch size to filename
+csv_file_name = f"cifar10_DS_ws_{torch.distributed.get_world_size()}.csv"
+results_df.to_csv(csv_file_name, index=False)
+print(f"Results saved to {csv_file_name}")
