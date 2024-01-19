@@ -7,7 +7,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --hint=nomultithread
 #SBATCH --constraint=gpu
-#SBATCH --partition=normal
+#SBATCH --partition=debug
 #SBATCH --exclusive
 
 module load daint-gpu

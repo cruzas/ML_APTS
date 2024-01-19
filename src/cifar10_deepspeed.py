@@ -24,7 +24,7 @@ def add_argument():
     # train
     parser.add_argument('-b',
                         '--batch_size',
-                        default=10000,
+                        default=256,
                         type=int,
                         help='mini-batch size (default: 32)')
     parser.add_argument('-e',
@@ -239,8 +239,8 @@ if args.moe_param_group:
 # 2) Distributed data loader
 # 3) DeepSpeed optimizer
 ds_config = {
-  "train_batch_size": 10000,
-  "steps_per_print": 2000,
+  "train_batch_size": 256,
+  "steps_per_print": 100,
   "optimizer": {
     "type": "Adam",
     "params": {
@@ -286,6 +286,7 @@ elif model_engine.fp16_enabled():
     target_dtype=torch.half
 
 criterion = nn.CrossEntropyLoss()
+print(f"Rank {torch.distributed.get_rank()} started training...") 
 for epoch in range(1, args.epochs+1):  # loop over the dataset multiple times
     epoch_loss = 0.0
     count = 0
@@ -304,7 +305,8 @@ for epoch in range(1, args.epochs+1):  # loop over the dataset multiple times
         epoch_loss += loss.item()
         count += 1
     epoch_loss /= count 
-
+    
+    print(f"Epoch {epoch}. Rank {torch.distributed.get_rank()}. Computing accuracy...")
     # Compute accuracy after epoch has concluded
     correct = 0
     total = 0
@@ -319,8 +321,7 @@ for epoch in range(1, args.epochs+1):  # loop over the dataset multiple times
             correct += (predicted == labels.to(local_device)).sum().item()
         accuracy = correct / total * 100
 
-    if torch.distributed.get_rank() == 0:
-        print("Epoch %d, loss %.4f, accuracy %.2f%" % (epoch, epoch_loss, accuracy))
+    print("Epoch %d, loss %.4f, accuracy %.2f%" % (epoch, epoch_loss, accuracy))
 
 torch.distributed.barrier()
 print(f'Rank {torch.distributed.get_rank()} finished Training')
