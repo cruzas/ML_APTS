@@ -334,8 +334,8 @@ for epoch in range(1, args.epochs+1):  # loop over the dataset multiple times
         print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 8")
         accuracy = correct / total * 100
         print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 9")
-    
-    print("Epoch %d, rank, %d loss %.4f, accuracy %.2f%" % (epoch, rank, epoch_loss, accuracy))
+        
+        print(f"Epoch {epoch}, rank {rank}, loss {epoch_loss:.4f}, accuracy {accuracy:.2f}%")
 
 torch.distributed.barrier()
 print(f'Rank {rank} finished Training')
