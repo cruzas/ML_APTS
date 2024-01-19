@@ -1,17 +1,10 @@
-import os
-import subprocess
 import torch
 import torchvision
 import torchvision.transforms as transforms
 import argparse
 import deepspeed
 from deepspeed.accelerator import get_accelerator
-from torch.profiler import profile, ProfilerActivity
-import pandas as pd
-import numpy as np
-import random
-import torch.nn as nn
-import torch.nn.functional as F
+
 
 def add_argument():
 
@@ -121,8 +114,62 @@ def add_argument():
     return args
 
 
+deepspeed.init_distributed()
+
+########################################################################
+# The output of torchvision datasets are PILImage images of range [0, 1].
+# We transform them to Tensors of normalized range [-1, 1].
+# .. note::
+#     If running on Windows and you get a BrokenPipeError, try setting
+#     the num_worker of torch.utils.data.DataLoader() to 0.
+
+transform = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+])
+
+if torch.distributed.get_rank() != 0:
+    # might be downloading cifar data, let rank 0 download first
+    torch.distributed.barrier()
+
+trainset = torchvision.datasets.CIFAR10(root='./data',
+                                        train=True,
+                                        download=True,
+                                        transform=transform)
+
+if torch.distributed.get_rank() == 0:
+    # cifar data is downloaded, indicate other ranks can proceed
+    torch.distributed.barrier()
+
+trainloader = torch.utils.data.DataLoader(trainset,
+                                          batch_size=16,
+                                          shuffle=True,
+                                          num_workers=2)
+
+testset = torchvision.datasets.CIFAR10(root='./data',
+                                       train=False,
+                                       download=True,
+                                       transform=transform)
+testloader = torch.utils.data.DataLoader(testset,
+                                         batch_size=4,
+                                         shuffle=False,
+                                         num_workers=2)
+
+classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse',
+           'ship', 'truck')
+
+########################################################################
+# 2. Define a Convolutional Neural Network
+# ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+# Copy the neural network from the Neural Networks section before and modify it to
+# take 3-channel images (instead of 1-channel images as it was defined).
+
+import torch.nn as nn
+import torch.nn.functional as F
 
 args = add_argument()
+
+
 class Net(nn.Module):
     def __init__(self):
         super(Net, self).__init__()
@@ -165,218 +212,115 @@ class Net(nn.Module):
             x = self.fc3(x)
         return x
 
+# Set seed
+torch.manual_seed(0)
+torch.cuda.manual_seed(0)
+
+net = Net()
 
 
 def create_moe_param_groups(model):
-        from deepspeed.moe.utils import split_params_into_different_moe_groups_for_optimizer
+    from deepspeed.moe.utils import split_params_into_different_moe_groups_for_optimizer
 
-        parameters = {
-            'params': [p for p in model.parameters()],
-            'name': 'parameters'
-        }
+    parameters = {
+        'params': [p for p in model.parameters()],
+        'name': 'parameters'
+    }
 
-        return split_params_into_different_moe_groups_for_optimizer(parameters)
+    return split_params_into_different_moe_groups_for_optimizer(parameters)
 
 
+parameters = filter(lambda p: p.requires_grad, net.parameters())
+if args.moe_param_group:
+    parameters = create_moe_param_groups(net)
 
-def trial():
-    # Set seed
-    SEED = 42
-    random.seed(SEED)
-    np.random.seed(SEED)
-    torch.manual_seed(SEED)
-    torch.cuda.manual_seed_all(SEED)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+# Initialize DeepSpeed to use the following features
+# 1) Distributed model
+# 2) Distributed data loader
+# 3) DeepSpeed optimizer
+ds_config = {
+  "train_batch_size": 10000,
+  "steps_per_print": 2000,
+  "optimizer": {
+    "type": "Adam",
+    "params": {
+      "lr": 0.001,
+      "betas": [
+        0.8,
+        0.999
+      ],
+      "eps": 1e-8,
+      "weight_decay": 3e-7
+    }
+  },
+  "bf16": {
+      "enabled": args.dtype == "bf16"
+  },
+  "fp16": {
+      "enabled": args.dtype == "fp16",
+  },
+  "wall_clock_breakdown": False,
+  "zero_optimization": {
+      "stage": args.stage,
+      "allgather_partitions": True,
+      "reduce_scatter": True,
+      "allgather_bucket_size": 50000000,
+      "reduce_bucket_size": 50000000,
+      "overlap_comm": True,
+      "contiguous_gradients": True,
+      "cpu_offload": False
+  }
+}
 
-    transform = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-    ])
+model_engine, optimizer, trainloader, __ = deepspeed.initialize(
+    args=args, model=net, model_parameters=parameters, training_data=trainset, config=ds_config)
 
-    if torch.distributed.get_rank() != 0:
-        # might be downloading cifar data, let rank 0 download first
-        torch.distributed.barrier()
+local_device = get_accelerator().device_name(model_engine.local_rank)
+local_rank = model_engine.local_rank
 
-    trainset = torchvision.datasets.CIFAR10(root='./data',
-                                            train=True,
-                                            download=True,
-                                            transform=transform)
+# For float32, target_dtype will be None so no datatype conversion needed
+target_dtype = None
+if model_engine.bfloat16_enabled():
+    target_dtype=torch.bfloat16
+elif model_engine.fp16_enabled():
+    target_dtype=torch.half
+
+criterion = nn.CrossEntropyLoss()
+for epoch in range(1, args.epochs+1):  # loop over the dataset multiple times
+    epoch_loss = 0.0
+    count = 0
+    for i, data in enumerate(trainloader):
+        # get the inputs; data is a list of [inputs, labels]
+        inputs, labels = data[0].to(local_device), data[1].to(local_device)
+        if target_dtype != None:
+            inputs = inputs.to(target_dtype)
+        outputs = model_engine(inputs)
+        loss = criterion(outputs, labels)
+
+        model_engine.backward(loss)
+        model_engine.step()
+
+        # print statistics
+        epoch_loss += loss.item()
+        count += 1
+    epoch_loss /= count 
+
+    # Compute accuracy after epoch has concluded
+    correct = 0
+    total = 0
+    with torch.no_grad():
+        for data in testloader:
+            images, labels = data
+            if target_dtype != None:
+                images = images.to(target_dtype)
+            outputs = net(images.to(local_device))
+            _, predicted = torch.max(outputs.data, 1)
+            total += labels.size(0)
+            correct += (predicted == labels.to(local_device)).sum().item()
+        accuracy = correct / total * 100
 
     if torch.distributed.get_rank() == 0:
-        # cifar data is downloaded, indicate other ranks can proceed
-        torch.distributed.barrier()
+        print("Epoch %d, loss %.4f, accuracy %.2f%" % (epoch, epoch_loss, accuracy))
 
-    trainloader = torch.utils.data.DataLoader(trainset,
-                                            batch_size=16,
-                                            shuffle=True,
-                                            num_workers=2)
-
-    testset = torchvision.datasets.CIFAR10(root='./data',
-                                        train=False,
-                                        download=True,
-                                        transform=transform)
-    testloader = torch.utils.data.DataLoader(testset,
-                                            batch_size=4,
-                                            shuffle=False,
-                                            num_workers=2)
-    net = Net()
-
-    parameters = filter(lambda p: p.requires_grad, net.parameters())
-    if args.moe_param_group:
-        parameters = create_moe_param_groups(net)
-    
-
-    ds_config = {
-    "train_batch_size": 256,  
-    "steps_per_print": 100,  
-    "optimizer": {
-        "type": "Adam",
-        "params": {
-        "lr": 0.001,
-        "betas": [0.8, 0.999],
-        "eps": 1e-8,
-        "weight_decay": 3e-7
-        }
-    },
-    "wall_clock_breakdown": False,
-    "zero_optimization": {
-        "stage": 1,  
-        "allgather_partitions": True,
-        "reduce_scatter": True,
-        "allgather_bucket_size": 50000000,
-        "reduce_bucket_size": 50000000,
-        "overlap_comm": False,  
-        "contiguous_gradients": True,
-        "cpu_offload": False
-    }
-    }
-    model_engine, _, trainloader, __ = deepspeed.initialize(
-        args=args, model=net, model_parameters=parameters, training_data=trainset, config=ds_config)
-
-    local_device = get_accelerator().device_name(model_engine.local_rank)
-
-    # For float32, target_dtype will be None so no datatype conversion needed
-    target_dtype = None
-    if model_engine.bfloat16_enabled():
-        target_dtype=torch.bfloat16
-    elif model_engine.fp16_enabled():
-        target_dtype=torch.half
-
-    criterion = nn.CrossEntropyLoss()
-    losses = []
-    accuracies = []
-    cumulative_times_s = []  # Array for cumulative times
-    memory_usage_gb = []  # Array for memory usage
-    for epoch in range(1, args.epochs + 1):  # loop over the dataset multiple times
-        with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-                    profile_memory=True, record_shapes=True) as prof:
-            running_loss = 0.0
-            count = 0
-            for i, data in enumerate(trainloader):
-                # get the inputs; data is a list of [inputs, labels]
-                inputs, labels = data[0].to(local_device), data[1].to(local_device)
-                if target_dtype != None:
-                    inputs = inputs.to(target_dtype)
-                outputs = model_engine(inputs)
-                loss = criterion(outputs, labels)
-
-                running_loss += loss.item()
-                count += 1
-
-                model_engine.backward(loss)
-                model_engine.step()
-
-            avg_loss = running_loss / count
-
-        correct = 0
-        total = 0
-        with torch.no_grad():
-            for data in testloader:
-                images, labels = data
-                if target_dtype != None:
-                    images = images.to(target_dtype)
-                outputs = net(images.to(local_device))
-                _, predicted = torch.max(outputs.data, 1)
-                total += labels.size(0)
-                correct += (predicted == labels.to(local_device)).sum().item()
-            accuracy = 100 * correct / total
-
-        # Append to arrays
-        losses.append(avg_loss)
-        accuracies.append(accuracy)
-
-        # Extract profiling metrics
-        total_cuda_time_us = prof.total_average().cuda_time_total # in micro-seconds
-        total_cuda_memory_usage_bytes = prof.total_average().self_cuda_memory_usage # in bytes
-        # Convert and accumulate
-        total_cuda_time_s = total_cuda_time_us / 1e6 # in seconds
-        total_cuda_memory_usage_gb = total_cuda_memory_usage_bytes / 1e9 # in gigabytes
-
-        # If it's the first epoch, initialize cumulative time
-        if epoch == 1:
-            cumulative_cuda_time_s = total_cuda_time_s
-        else:
-            cumulative_cuda_time_s += total_cuda_time_s
-
-        # Append to arrays
-        cumulative_times_s.append(cumulative_cuda_time_s)
-        memory_usage_gb.append(total_cuda_memory_usage_gb)
-
-    torch.distributed.barrier()
-    return losses, accuracies, cumulative_times_s, memory_usage_gb
-
-
-
-def main():
-    num_trials = 3
-    all_losses = []
-    all_accuracies = []
-    all_cumulatime_times_s = []
-    all_memory_usage_gb = []
-    for trial in range(1, num_trials+1):
-        print(f"Trial {trial} of {num_trials}")
-        losses, accuracies, cumulative_times_s, memory_usage_gb = trial()
-
-        if torch.distributed.get_rank() == 0:
-            all_losses.append(losses)
-            all_accuracies.append(accuracies)
-            all_cumulatime_times_s.append(cumulative_times_s)
-            all_memory_usage_gb.append(memory_usage_gb)
-            for i in range(len(losses)):
-                print(f"Trial {trial}. Epoch {i + 1}: {losses[i]:.5f} {accuracies[i]:.2f}% {cumulative_times_s[i]:.3f} {memory_usage_gb[i]:.5f}")
-
-    torch.distributed.barrier()
-    if torch.distributed.get_rank() == 0:
-        # Average all_losses element-wise
-        losses = np.mean(all_losses, axis=0)
-        accuracies = np.mean(all_accuracies, axis=0)
-        cumulative_times_s = np.mean(all_cumulatime_times_s, axis=0)
-        memory_usage_gb = np.mean(all_memory_usage_gb, axis=0)
-
-        # Save to CSV    
-        print("Saving results to CSV...")
-        results_df = pd.DataFrame({
-            'Epoch': range(1, args.epochs + 1),
-            'Loss': losses,
-            'Accuracy': accuracies,
-            'Cumulative CUDA Time (s)': cumulative_times_s,
-            'Total CUDA Memory Usage (GB)': memory_usage_gb
-        })
-
-        csv_file_name = f"cifar10_deepspeed_{torch.distributed.get_world_size()}.csv"
-        results_df.to_csv(csv_file_name, index=False)
-        print(f"Results saved to {csv_file_name}")
-
-    torch.distributed.barrier()
-    print(f"Rank {torch.distributed.get_rank()} should be exiting now")
-    exit(0)
-
-
-
-
-if __name__ == "__main__":
-    print("Initializing deepspeed...")
-    deepspeed.init_distributed()
-    print("Finished initializing deepspeed...")
-    main()
+torch.distributed.barrier()
+print(f'Rank {torch.distributed.get_rank()} finished Training')
