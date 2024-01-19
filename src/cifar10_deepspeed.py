@@ -155,9 +155,6 @@ testloader = torch.utils.data.DataLoader(testset,
                                          shuffle=False,
                                          num_workers=1)
 
-classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse',
-           'ship', 'truck')
-
 ########################################################################
 # 2. Define a Convolutional Neural Network
 # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -313,15 +310,28 @@ for epoch in range(1, args.epochs+1):  # loop over the dataset multiple times
     correct = 0
     total = 0
     with torch.no_grad():
+        counter2 = 0
         for data in testloader:
+            print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 1")
             images, labels = data
+            print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 2")
             if target_dtype != None:
+                print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 2a")
                 images = images.to(target_dtype)
+                print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 2b")
+            print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 3")
             outputs = net(images.to(local_device))
+            print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 4")
             _, predicted = torch.max(outputs.data, 1)
+            print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 5")
             total += labels.size(0)
+            print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 6")
             correct += (predicted == labels.to(local_device)).sum().item()
+            print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 7")
+            counter2 += 1
+        print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 8")
         accuracy = correct / total * 100
+        print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 9")
 
     print("Epoch %d, rank, %d loss %.4f, accuracy %.2f%" % (epoch, rank, epoch_loss, accuracy))
 
