@@ -144,7 +144,8 @@ if torch.distributed.get_rank() == 0:
 trainloader = torch.utils.data.DataLoader(trainset,
                                           batch_size=32,
                                           shuffle=True,
-                                          num_workers=1)
+                                          num_workers=1,
+                                          drop_last=True)
 
 testset = torchvision.datasets.CIFAR10(root='./data',
                                        train=False,
@@ -153,7 +154,8 @@ testset = torchvision.datasets.CIFAR10(root='./data',
 testloader = torch.utils.data.DataLoader(testset,
                                          batch_size=32,
                                          shuffle=False,
-                                         num_workers=1)
+                                         num_workers=1,
+                                         drop_last=True)
 
 ########################################################################
 # 2. Define a Convolutional Neural Network
@@ -332,7 +334,7 @@ for epoch in range(1, args.epochs+1):  # loop over the dataset multiple times
         print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 8")
         accuracy = correct / total * 100
         print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 9")
-
+    
     print("Epoch %d, rank, %d loss %.4f, accuracy %.2f%" % (epoch, rank, epoch_loss, accuracy))
 
 torch.distributed.barrier()
