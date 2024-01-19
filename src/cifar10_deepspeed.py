@@ -24,7 +24,7 @@ def add_argument():
     # train
     parser.add_argument('-b',
                         '--batch_size',
-                        default=256,
+                        default=1000,
                         type=int,
                         help='mini-batch size (default: 32)')
     parser.add_argument('-e',
@@ -151,9 +151,9 @@ testset = torchvision.datasets.CIFAR10(root='./data',
                                        download=True,
                                        transform=transform)
 testloader = torch.utils.data.DataLoader(testset,
-                                         batch_size=4,
+                                         batch_size=1000,
                                          shuffle=False,
-                                         num_workers=2)
+                                         num_workers=1)
 
 classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse',
            'ship', 'truck')
@@ -239,7 +239,7 @@ if args.moe_param_group:
 # 2) Distributed data loader
 # 3) DeepSpeed optimizer
 ds_config = {
-  "train_batch_size": 256,
+  "train_batch_size": 1000,
   "steps_per_print": 100,
   "optimizer": {
     "type": "Adam",
@@ -277,6 +277,7 @@ model_engine, optimizer, trainloader, __ = deepspeed.initialize(
 
 local_device = get_accelerator().device_name(model_engine.local_rank)
 local_rank = model_engine.local_rank
+rank = torch.distributed.get_rank()
 
 # For float32, target_dtype will be None so no datatype conversion needed
 target_dtype = None
@@ -286,10 +287,11 @@ elif model_engine.fp16_enabled():
     target_dtype=torch.half
 
 criterion = nn.CrossEntropyLoss()
-print(f"Rank {torch.distributed.get_rank()} started training...") 
+print(f"Rank {rank} started training...") 
 for epoch in range(1, args.epochs+1):  # loop over the dataset multiple times
     epoch_loss = 0.0
     count = 0
+    print(f"Epoch {epoch}. Rank {rank}. Training...")
     for i, data in enumerate(trainloader):
         # get the inputs; data is a list of [inputs, labels]
         inputs, labels = data[0].to(local_device), data[1].to(local_device)
@@ -306,7 +308,7 @@ for epoch in range(1, args.epochs+1):  # loop over the dataset multiple times
         count += 1
     epoch_loss /= count 
     
-    print(f"Epoch {epoch}. Rank {torch.distributed.get_rank()}. Computing accuracy...")
+    print(f"Epoch {epoch}. Rank {rank}. Computing accuracy...")
     # Compute accuracy after epoch has concluded
     correct = 0
     total = 0
@@ -321,7 +323,7 @@ for epoch in range(1, args.epochs+1):  # loop over the dataset multiple times
             correct += (predicted == labels.to(local_device)).sum().item()
         accuracy = correct / total * 100
 
-    print("Epoch %d, loss %.4f, accuracy %.2f%" % (epoch, epoch_loss, accuracy))
+    print("Epoch %d, rank, %d loss %.4f, accuracy %.2f%" % (epoch, rank, epoch_loss, accuracy))
 
 torch.distributed.barrier()
-print(f'Rank {torch.distributed.get_rank()} finished Training')
+print(f'Rank {rank} finished Training')
