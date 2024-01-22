@@ -351,19 +351,26 @@ for epoch in range(1, args.epochs+1):  # loop over the dataset multiple times
         accuracies.append(accuracy)
 
         # Extract profiling metrics
+        print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 10")
         total_cuda_time_s = sum([event.self_cuda_time_total / 1e6 for event in prof.key_averages() if event.device_type == "cuda"])
+        print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 11")
         total_cuda_memory_usage_gb = sum([event.self_cuda_memory_usage / 1e9 for event in prof.key_averages()])
     
         # If it's the first epoch, initialize cumulative time
         if epoch == 1:
+            print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 12a")
             cumulative_cuda_time_s = total_cuda_time_s
         else:
+            print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 12b")
             cumulative_cuda_time_s += total_cuda_time_s
 
         # Append to arrays
+        print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 13")            
         cumulative_times_s.append(cumulative_cuda_time_s)
+        print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 14")            
         memory_usage_gb.append(total_cuda_memory_usage_gb)
 
+print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 15")            
 torch.distributed.barrier()
 print(f'Rank {rank} finished Training')
 
@@ -378,6 +385,8 @@ results_df = pd.DataFrame({
 })
 
 # TODO: add batch size to filename
+print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 16")            
 csv_file_name = f"cifar10_DS_ws_{torch.distributed.get_world_size()}.csv"
+print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 17")            
 results_df.to_csv(csv_file_name, index=False)
 print(f"Results saved to {csv_file_name}")
