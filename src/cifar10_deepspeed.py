@@ -27,7 +27,7 @@ def add_argument():
     # train
     parser.add_argument('-b',
                         '--batch_size',
-                        default=32,
+                        default=50000,
                         type=int,
                         help='mini-batch size (default: 32)')
     parser.add_argument('-e',
@@ -102,7 +102,7 @@ def add_argument():
     )
     parser.add_argument(
         '--stage',
-        default=0,
+        default=3,
         type=int,
         choices=[0, 1, 2, 3],
         help=
@@ -161,7 +161,7 @@ testset = torchvision.datasets.CIFAR10(root='./data',
                                        download=True,
                                        transform=transform)
 testloader = torch.utils.data.DataLoader(testset,
-                                         batch_size=args.batch_size,
+                                         batch_size=int(10000),
                                          shuffle=False,
                                          num_workers=1,
                                          drop_last=True)
