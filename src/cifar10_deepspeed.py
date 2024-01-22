@@ -32,7 +32,7 @@ def add_argument():
                         help='mini-batch size (default: 32)')
     parser.add_argument('-e',
                         '--epochs',
-                        default=1,
+                        default=2,
                         type=int,
                         help='number of total epochs (default: 30)')
     parser.add_argument('--local_rank',
@@ -138,6 +138,9 @@ if torch.distributed.get_rank() != 0:
     # might be downloading cifar data, let rank 0 download first
     torch.distributed.barrier()
 
+
+torch.manual_seed(0)
+torch.cuda.manual_seed(0)
 trainset = torchvision.datasets.CIFAR10(root='./data',
                                         train=True,
                                         download=True,
@@ -215,8 +218,8 @@ class Net(nn.Module):
         return x
 
 # Set seed
-torch.manual_seed(0)
-torch.cuda.manual_seed(0)
+# torch.manual_seed(0)
+# torch.cuda.manual_seed(0)
 
 net = Net()
 
@@ -280,6 +283,8 @@ model_engine, optimizer, trainloader, __ = deepspeed.initialize(
 local_device = get_accelerator().device_name(model_engine.local_rank)
 local_rank = model_engine.local_rank
 rank = torch.distributed.get_rank()
+
+print(f"Rank: {rank}. Local device: {local_device}")
 
 # For float32, target_dtype will be None so no datatype conversion needed
 target_dtype = None
