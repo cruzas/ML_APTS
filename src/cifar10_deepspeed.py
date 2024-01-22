@@ -241,7 +241,7 @@ if args.moe_param_group:
 # 2) Distributed data loader
 # 3) DeepSpeed optimizer
 ds_config = {
-  "train_batch_size": 32,
+  "train_batch_size": args.batch_size,
   "steps_per_print": 100,
   "optimizer": {
     "type": "Adam",
@@ -358,17 +358,21 @@ for epoch in range(1, args.epochs+1):  # loop over the dataset multiple times
 
         # Extract profiling metrics
         print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 10")
-        total_cuda_time_s = sum([event.self_cuda_time_total / 1e6 for event in prof.key_averages() if event.device_type == "cuda"])
+        # total_cuda_time_s = sum([event.self_cuda_time_total / 1e6 for event in prof.key_averages() if event.device_type == "cuda"])
+        total_cuda_time_s = sum([event.cuda_time_total / 1e6 for event in prof.key_averages()])
         print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 11")
         total_cuda_memory_usage_gb = sum([event.self_cuda_memory_usage / 1e9 for event in prof.key_averages()])
-    
+        print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 12a")
+
         # If it's the first epoch, initialize cumulative time
         if epoch == 1:
-            print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 12a")
+            print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 12b1")
             cumulative_cuda_time_s = total_cuda_time_s
+            print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 12b2")
         else:
-            print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 12b")
+            print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 12c1")
             cumulative_cuda_time_s += total_cuda_time_s
+            print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 12c2")
 
         # Append to arrays
         print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 13")            
@@ -396,7 +400,7 @@ if rank == 0:
     print("Saving results to CSV...")
     # TODO: add batch size to filename
     print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 16")            
-    csv_file_name = f"cifar10_DS_ws_{torch.distributed.get_world_size()}.csv"
+    csv_file_name = f"cifar10_DS_ws_{torch.distributed.get_world_size()}_mbs_{args.batch_size}.csv"
     print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 17")            
     results_df.to_csv(csv_file_name, index=False)
     print(f"Results saved to {csv_file_name}")
