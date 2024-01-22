@@ -224,7 +224,7 @@ class Net(nn.Module):
 
 # net = Net()
 print(f"Rank {torch.distributed.get_rank()} creating ResNet18...")
-resnet18 = models.resnet18(pretrained=False)
+net = models.resnet18(pretrained=False)
 print("Rank {torch.distributed.get_rank()} ResNet18 created")
 
 
