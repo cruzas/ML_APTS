@@ -298,6 +298,7 @@ losses = []
 accuracies = []
 cumulative_times_s = []  # Array for cumulative times
 memory_usage_gb = []  # Array for memory usage
+memory_allocated_gb = []  # Array for memory allocated
 print(f"Rank {rank} started training...") 
 for epoch in range(1, args.epochs+1):  # loop over the dataset multiple times
     with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
@@ -384,6 +385,7 @@ for epoch in range(1, args.epochs+1):  # loop over the dataset multiple times
         cumulative_times_s.append(cumulative_cuda_time_s)
         print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 14")            
         memory_usage_gb.append(total_cuda_memory_usage_gb)
+        memory_allocated_gb.append(torch.cuda.memory_allocated() / 1e9)
         torch.distributed.barrier()
 
 print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 15")            
@@ -394,8 +396,9 @@ results_df = pd.DataFrame({
         'Epoch': range(1, args.epochs + 1),
         'Loss': losses,
         'Accuracy': accuracies,
-        'Cumulative CUDA Time (s)': cumulative_times_s,
-        'Total CUDA Memory Usage (GB)': memory_usage_gb
+        'Time': cumulative_times_s,
+        'Memory_Profiler': memory_usage_gb,
+        'Memory_Allocated': memory_allocated_gb,
     })
 
 print(f"Rank {rank} results_df: {results_df}")
