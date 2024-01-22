@@ -33,7 +33,7 @@ def add_argument():
                         help='mini-batch size (default: 32)')
     parser.add_argument('-e',
                         '--epochs',
-                        default=2,
+                        default=200,
                         type=int,
                         help='number of total epochs (default: 30)')
     parser.add_argument('--local_rank',
@@ -224,7 +224,7 @@ class Net(nn.Module):
 
 # net = Net()
 print(f"Rank {torch.distributed.get_rank()} creating ResNet18...")
-resnet18 = models.resnet18(pretrained=False)
+net = models.resnet18(pretrained=False)
 print("Rank {torch.distributed.get_rank()} ResNet18 created")
 
 
@@ -412,7 +412,7 @@ if rank == 0:
     print("Saving results to CSV...")
     # TODO: add batch size to filename
     print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 16")            
-    csv_file_name = f"cifar10_DS_ws_{torch.distributed.get_world_size()}_mbs_{args.batch_size}.csv"
+    csv_file_name = f"cifar10_DS_ws_{torch.distributed.get_world_size()}_mbs_{args.batch_size}_zero_{args.stage}.csv"
     print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 17")            
     results_df.to_csv(csv_file_name, index=False)
     print(f"Results saved to {csv_file_name}")
