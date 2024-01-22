@@ -349,12 +349,15 @@ for epoch in range(1, args.epochs+1):  # loop over the dataset multiple times
         losses.append(epoch_loss)
         accuracies.append(accuracy)
 
-        # Extract profiling metrics
-        total_cuda_time_us = prof.total_average().cuda_time_total # in micro-seconds
-        total_cuda_memory_usage_bytes = prof.total_average().self_cuda_memory_usage # in bytes
-        # Convert and accumulate
-        total_cuda_time_s = total_cuda_time_us / 1e6 # in seconds
-        total_cuda_memory_usage_gb = total_cuda_memory_usage_bytes / 1e9 # in gigabytes
+        # Profiling analysis
+        total_cuda_time_us = 0
+        total_cuda_memory_usage_bytes = 0
+        for event in prof.function_events:
+            total_cuda_time_us += event.cuda_time_total
+            total_cuda_memory_usage_bytes += event.self_cuda_memory_usage
+
+        total_cuda_time_s = total_cuda_time_us / 1e6 # Convert microseconds to seconds
+        total_cuda_memory_usage_gb = total_cuda_memory_usage_bytes / 1e9 # Convert bytes to gigabytes
 
         # If it's the first epoch, initialize cumulative time
         if epoch == 1:
