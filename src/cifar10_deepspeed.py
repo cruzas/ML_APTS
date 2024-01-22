@@ -8,6 +8,7 @@ from torch.profiler import profile, ProfilerActivity
 import pandas as pd
 import torch.nn as nn
 import torch.nn.functional as F
+from torchvision.models import ResNet18
 
 def add_argument():
 
@@ -221,7 +222,8 @@ class Net(nn.Module):
 # torch.manual_seed(0)
 # torch.cuda.manual_seed(0)
 
-net = Net()
+# net = Net()
+net = ResNet18()
 
 
 def create_moe_param_groups(model):
