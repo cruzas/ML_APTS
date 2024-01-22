@@ -6,7 +6,8 @@ import deepspeed
 from deepspeed.accelerator import get_accelerator
 from torch.profiler import profile, ProfilerActivity
 import pandas as pd
-
+import torch.nn as nn
+import torch.nn.functional as F
 
 def add_argument():
 
@@ -125,6 +126,9 @@ deepspeed.init_distributed()
 #     If running on Windows and you get a BrokenPipeError, try setting
 #     the num_worker of torch.utils.data.DataLoader() to 0.
 
+args = add_argument()
+mb_size = args.batch_size
+
 transform = transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
@@ -144,7 +148,7 @@ if torch.distributed.get_rank() == 0:
     torch.distributed.barrier()
 
 trainloader = torch.utils.data.DataLoader(trainset,
-                                          batch_size=32,
+                                          batch_size=args.batch_size,
                                           shuffle=True,
                                           num_workers=1,
                                           drop_last=True)
@@ -154,7 +158,7 @@ testset = torchvision.datasets.CIFAR10(root='./data',
                                        download=True,
                                        transform=transform)
 testloader = torch.utils.data.DataLoader(testset,
-                                         batch_size=32,
+                                         batch_size=args.batch_size,
                                          shuffle=False,
                                          num_workers=1,
                                          drop_last=True)
@@ -165,10 +169,7 @@ testloader = torch.utils.data.DataLoader(testset,
 # Copy the neural network from the Neural Networks section before and modify it to
 # take 3-channel images (instead of 1-channel images as it was defined).
 
-import torch.nn as nn
-import torch.nn.functional as F
 
-args = add_argument()
 
 
 class Net(nn.Module):
@@ -349,16 +350,10 @@ for epoch in range(1, args.epochs+1):  # loop over the dataset multiple times
         losses.append(epoch_loss)
         accuracies.append(accuracy)
 
-        # Profiling analysis
-        total_cuda_time_us = 0
-        total_cuda_memory_usage_bytes = 0
-        for event in prof.function_events:
-            total_cuda_time_us += event.cuda_time_total
-            total_cuda_memory_usage_bytes += event.self_cuda_memory_usage
-
-        total_cuda_time_s = total_cuda_time_us / 1e6 # Convert microseconds to seconds
-        total_cuda_memory_usage_gb = total_cuda_memory_usage_bytes / 1e9 # Convert bytes to gigabytes
-
+        # Extract profiling metrics
+        total_cuda_time_s = sum([event.self_cuda_time_total / 1e6 for event in prof.key_averages() if event.device_type == "cuda"])
+        total_cuda_memory_usage_gb = sum([event.self_cuda_memory_usage / 1e9 for event in prof.key_averages()])
+    
         # If it's the first epoch, initialize cumulative time
         if epoch == 1:
             cumulative_cuda_time_s = total_cuda_time_s
