@@ -346,8 +346,14 @@ for epoch in range(1, args.epochs+1):  # loop over the dataset multiple times
         
         print(f"Epoch {epoch}, rank {rank}, loss {epoch_loss:.4f}, accuracy {accuracy:.2f}%")
 
+        print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 9a")
+        torch.distributed.barrier()
+        print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 9b")
+
         # Append to arrays
+        print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 9c")
         losses.append(epoch_loss)
+        print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 9d")
         accuracies.append(accuracy)
 
         # Extract profiling metrics
@@ -369,24 +375,28 @@ for epoch in range(1, args.epochs+1):  # loop over the dataset multiple times
         cumulative_times_s.append(cumulative_cuda_time_s)
         print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 14")            
         memory_usage_gb.append(total_cuda_memory_usage_gb)
+        torch.distributed.barrier()
 
 print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 15")            
 torch.distributed.barrier()
 print(f'Rank {rank} finished Training')
 
-# Save to CSV    
-print("Saving results to CSV...")
 results_df = pd.DataFrame({
-    'Epoch': range(1, args.epochs + 1),
-    'Loss': losses,
-    'Accuracy': accuracies,
-    'Cumulative CUDA Time (s)': cumulative_times_s,
-    'Total CUDA Memory Usage (GB)': memory_usage_gb
-})
+        'Epoch': range(1, args.epochs + 1),
+        'Loss': losses,
+        'Accuracy': accuracies,
+        'Cumulative CUDA Time (s)': cumulative_times_s,
+        'Total CUDA Memory Usage (GB)': memory_usage_gb
+    })
 
-# TODO: add batch size to filename
-print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 16")            
-csv_file_name = f"cifar10_DS_ws_{torch.distributed.get_world_size()}.csv"
-print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 17")            
-results_df.to_csv(csv_file_name, index=False)
-print(f"Results saved to {csv_file_name}")
+print(f"Rank {rank} results_df: {results_df}")
+
+# Save to CSV    
+if rank == 0:
+    print("Saving results to CSV...")
+    # TODO: add batch size to filename
+    print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 16")            
+    csv_file_name = f"cifar10_DS_ws_{torch.distributed.get_world_size()}.csv"
+    print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 17")            
+    results_df.to_csv(csv_file_name, index=False)
+    print(f"Results saved to {csv_file_name}")
