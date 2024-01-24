@@ -309,6 +309,7 @@ for epoch in range(1, args.epochs+1):  # loop over the dataset multiple times
                     profile_memory=True, record_shapes=True) as prof:
         epoch_loss = 0.0
         count = 0
+        avg_mem_allocated_gb = 0
         print(f"Epoch {epoch}. Rank {rank}. Training...")
         for i, data in enumerate(trainloader):
             # get the inputs; data is a list of [inputs, labels]
@@ -318,13 +319,16 @@ for epoch in range(1, args.epochs+1):  # loop over the dataset multiple times
             outputs = model_engine(inputs)
             loss = criterion(outputs, labels)
 
+            avg_mem_allocated_gb += (torch.cuda.memory_allocated() / 1e9)
+
             model_engine.backward(loss)
             model_engine.step()
-
+            
             # print statistics
             epoch_loss += loss.item()
             count += 1
         epoch_loss /= count 
+        avg_mem_allocated_gb /= count
     
     print(f"Epoch {epoch}. Rank {rank}. Computing accuracy...")
     # Compute accuracy after epoch has concluded
@@ -389,7 +393,7 @@ for epoch in range(1, args.epochs+1):  # loop over the dataset multiple times
         cumulative_times_s.append(cumulative_cuda_time_s)
         print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 14")            
         memory_usage_gb.append(total_cuda_memory_usage_gb)
-        memory_allocated_gb.append(torch.cuda.memory_allocated() / 1e9)
+        memory_allocated_gb.append(avg_mem_allocated_gb)
         torch.distributed.barrier()
 
 print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 15")            
