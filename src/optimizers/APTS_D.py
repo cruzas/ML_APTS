@@ -115,7 +115,7 @@ class APTS_D(Optimizer):
         # Compute local correction
         for _ in range(self.max_iter):
             local_loss, _, _ = self.local_optimizer.step(local_closure)  # Local optimization step
-            local_grad_evals_counter = torch.tensor(1.0, device=self.device) / self.nr_models # here, we take into consideration each subdomain gradient evaluation as we might break at different iterations for each subdomain (see line 178)
+            local_grad_evals_counter = torch.tensor(1.0, device=self.device) / self.nr_models 
             if self.nr_models > 1:
                 # Add all local gradient evaluation counters
                 dist.all_reduce(local_grad_evals_counter, op=dist.ReduceOp.SUM)
