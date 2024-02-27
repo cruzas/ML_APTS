@@ -6,7 +6,9 @@ import deepspeed
 from deepspeed.accelerator import get_accelerator
 from torch.profiler import profile, ProfilerActivity
 import pandas as pd
-
+import torch.nn as nn
+import torch.nn.functional as F
+import torchvision.models as models
 
 def add_argument():
 
@@ -26,12 +28,12 @@ def add_argument():
     # train
     parser.add_argument('-b',
                         '--batch_size',
-                        default=32,
+                        default=50000,
                         type=int,
                         help='mini-batch size (default: 32)')
     parser.add_argument('-e',
                         '--epochs',
-                        default=1,
+                        default=200,
                         type=int,
                         help='number of total epochs (default: 30)')
     parser.add_argument('--local_rank',
@@ -101,7 +103,7 @@ def add_argument():
     )
     parser.add_argument(
         '--stage',
-        default=0,
+        default=3,
         type=int,
         choices=[0, 1, 2, 3],
         help=
@@ -125,6 +127,9 @@ deepspeed.init_distributed()
 #     If running on Windows and you get a BrokenPipeError, try setting
 #     the num_worker of torch.utils.data.DataLoader() to 0.
 
+args = add_argument()
+mb_size = args.batch_size
+
 transform = transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
@@ -134,6 +139,9 @@ if torch.distributed.get_rank() != 0:
     # might be downloading cifar data, let rank 0 download first
     torch.distributed.barrier()
 
+
+torch.manual_seed(0)
+torch.cuda.manual_seed(0)
 trainset = torchvision.datasets.CIFAR10(root='./data',
                                         train=True,
                                         download=True,
@@ -144,7 +152,7 @@ if torch.distributed.get_rank() == 0:
     torch.distributed.barrier()
 
 trainloader = torch.utils.data.DataLoader(trainset,
-                                          batch_size=32,
+                                          batch_size=args.batch_size,
                                           shuffle=True,
                                           num_workers=1,
                                           drop_last=True)
@@ -154,7 +162,7 @@ testset = torchvision.datasets.CIFAR10(root='./data',
                                        download=True,
                                        transform=transform)
 testloader = torch.utils.data.DataLoader(testset,
-                                         batch_size=32,
+                                         batch_size=int(10000),
                                          shuffle=False,
                                          num_workers=1,
                                          drop_last=True)
@@ -165,10 +173,7 @@ testloader = torch.utils.data.DataLoader(testset,
 # Copy the neural network from the Neural Networks section before and modify it to
 # take 3-channel images (instead of 1-channel images as it was defined).
 
-import torch.nn as nn
-import torch.nn.functional as F
 
-args = add_argument()
 
 
 class Net(nn.Module):
@@ -214,10 +219,13 @@ class Net(nn.Module):
         return x
 
 # Set seed
-torch.manual_seed(0)
-torch.cuda.manual_seed(0)
+# torch.manual_seed(0)
+# torch.cuda.manual_seed(0)
 
-net = Net()
+# net = Net()
+print(f"Rank {torch.distributed.get_rank()} creating ResNet18...")
+net = models.resnet18(pretrained=False)
+print("Rank {torch.distributed.get_rank()} ResNet18 created")
 
 
 def create_moe_param_groups(model):
@@ -240,7 +248,7 @@ if args.moe_param_group:
 # 2) Distributed data loader
 # 3) DeepSpeed optimizer
 ds_config = {
-  "train_batch_size": 32,
+  "train_batch_size": args.batch_size,
   "steps_per_print": 100,
   "optimizer": {
     "type": "Adam",
@@ -280,6 +288,8 @@ local_device = get_accelerator().device_name(model_engine.local_rank)
 local_rank = model_engine.local_rank
 rank = torch.distributed.get_rank()
 
+print(f"Rank: {rank}. Local device: {local_device}")
+
 # For float32, target_dtype will be None so no datatype conversion needed
 target_dtype = None
 if model_engine.bfloat16_enabled():
@@ -292,12 +302,14 @@ losses = []
 accuracies = []
 cumulative_times_s = []  # Array for cumulative times
 memory_usage_gb = []  # Array for memory usage
+memory_allocated_gb = []  # Array for memory allocated
 print(f"Rank {rank} started training...") 
 for epoch in range(1, args.epochs+1):  # loop over the dataset multiple times
     with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
                     profile_memory=True, record_shapes=True) as prof:
         epoch_loss = 0.0
         count = 0
+        avg_mem_allocated_gb = 0
         print(f"Epoch {epoch}. Rank {rank}. Training...")
         for i, data in enumerate(trainloader):
             # get the inputs; data is a list of [inputs, labels]
@@ -307,13 +319,16 @@ for epoch in range(1, args.epochs+1):  # loop over the dataset multiple times
             outputs = model_engine(inputs)
             loss = criterion(outputs, labels)
 
+            avg_mem_allocated_gb += (torch.cuda.memory_allocated() / 1e9)
+
             model_engine.backward(loss)
             model_engine.step()
-
+            
             # print statistics
             epoch_loss += loss.item()
             count += 1
         epoch_loss /= count 
+        avg_mem_allocated_gb /= count
     
     print(f"Epoch {epoch}. Rank {rank}. Computing accuracy...")
     # Compute accuracy after epoch has concluded
@@ -345,41 +360,63 @@ for epoch in range(1, args.epochs+1):  # loop over the dataset multiple times
         
         print(f"Epoch {epoch}, rank {rank}, loss {epoch_loss:.4f}, accuracy {accuracy:.2f}%")
 
+        print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 9a")
+        torch.distributed.barrier()
+        print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 9b")
+
         # Append to arrays
+        print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 9c")
         losses.append(epoch_loss)
+        print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 9d")
         accuracies.append(accuracy)
 
         # Extract profiling metrics
-        total_cuda_time_us = prof.total_average().cuda_time_total # in micro-seconds
-        total_cuda_memory_usage_bytes = prof.total_average().self_cuda_memory_usage # in bytes
-        # Convert and accumulate
-        total_cuda_time_s = total_cuda_time_us / 1e6 # in seconds
-        total_cuda_memory_usage_gb = total_cuda_memory_usage_bytes / 1e9 # in gigabytes
+        print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 10")
+        # total_cuda_time_s = sum([event.self_cuda_time_total / 1e6 for event in prof.key_averages() if event.device_type == "cuda"])
+        total_cuda_time_s = sum([event.cuda_time_total / 1e6 for event in prof.key_averages()])
+        print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 11")
+        total_cuda_memory_usage_gb = sum([event.self_cuda_memory_usage / 1e9 for event in prof.key_averages()])
+        print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 12a")
 
         # If it's the first epoch, initialize cumulative time
         if epoch == 1:
+            print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 12b1")
             cumulative_cuda_time_s = total_cuda_time_s
+            print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 12b2")
         else:
+            print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 12c1")
             cumulative_cuda_time_s += total_cuda_time_s
+            print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 12c2")
 
         # Append to arrays
+        print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 13")            
         cumulative_times_s.append(cumulative_cuda_time_s)
+        print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 14")            
         memory_usage_gb.append(total_cuda_memory_usage_gb)
+        memory_allocated_gb.append(avg_mem_allocated_gb)
+        torch.distributed.barrier()
 
+print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 15")            
 torch.distributed.barrier()
 print(f'Rank {rank} finished Training')
 
-# Save to CSV    
-print("Saving results to CSV...")
 results_df = pd.DataFrame({
-    'Epoch': range(1, args.epochs + 1),
-    'Loss': losses,
-    'Accuracy': accuracies,
-    'Cumulative CUDA Time (s)': cumulative_times_s,
-    'Total CUDA Memory Usage (GB)': memory_usage_gb
-})
+        'Epoch': range(1, args.epochs + 1),
+        'Loss': losses,
+        'Accuracy': accuracies,
+        'Time': cumulative_times_s,
+        'Memory_Profiler': memory_usage_gb,
+        'Memory_Allocated': memory_allocated_gb,
+    })
 
-# TODO: add batch size to filename
-csv_file_name = f"cifar10_DS_ws_{torch.distributed.get_world_size()}.csv"
-results_df.to_csv(csv_file_name, index=False)
-print(f"Results saved to {csv_file_name}")
+print(f"Rank {rank} results_df: {results_df}")
+
+# Save to CSV    
+if rank == 0:
+    print("Saving results to CSV...")
+    # TODO: add batch size to filename
+    print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 16")            
+    csv_file_name = f"cifar10_DS_ws_{torch.distributed.get_world_size()}_mbs_{args.batch_size}_zero_{args.stage}.csv"
+    print(f"Epoch {epoch}. Counter {counter2}. Rank {rank}. Print 17")            
+    results_df.to_csv(csv_file_name, index=False)
+    print(f"Results saved to {csv_file_name}")
