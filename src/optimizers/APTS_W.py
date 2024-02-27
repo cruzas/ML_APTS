@@ -491,9 +491,6 @@ class APTS_W(Optimizer):
         self.radius = self.radius.to('cpu' if self.backend=='gloo' else 'cuda:0')
         dist.barrier()
         dist.broadcast(self.radius, src=0) # Broadcast the radius
-        # print(f'Rank {self.rank} - loss {new_loss}')
-        # print(f'Iteration {self.iter} | initial loss: {initial_loss}, after local steps: {local_loss}, loss before global step {loss}, final loss {new_loss}') ##
-        #print('-----------------------------------------------------------------------------------')
         if self.iter == 1:
             if skip_preconditioning:
                 print('Skipping preconditioning')
