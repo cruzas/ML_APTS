@@ -174,3 +174,4 @@ if __name__ == "__main__":
     world_size = n_gpus
     print(world_size)
     run_demo(demo_basic, world_size)
+    

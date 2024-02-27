@@ -11,6 +11,10 @@ import inspect
 # This is not a problem for small vectors. But when we have large vectors, there is a huge memory overhead.
 # OR we can simply use torch.cuda.empty_cache()
 
+
+# TODO: IMPORTANT TODO: In case of model approximation (gradient approx to have independent models), First Order Consistency has to be considered!
+
+
 def list_subtract(list1, list2): #TODO: parallelize maybe through streams (when model pipelining is implemented or even with multiple layers on one GPU)
     with torch.no_grad():
         result = [list1[i] - list2[i] for i in range(len(list1))] 
@@ -277,30 +281,48 @@ class APTS_W(Optimizer):
                 setattr(self.local_optimizer, key, torch.cat(v))
             else:
                 setattr(self.local_optimizer, key, getattr(self.global_optimizer, key))
+    
             
-
+    def local_steps(inputs, targets):
+        # Initialize constants and variables
+        TEMP, local_loss, grad_norm2 = 2, 0, 0
+        learning_rate = radius / TEMP
+        gradients = initialize_gradients()
+        # Compute initial loss
+        initial_loss = closure(inputs, targets, model, derivative)
+        # Preconditioning iterations
+        for iteration in range(max_iterations):
+            # Update optimizer settings
+            update_optimizer(learning_rate)
+            # Perform optimization step
+            local_loss, gradient, grad_norm = optimizer_step(closure)
+            # First iteration operations
+            if is_first_iteration(iteration):
+                grad_norm2 = max(grad_norm2, grad_norm)
+                update_gradients(gradients, gradient)
+            # Adjust learning rate
+            learning_rate = adjust_learning_rate()
+            # Break if learning rate is too small
+            if learning_rate_too_small(learning_rate):
+                break
+        
     def local_steps(self, inputs, targets):
-        # Update the local model 
         TEMP = 2 # TODO: test whether having TEMP=2 here is beneficial
         local_loss = 0
         lr = self.radius/TEMP
-        # g = torch.zeros(self.tot_params, device=self.device); grad_norm2 = 0
         if self.rank == 0:
             receive_device = 'cpu' if self.backend == 'gloo' else 'cuda'
             g = [torch.zeros_like(p).to(receive_device) for p in self.model.parameters()]
         else:
-            g = [torch.tensor(0)] * self.tot_layers
-            
+            g = [torch.tensor(0)] * self.tot_layers   
         grad_norm2 = 0
-
         global_params_list = [p.clone().detach() for p in self.model.parameters() if p.requires_grad is True]
         OLD_LOSS= self.closure(inputs, targets, self.model, self.sequential_derivative)
         for j in range(self.max_iter): # Iterations of the preconditioning step            
             self.local_optimizer.radius = lr
             self.local_optimizer.max_radius = lr        
-            # print(f'rank {self.rank} - iter {j} - lr {lr}')    
-            local_loss, grad, grad_norm = self.local_optimizer.step(lambda dummy=1: self.closure(inputs, targets, self.model, self.sequential_derivative)) 
-            # print(f'rank {self.rank} - iter {j} - lr {lr} - loss {local_loss} - grad norm {grad_norm}')
+            local_loss, grad, grad_norm = self.local_optimizer.step(
+                lambda dummy=1: self.closure(inputs, targets, self.model, self.sequential_derivative)) 
             if j == 0:
                 grad_norm2 = max(grad_norm2, grad_norm)
                 for i in range(self.tot_layers):
@@ -313,19 +335,11 @@ class APTS_W(Optimizer):
                     else:
                         if self.rank != 0:
                             g[i] = torch.tensor(0.0, device=send_device)
-                        
-            # Update radius to make sure the update is inside the global trust region radius
-            # print(f'rank {self.rank} - !!!!!!!!!!! {list_norm(list_linear_comb(1, [p for p in self.model.parameters() if p.requires_grad is True], -1, global_params_list), p=torch.inf)}')
-            lr = self.radius/TEMP - list_norm(list_linear_comb(1, [p for p in self.model.parameters() if p.requires_grad is True], -1, global_params_list), p=torch.inf)
-            # if self.rank == 0:
-            #     print(f'{self.iter} - lr = {lr}')
+            lr = self.radius/TEMP - list_norm(list_linear_comb(1, [p for p in self.model.parameters() if p.requires_grad is True],
+                                                               -1, global_params_list), p=torch.inf)
             if lr < torch.finfo(torch.get_default_dtype()).eps:
                 break
-        # print(f' Rank {self.rank} - OLD_LOSS {OLD_LOSS} - local loss {local_loss} - grad norm {grad_norm2} - radius {self.radius} - lr {lr} - max_iter {j+1}')
-        # Collect the gradients from local models
-        # print(f'Rank {self.rank} - norm gradient {list_norm(g, p=2)}')
-        # TODO: https://chat.openai.com/share/0b9fd09a-3d18-448b-b9ba-24d29d3fa622
-        # https://pytorch.org/docs/stable/distributed.html#torch.distributed.irecv
+        # THEN SHARE THE LAYERS WITH THE MAIN MODEL
         if self.rank != 0:
             for layer in self.rank2layer[self.rank]:
                 send_device = 'cpu' if self.backend == 'gloo' else g[layer].device
