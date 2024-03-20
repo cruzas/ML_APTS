@@ -27,7 +27,6 @@ def normalize_dataset(data, mean=[], std=[]):
 
 
 class Power_DL():
-
     def __init__(self, dataset, 
                  minibatch_size=1, 
                  shuffle=False, 
