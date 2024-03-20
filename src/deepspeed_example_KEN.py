@@ -1,3 +1,4 @@
+print('sad')
 import argparse,os
 
 import deepspeed

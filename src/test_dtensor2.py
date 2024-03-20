@@ -19,7 +19,30 @@ from torch import distributed as dist
 # new "init_device_mesh" function
 
 
+def main2(rank=None, master_addr=None, master_port=None, world_size=None):
+    prepare_distributed_environment(rank, master_addr, master_port, world_size)
+    big_tensor = torch.randn(int(2e4), int(2e4), device=f"cuda:0")
+    with torch.no_grad():
+        for i in range(10):
+            if rank == 0:
+                print(i)
 
+            allocated = bytes_to_gb(torch.cuda.memory_allocated())
+            reserved = bytes_to_gb(torch.cuda.memory_reserved())
+            print(f"Device {rank}. Memory Allocated before: {allocated:.2f} GB. Memory Reserved before: {reserved:.2f} GB")
+
+            start_event = torch.cuda.Event(enable_timing=True)
+            end_event = torch.cuda.Event(enable_timing=True)
+            start_event.record()
+            multiplier = big_tensor @ big_tensor
+            end_event.record()
+            torch.cuda.synchronize()
+            dist.barrier()
+            allocated = bytes_to_gb(torch.cuda.memory_allocated())
+            reserved = bytes_to_gb(torch.cuda.memory_reserved())
+            print(f"Device {rank}. Memory Allocated after: {allocated:.2f} GB. Memory Reserved after: {reserved:.2f} GB")
+            elapsed_time = start_event.elapsed_time(end_event)
+            print(f"Device {rank}. Elapsed time: {elapsed_time/1000} seconds")
 
 
 
@@ -36,15 +59,14 @@ def test_for_loop_parallel(rank, mesh):
     big_tensor = torch.eye(4) # torch.randn(int(2e4), int(2e4), device="cpu")
     # Shard this tensor over the mesh by sharding `big_tensor`'s 0th dimension over the 0th dimension of `mesh`.
     my_dtensor = distribute_tensor(big_tensor, mesh, [Shard(dim=0)])
-    if rank in [0, 1]:
-        vector = torch.tensor([1, 2, 3, 4], dtype=torch.float32).unsqueeze(-1) # torch.ones(4,1) #torch.randn(int(2e4),1, device=f"cpu")
-        my_vector = distribute_tensor(vector, mesh, [Shard(dim=0)])
-    elif rank in [2, 3]:
-        vector = torch.tensor([2, 4, 6, 8], dtype=torch.float32).unsqueeze(-1) # torch.ones(4,1) #torch.randn(int(2e4),1, device=f"cpu")
-        my_vector = distribute_tensor(vector, mesh, [Shard(dim=0)])
+
+    # vector = torch.tensor([i for i in range(10000000)], dtype=torch.float32) # torch.ones(4,1) #torch.randn(int(2e4),1, device=f"cpu")
+    vector = torch.randn(4,100000000, dtype=torch.float32, device="cpu") # torch.ones(4,1) #torch.randn(int(2e4),1, device=f"cpu")
+    my_vector = distribute_tensor(vector, mesh, [Shard(dim=0)]).squeeze()
+
 
     with torch.no_grad():
-        for i in range(10):
+        for i in range(2):
             if rank == 0:
                 print(i)
 
@@ -74,47 +96,14 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     # Rank ID
     rank = dist.get_rank() if dist.is_initialized() else 0
 
-    # Mesh with Nodes 0 and 1
-    if rank in [0, 1]:
-        if dist.get_backend() == "nccl":
-            mesh1 = init_device_mesh(f"cuda:0", (2,))
-        else:
-            mesh1 = init_device_mesh(f"cuda:{rank}", (2,))
-        test_for_loop_parallel(rank, mesh1)
-
-    # Mesh with Nodes 2 and 3
-    if rank in [2, 3]:
-        if dist.get_backend() == "nccl":
-            mesh2 = init_device_mesh(f"cuda:0", (2,))
-        else:
-            mesh2 = init_device_mesh(f"cuda:{rank}", (2,))
-        test_for_loop_parallel(rank, mesh2)
+    if dist.get_backend() == "nccl":
+        mesh1 = init_device_mesh(f"cuda:0", (2,))
+    else:
+        mesh1 = init_device_mesh(f"cuda:{rank}", (2,))
+    test_for_loop_parallel(rank, mesh1)
 
 
-def main2(rank=None, master_addr=None, master_port=None, world_size=None):
-    prepare_distributed_environment(rank, master_addr, master_port, world_size)
-    big_tensor = torch.randn(int(2e4), int(2e4), device=f"cuda:0")
-    with torch.no_grad():
-        for i in range(10):
-            if rank == 0:
-                print(i)
 
-            allocated = bytes_to_gb(torch.cuda.memory_allocated())
-            reserved = bytes_to_gb(torch.cuda.memory_reserved())
-            print(f"Device {rank}. Memory Allocated before: {allocated:.2f} GB. Memory Reserved before: {reserved:.2f} GB")
-
-            start_event = torch.cuda.Event(enable_timing=True)
-            end_event = torch.cuda.Event(enable_timing=True)
-            start_event.record()
-            multiplier = big_tensor @ big_tensor
-            end_event.record()
-            torch.cuda.synchronize()
-            dist.barrier()
-            allocated = bytes_to_gb(torch.cuda.memory_allocated())
-            reserved = bytes_to_gb(torch.cuda.memory_reserved())
-            print(f"Device {rank}. Memory Allocated after: {allocated:.2f} GB. Memory Reserved after: {reserved:.2f} GB")
-            elapsed_time = start_event.elapsed_time(end_event)
-            print(f"Device {rank}. Elapsed time: {elapsed_time/1000} seconds")
 
 
 

@@ -5,9 +5,9 @@ NUM_NODES=1
 # Number of GPUs per node
 NUM_GPUS=2
 # Size of expert parallel world (should be less than total world size)
-EP_SIZE=2
+EP_SIZE=1
 # Number of total experts
-EXPERTS=2
+EXPERTS=1
 
 deepspeed --num_nodes=${NUM_NODES}\
           --num_gpus=${NUM_GPUS} \
