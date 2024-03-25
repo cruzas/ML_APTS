@@ -144,7 +144,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     if dist.get_rank() == 0:        
         # Save losses, accuracies, and cum times to a CSV file using Pandas
         df = pd.DataFrame({"losses": losses, "accuracies": accuracies, "cum_times": cum_times})
-        df.to_csv(f"results_APTS_W_{dataset}_{nr_models}.csv", index=False)
+        df.to_csv(f"results_APTS_W_{dataset}_{minibatch_size}_{nr_models}.csv", index=False)
         print("Successfully saved to file.")
 
 
