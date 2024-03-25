@@ -3,15 +3,14 @@ import os
 import pprint,copy, torch
 import torch.multiprocessing as mp
 # User libraries
-from optimizers.APTS_W import APTS_W
-from optimizers.TR import TR
+# from optimizers.APTS_W import APTS_W
+# from optimizers.TR import TR
 from utils.utility import *
 from matplotlib import pyplot as plt
 import torch.distributed as dist
 from utils import *
 from torch import nn
 import pandas as pd
-import torchvision
 
 def get_apts_w_params(momentum=False, second_order=False, nr_models=2, max_iter=5, fdl=False, global_pass=True, device=None):
     TR_APTS_W_PARAMS_GLOBAL = {
@@ -108,7 +107,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     optimizer_params = get_apts_w_params(momentum=False, second_order=False, nr_models=nr_models, max_iter=5, fdl=False, global_pass=True, device=None)
     
     print("Print 2")
-    net_fun, net_params = torchvision.models.resnet18, {'weights':None, 'progress':True} #MNIST_FCNN_Small, {}#models.resnet18, {'weights':None, 'progress':True}#get_net_fun_and_params(dataset, net_nr)
+    net_fun, net_params = models.resnet18, {'weights':None, 'progress':True} #MNIST_FCNN_Small, {}#models.resnet18, {'weights':None, 'progress':True}#get_net_fun_and_params(dataset, net_nr)
     print("Print 3")
 
     # print parameters norm:
