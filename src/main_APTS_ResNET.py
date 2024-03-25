@@ -99,11 +99,11 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
 
     # Training settings
     trials = 10  # number of trials
-    epochs = 50  # number of epochs to run per trial
+    epochs = 100  # number of epochs to run per trial
     # net_nr = 4  # model number to choose
     dataset = 'MNIST'  # name of the dataset
-    minibatch_size = int(2500)  # size of the mini-batches
-    overlap_ratio = 0.01  # overlap ratio between mini-batches
+    minibatch_size = int(10000)  # size of the mini-batches
+    overlap_ratio = 0.05  # overlap ratio between mini-batches
     # optimizer_name = 'APTS_W'  # name of the optimizer
     nr_models = world_size # amount of subdomains to use in the optimizer
 
@@ -111,7 +111,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     loss_fn = loss_function
     optimizer_params = get_apts_w_params(momentum=False, second_order=False, nr_models=nr_models, max_iter=5, fdl=False, global_pass=True, device=None)
     
-    net_fun, net_params = MNIST_FCNN, {} 
+    net_fun, net_params = MNIST_FCNN, {"hidden_sizes": [512, 256]} 
     
     # Data loading
     train_loader, test_loader = create_dataloaders(
