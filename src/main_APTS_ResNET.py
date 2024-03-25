@@ -111,13 +111,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     loss_fn = loss_function
     optimizer_params = get_apts_w_params(momentum=False, second_order=False, nr_models=nr_models, max_iter=5, fdl=False, global_pass=True, device=None)
     
-    print("Print 2")
-    net_fun, net_params = MNIST_FCNN_Small, {} #models.resnet18, {
-    print("Print 3")
-
-    # print parameters norm:
-    # torch.random.manual_seed(0)
-    # print("Parameters norm: ", torch.norm(torch.cat([torch.flatten(p) for p in net_fun(**net_params).parameters()])))
+    net_fun, net_params = MNIST_FCNN, {} 
     
     # Data loading
     train_loader, test_loader = create_dataloaders(
@@ -136,7 +130,6 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     for trial in range(trials):
         network = net_fun(**net_params).to(device)
         optimizer = APTS_W(network.parameters(), model=network, loss_fn=loss_fn, **optimizer_params)
-        # optimizer = optim.Adam(network.parameters())
         losses[trial], accuracies[trial], cum_times[trial] = do_one_optimizer_test(
             train_loader=train_loader,
             test_loader=test_loader,
@@ -148,23 +141,12 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             device=device
         )
 
-    if dist.get_rank() == 0:
-       # print(
-        #    f"Rank {rank}. Trial {trial + 1}/{trials} finished. Loss: {losses[-1]:.4f}, Accuracy: {accuracies[-1]:.4f}. Cum. time: {[round(t, 2) for t in cum_times]}"
-        #)
-        # here we plot the accuracy after the training through matplotlib
-        # plt.plot(losses)
-        # hold on:
-        # Here we plot the test accuracies vs cum times
-        # plt.plot(cum_times, accuracies)
-        # plt.show()
-        
+    if dist.get_rank() == 0:        
         # Save losses, accuracies, and cum times to a CSV file using Pandas
         df = pd.DataFrame({"losses": losses, "accuracies": accuracies, "cum_times": cum_times})
         df.to_csv(f"results_APTS_W_{nr_models}.csv", index=False)
         print("Successfully saved to file.")
 
-    # print(f"Rank {rank}: Plot successful.")
 
 if __name__ == "__main__":    
     if 1==1:

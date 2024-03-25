@@ -1,14 +1,14 @@
 #!/bin/bash
 # SLURM script for Piz Daint
 
-#SBATCH --time=00:10:00
+#SBATCH --time=00:30:00
 #SBATCH --ntasks-per-core=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=1
 #SBATCH --hint=nomultithread
 #SBATCH --constraint=gpu
 #SBATCH --account=c24
-#SBATCH --partition=debug
+#SBATCH --partition=normal
 #SBATCH --exclusive
 
 echo "Running apts_w.job..."
