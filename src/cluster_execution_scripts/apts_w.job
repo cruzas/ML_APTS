@@ -20,7 +20,7 @@ export NCCL_DEBUG=INFO
 export NCCL_IB_HCA=ipogif0
 export NCCL_IB_CUDA_SUPPORT=1
 
-RUNPATH=/scratch/snx3000/scruzale/MultiscAI/ML2/
+RUNPATH=/scratch//scratch/snx3000/scruzale/ML_APTS/
 cd $RUNPATH || exit
 
 # First, split the arguments based on the comma delimiter
