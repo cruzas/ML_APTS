@@ -2,7 +2,7 @@
 
 echo "Running main.sh...."
 
-nr_models_array=(2)
+nr_models_array=(15 30 60)
 IFS=',' 
 echo "Trying to calling apts_w.sh..."
     ./apts_w.sh \
