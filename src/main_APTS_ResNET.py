@@ -4,6 +4,7 @@ import pprint,copy, torch
 import torch.multiprocessing as mp
 # User libraries
 from optimizers.APTS_W import APTS_W
+from optimizers.TR import TR
 from utils.utility import *
 from matplotlib import pyplot as plt
 import torch.distributed as dist
