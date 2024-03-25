@@ -65,6 +65,7 @@ def get_apts_w_params(momentum=False, second_order=False, nr_models=2, max_iter=
     return APTS_W_PARAMS
     
 def main(rank=None, master_addr=None, master_port=None, world_size=None):
+    print("In main...")
     # Set up the distributed environment.
     prepare_distributed_environment(rank, master_addr, master_port, world_size)
 
@@ -105,8 +106,10 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     loss_fn = loss_function
     optimizer_params = get_apts_w_params(momentum=False, second_order=False, nr_models=nr_models, max_iter=5, fdl=False, global_pass=True, device=None)
     
-    net_fun, net_params = torchvision.models.resnet18 #MNIST_FCNN_Small, {}#models.resnet18, {'weights':None, 'progress':True}#get_net_fun_and_params(dataset, net_nr)
-        
+    print("Print 2")
+    net_fun, net_params = torchvision.models.resnet18, {'weights':None, 'progress':True} #MNIST_FCNN_Small, {}#models.resnet18, {'weights':None, 'progress':True}#get_net_fun_and_params(dataset, net_nr)
+    print("Print 3")
+
     # print parameters norm:
     # torch.random.manual_seed(0)
     # print("Parameters norm: ", torch.norm(torch.cat([torch.flatten(p) for p in net_fun(**net_params).parameters()])))
