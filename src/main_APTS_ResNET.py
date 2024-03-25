@@ -107,7 +107,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     optimizer_params = get_apts_w_params(momentum=False, second_order=False, nr_models=nr_models, max_iter=5, fdl=False, global_pass=True, device=None)
     
     print("Print 2")
-    net_fun, net_params = models.resnet18, {'weights':None, 'progress':True} #MNIST_FCNN_Small, {}#models.resnet18, {'weights':None, 'progress':True}#get_net_fun_and_params(dataset, net_nr)
+    net_fun, net_params = MNIST_FCNN_Small, {} #models.resnet18, {
     print("Print 3")
 
     # print parameters norm:
