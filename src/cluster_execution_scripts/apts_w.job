@@ -20,7 +20,7 @@ export NCCL_DEBUG=INFO
 export NCCL_IB_HCA=ipogif0
 export NCCL_IB_CUDA_SUPPORT=1
 
-RUNPATH=/scratch//scratch/snx3000/scruzale/ML_APTS/
+RUNPATH=/scratch/snx3000/scruzale/ML_APTS/
 cd $RUNPATH || exit
 
 # First, split the arguments based on the comma delimiter
@@ -50,8 +50,8 @@ while [[ -n "$arg_string" ]]; do
     fi
 done
 
-echo "Activating pytorch_daint_multigpu `date`"
-source activate pytorch_daint_multigpu
+echo "Activating llms `date`"
+source activate llms
 echo "Calling python script `date`"
 srun python3 -u ./src/main_APTS_ResNET.py;
 echo "All done $(date)"
