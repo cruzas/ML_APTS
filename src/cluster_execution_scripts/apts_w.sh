@@ -5,9 +5,6 @@ echo "Running apts_w.sh...."
 cd "../../" || exit
 optimizer_name="APTS_W"
 
-echo "Received nr_models_array: $1"
-echo "Received minibatch_sizes: $2"
-
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
     key="$1"
