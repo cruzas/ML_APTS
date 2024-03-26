@@ -40,6 +40,9 @@ for nr_models in "${nr_models_array[@]}"; do
              --nr_models="$nr_models"
              --minibatch_size="$minibatch_size"
         )
+
+        echo "ARGS to be passed: ${ARGS[*]}"
+
         job_name="./src/cluster_execution_scripts/${optimizer_name}_${nr_models}_${minibatch_size}.job"
         output_filename="${job_name}.out"
         error_filename="${job_name}.err"
