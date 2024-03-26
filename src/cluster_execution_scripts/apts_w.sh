@@ -40,11 +40,10 @@ for nr_models in "${nr_models_array[@]}"; do
         # Skip the following code if both momentum and second order equal 1
         # Arguments to be (finally) passed to the python script
         ARGS=(
-             --optimizer_name="$optimizer_name"
              --nr_models="$nr_models"
              --minibatch_size="$minibatch_size"
         )
-        job_name="${optimizer_name}_${nr_models}_${minibatch_size}.job"
+        job_name="./src/cluster_execution_scripts/${optimizer_name}_${nr_models}_${minibatch_size}.job"
         output_filename="${job_name}.out"
         error_filename="${job_name}.err"
         sbatch --nodes=$nr_models --job-name=$job_name --output=$output_filename --error=$error_filename ./src/cluster_execution_scripts/apts_w.job "${ARGS[@]}" 
