@@ -4,6 +4,10 @@ echo "Running apts_w.sh...."
 
 cd "../../" || exit
 optimizer_name="APTS_W"
+
+echo "Received nr_models_array: $1"
+echo "Received minibatch_sizes: $2"
+
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
     key="$1"
@@ -29,12 +33,10 @@ done
 IFS=','  # Set the field separator to comma
 echo "Optimizer name: $optimizer_name"
 echo "Number of Models Array: ${nr_models_array[*]}"
-echo "Batch sizes: ${minibatch_sizes[*]}"
-
+echo "Minibatch sizes: ${minibatch_sizes[*]}"
 
 for nr_models in "${nr_models_array[@]}"; do
     for minibatch_size in "${minibatch_sizes[@]}"; do
-        counter=$((counter+1))
         # Skip the following code if both momentum and second order equal 1
         # Arguments to be (finally) passed to the python script
         ARGS=(
@@ -42,7 +44,7 @@ for nr_models in "${nr_models_array[@]}"; do
              --nr_models="$nr_models"
              --minibatch_size="$minibatch_size"
         )
-        job_name="${optimizer_name}_${nr_models}_${batch_size}.job"
+        job_name="${optimizer_name}_${nr_models}_${minibatch_size}.job"
         output_filename="${job_name}.out"
         error_filename="${job_name}.err"
         sbatch --nodes=$nr_models --job-name=$job_name --output=$output_filename --error=$error_filename ./src/cluster_execution_scripts/apts_w.job "${ARGS[@]}" 
