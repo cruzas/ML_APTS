@@ -86,7 +86,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     # Rank ID
     rank = dist.get_rank() if dist.is_initialized() else 0
     parameter_decomposition = True # TODO: Implement data decomposition
-    # args = parse_args() # TODO: make this is easier to execute on a personal computer
+    args = parse_args() 
 
     torch.random.manual_seed(0)
 
@@ -102,10 +102,13 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     epochs = 100  # number of epochs to run per trial
     # net_nr = 4  # model number to choose
     dataset = 'MNIST'  # name of the dataset
-    minibatch_size = int(60000)  # size of the mini-batches
+    minibatch_size = int(args.minibatch_size)  # size of the mini-batches
     overlap_ratio = 0.05  # overlap ratio between mini-batches
     # optimizer_name = 'APTS_W'  # name of the optimizer
     nr_models = world_size # amount of subdomains to use in the optimizer
+
+    print("Mini-batch size: ", minibatch_size)
+    exit(0)
 
     loss_function = nn.CrossEntropyLoss
     loss_fn = loss_function
