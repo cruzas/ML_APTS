@@ -15,7 +15,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         --minibatch_sizes)
             shift
-            IFS=',' read -ra batch_sizes <<< "$1"
+            IFS=',' read -ra minibatch_sizes <<< "$1"
             shift
             ;;
         *)
