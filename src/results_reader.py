@@ -1,55 +1,95 @@
-import pandas as pd
-import matplotlib.pyplot as plt
-import numpy as np
 import os
-import ast
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from ast import literal_eval
 
-# Define whether plotting accuracies or losses
-acc_loss = "accuracies"  # Change to "losses" if you want to plot losses instead
+def convert_string_to_list(string):
+    try:
+        return literal_eval(string)
+    except (ValueError, SyntaxError) as e:
+        print(f"Failed to convert: {string} (Error: {e})")
+        return []
 
-# Data set name
-dataset="MNIST"
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-# Array of minibatch sizes
-minibatch_sizes = [10000, 60000]
+files = [
+    '../results_APTS_W_MNIST_10000_2_cleaned.csv',
+    '../results_APTS_W_MNIST_10000_4_cleaned.csv',
+    '../results_APTS_W_MNIST_10000_6_cleaned.csv'
+]
 
-# Array of subdomains
-ns = [15, 30, 60]
+avg_losses_per_epoch = {}
+avg_accuracies_per_epoch = {}
 
-# Dynamically generate file names and labels based on subdomains
-labels = [f"N:{n}" for n in ns]
-results = []
+for file in files:
+    df = pd.read_csv(file, converters={'losses': convert_string_to_list, 'accuracies': convert_string_to_list})
 
-# Read and process each file
-for minibatch_size in minibatch_sizes:
-    filenames = [f"../results_APTS_W_{dataset}_{minibatch_size}_{n}.csv" for n in ns]
-    for filename, label in zip(labels):
-        try:
-            # Construct file path
-            path = os.path.abspath(f"./{filename}")
-            # Read CSV file
-            df = pd.read_csv(path)
-            # Preprocess and compute average metrics
-            avg_times, avg_accs = [], []
-            for i, row in df.iterrows():
-                # Safely convert string representations of lists into actual lists
-                times_list = ast.literal_eval(row['cum_times'])
-                accs_list = ast.literal_eval(row[acc_loss])
-                # Convert lists to NumPy arrays for easier computation
-                times_array = np.array(times_list, dtype=np.float32)
-                accs_array = np.array(accs_list, dtype=np.float32)
-                # Append averages
-                avg_times.append(np.mean(times_array))
-                avg_accs.append(np.mean(accs_array))
-            # Add average results to the results list
-            results.append((np.mean(avg_times), np.mean(avg_accs), label))
-        except Exception as e:
-            print(f"Error processing {filename}: {e}")
+    epoch_average_losses = []
+    epoch_average_accuracies = []
 
-# Plotting
-for avg_time, avg_acc, label in results:
-    plt.plot(avg_time, avg_acc, label=label)
-plt.xlabel("Avg. Time (s)")
-plt.ylabel(f"Avg. {acc_loss.title()} (%)")
-plt.legend()
+    losses_transposed = list(zip(*df['losses']))
+    for epoch_losses in losses_transposed:
+        epoch_average_losses.append(np.mean(epoch_losses))
+
+    accuracies_transposed = list(zip(*df['accuracies']))
+    for epoch_accuracies in accuracies_transposed:
+        epoch_average_accuracies.append(np.mean(epoch_accuracies))
+
+    N = file.split("_cleaned")[0].split("_")[-1]
+    avg_losses_per_epoch[N] = epoch_average_losses
+    avg_accuracies_per_epoch[N] = epoch_average_accuracies
+
+file = "../adam_mnist_005_10000_accuracy_metrics.csv"
+df = pd.read_csv(file)
+avg_accuracies_adam_per_epoch = df['mean']
+
+file = "../adam_mnist_005_10000_loss_metrics.csv"
+df = pd.read_csv(file)
+avg_losses_adam_per_epoch = df['mean']
+
+plt.figure(figsize=(10, 6))
+
+ax1 = plt.gca()  # Now primary axis for accuracies
+ax2 = ax1.twinx()  # Now secondary axis for losses
+
+# Initialize empty lists for custom legend handles and labels
+legend_handles = []
+legend_labels = []
+
+epochs = np.arange(1, len(avg_losses_adam_per_epoch) + 1)
+# Plot accuracies on ax1
+line1, = ax1.plot(epochs, avg_accuracies_adam_per_epoch, color='blue')
+# Plot losses on ax2
+ax2.plot(epochs, avg_losses_adam_per_epoch, color='blue')
+# Add the handle and label for the current N to the custom legend lists
+legend_handles.append(line1)
+legend_labels.append('Adam')
+
+colours = {'2': 'orange', '4': 'green', '6': 'red'}
+for N, accuracies in avg_accuracies_per_epoch.items():
+    epochs = np.arange(1, len(accuracies) + 1)
+    losses = avg_losses_per_epoch[N]
+
+    # Plot accuracies on ax1
+    line1, = ax1.plot(epochs, accuracies, color=colours[N])
+    
+    # Plot losses on ax2
+    ax2.plot(epochs, losses, color=colours[N])
+
+    # Add the handle and label for the current N to the custom legend lists
+    legend_handles.append(line1)
+    legend_labels.append(f'N={N}')
+
+ax1.set_xlabel('Epochs')
+ax1.set_ylabel('Avg. accuracy', color='k')
+ax2.set_ylabel('Avg. loss', color='k')
+
+ax1.tick_params('y', colors='k')
+ax2.tick_params('y', colors='k')
+
+# Use the custom handles and labels for the legend
+ax1.legend(legend_handles, legend_labels, loc='upper right')
+
+plt.title('5 minibatches with 5% overlap')
 plt.show()
