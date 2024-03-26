@@ -31,7 +31,6 @@ IFS=','  # Set the field separator to comma
 echo "Optimizer name: $optimizer_name"
 echo "Number of Models Array: ${nr_models_array[*]}"
 echo "Minibatch sizes: ${minibatch_sizes[*]}"
-
 for nr_models in "${nr_models_array[@]}"; do
     for minibatch_size in "${minibatch_sizes[@]}"; do
         # Skip the following code if both momentum and second order equal 1
