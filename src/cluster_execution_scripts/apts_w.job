@@ -36,6 +36,9 @@ while [[ -n "$arg_string" ]]; do
         --nr_models)
             nr_models="$value"
             ;;
+        --minibatch_size)
+            minibatch_size="$value"
+            ;;
         *)
             echo "Unknown argument: $key"
             exit 1
@@ -50,8 +53,10 @@ while [[ -n "$arg_string" ]]; do
     fi
 done
 
+ARGS="--nr_models $nr_models --minibatch_size $minibatch_size"
+
 echo "Activating llms `date`"
 source activate llms
 echo "Calling python script `date`"
-srun python3 -u ./src/main_APTS_ResNET.py;
+srun python3 -u ./src/main_APTS_ResNET.py $ARGS;
 echo "All done $(date)"
