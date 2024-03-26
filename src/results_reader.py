@@ -79,17 +79,25 @@ for N, accuracies in avg_accuracies_per_epoch.items():
 
     # Add the handle and label for the current N to the custom legend lists
     legend_handles.append(line1)
-    legend_labels.append(f'N={N}')
+    legend_labels.append(f'APTS(N:{N})')
 
-ax1.set_xlabel('Epochs')
-ax1.set_ylabel('Avg. accuracy', color='k')
-ax2.set_ylabel('Avg. loss', color='k')
+ax1.set_xlabel('Epochs', fontsize=14)
+
+ax1.set_ylabel('Avg. accuracy', color='k', fontsize=14)
+ax2.set_ylabel('Avg. loss', color='k', fontsize=14)
+
+ax1.set_ylim([80, 100])
+ax2.set_ylim([1.4, 2.3])
 
 ax1.tick_params('y', colors='k')
 ax2.tick_params('y', colors='k')
 
-# Use the custom handles and labels for the legend
-ax1.legend(legend_handles, legend_labels, loc='upper right')
+ax1.set_yscale('linear')
+ax2.set_yscale('linear')
 
-plt.title('5 minibatches with 5% overlap')
+# Use the custom handles and labels for the legend
+ax1.legend(legend_handles, legend_labels, loc='center right', fontsize=14)
+
+plt.title('6 minibatches with 5% overlap', fontsize=24)
+plt.xlim([0, 100])
 plt.show()
