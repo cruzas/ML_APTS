@@ -98,6 +98,8 @@ ax2.set_yscale('linear')
 # Use the custom handles and labels for the legend
 ax1.legend(legend_handles, legend_labels, loc='center right', fontsize=14)
 
-plt.title('6 minibatches with 5% overlap', fontsize=24)
+plt.title('5 minibatches with 5% overlap', fontsize=24)
 plt.xlim([0, 100])
+plt.savefig(f'../APTS_W_MNIST_10000_2.png', bbox_inches='tight', dpi=300)
 plt.show()
+
