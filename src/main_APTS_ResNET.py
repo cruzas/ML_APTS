@@ -98,8 +98,8 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     # args.nr_models = dist.get_world_size()
 
     # Training settings
-    trials = 10  # number of trials
-    epochs = 100  # number of epochs to run per trial
+    trials = 5  # number of trials
+    epochs = 50  # number of epochs to run per trial
     # net_nr = 4  # model number to choose
     dataset = 'CIFAR10'  # name of the dataset
     minibatch_size = int(args.minibatch_size)  # size of the mini-batches

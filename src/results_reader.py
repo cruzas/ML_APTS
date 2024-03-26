@@ -1,45 +1,55 @@
-# in this file we will read the results from the CSV file and plot them
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
-import os, ast
-import argparse
-import sys
-import torch
+import os
+import ast
 
-acc_loss = "accuracies" # or "losses"
+# Define whether plotting accuracies or losses
+acc_loss = "accuracies"  # Change to "losses" if you want to plot losses instead
 
-# path0 = os.path.abspath("./results_APTS_W_2.csv")
-path1 = os.path.abspath("./results_APTS_W_15.csv")
-path2 = os.path.abspath("./results_APTS_W_30.csv")
-path3 = os.path.abspath("./results_APTS_W_60.csv")
+# Data set name
+dataset="MNIST"
 
-paths = [path1, path2, path3]
-labels = ["N:15", "N:30", "N:60"]
-for path in paths:
-    df = pd.read_csv(path)
-    df2 = pd.DataFrame()
-    temp = [0]*len(df["cum_times"]);temp2 = [0]*len(df["cum_times"])
-    df[acc_loss].apply(ast.literal_eval)
-    for i in range(len(df["cum_times"])):
-        t = df["cum_times"][i][1:-1].strip()
-        for j in range(20,1,-1):
-            t = t.replace(' '*j,' ')
-        temp[i] = np.array(t.split(" "), dtype=np.float32)
-        temp2[i] = np.array(df[acc_loss][i][1:-1].replace(' ','').split(","), dtype=np.float32)
-    # stack temp into a numpy array and take the vertical mean
-    avg_times = np.mean(np.stack(temp), axis=0)
-    avg_accs = np.mean(np.stack(temp2), axis=0)
-    plt.plot(avg_times, avg_accs, label=path.split("/")[-1].split(".")[0])
-    # Add x and y labels
-    plt.xlabel("Avg. Time (s)")
-    plt.ylabel("Avg. Accuracy (%)")
-    # Use the labels array to add a legend
-    plt.legend(labels)
-    
+# Array of minibatch sizes
+minibatch_sizes = [10000, 60000]
+
+# Array of subdomains
+ns = [15, 30, 60]
+
+# Dynamically generate file names and labels based on subdomains
+labels = [f"N:{n}" for n in ns]
+results = []
+
+# Read and process each file
+for minibatch_size in minibatch_sizes:
+    filenames = [f"../results_APTS_W_{dataset}_{minibatch_size}_{n}.csv" for n in ns]
+    for filename, label in zip(labels):
+        try:
+            # Construct file path
+            path = os.path.abspath(f"./{filename}")
+            # Read CSV file
+            df = pd.read_csv(path)
+            # Preprocess and compute average metrics
+            avg_times, avg_accs = [], []
+            for i, row in df.iterrows():
+                # Safely convert string representations of lists into actual lists
+                times_list = ast.literal_eval(row['cum_times'])
+                accs_list = ast.literal_eval(row[acc_loss])
+                # Convert lists to NumPy arrays for easier computation
+                times_array = np.array(times_list, dtype=np.float32)
+                accs_array = np.array(accs_list, dtype=np.float32)
+                # Append averages
+                avg_times.append(np.mean(times_array))
+                avg_accs.append(np.mean(accs_array))
+            # Add average results to the results list
+            results.append((np.mean(avg_times), np.mean(avg_accs), label))
+        except Exception as e:
+            print(f"Error processing {filename}: {e}")
+
+# Plotting
+for avg_time, avg_acc, label in results:
+    plt.plot(avg_time, avg_acc, label=label)
+plt.xlabel("Avg. Time (s)")
+plt.ylabel(f"Avg. {acc_loss.title()} (%)")
+plt.legend()
 plt.show()
-    
-    
-
-
-        
