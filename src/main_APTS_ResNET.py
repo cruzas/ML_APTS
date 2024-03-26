@@ -101,20 +101,20 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     trials = 10  # number of trials
     epochs = 100  # number of epochs to run per trial
     # net_nr = 4  # model number to choose
-    dataset = 'MNIST'  # name of the dataset
+    dataset = 'CIFAR10'  # name of the dataset
     minibatch_size = int(args.minibatch_size)  # size of the mini-batches
-    overlap_ratio = 0.05  # overlap ratio between mini-batches
+    overlap_ratio = 0.01  # overlap ratio between mini-batches
     # optimizer_name = 'APTS_W'  # name of the optimizer
     nr_models = world_size # amount of subdomains to use in the optimizer
 
-    print("Mini-batch size: ", minibatch_size)
-    exit(0)
+    # print("Mini-batch size: ", minibatch_size)
 
     loss_function = nn.CrossEntropyLoss
     loss_fn = loss_function
     optimizer_params = get_apts_w_params(momentum=False, second_order=False, nr_models=nr_models, max_iter=5, fdl=False, global_pass=True, device=None)
     
-    net_fun, net_params = MNIST_FCNN, {"hidden_sizes": [512, 256]} 
+    # net_fun, net_params = MNIST_FCNN, {"hidden_sizes": [512, 256]} 
+    net_fun, net_params = torchvision.models.resnet18, {}
     
     # Data loading
     train_loader, test_loader = create_dataloaders(
