@@ -23,15 +23,9 @@ export NCCL_IB_CUDA_SUPPORT=1
 RUNPATH=/scratch/snx3000/scruzale/ML_APTS/
 cd $RUNPATH || exit
 
-# First, split the arguments based on the comma delimiter
-arg_string="$1"
-while [[ -n "$arg_string" ]]; do
-    # Get the first argument
-    first_arg="${arg_string%% *}"  # this extracts up to the first space
-
-    # Parse this argument into key and value
-    IFS="=" read -r key value <<< "$first_arg"
-    # echo "Parsing: Key [$key] Value [$value]"  # Debug print
+# Iterate over all passed arguments
+for arg in "$@"; do
+    IFS='=' read -r key value <<< "$arg"
     case $key in
         --nr_models)
             nr_models="$value"
@@ -44,17 +38,9 @@ while [[ -n "$arg_string" ]]; do
             exit 1
             ;;
     esac
-
-    # Remove the first argument from the string, but check if it was the last argument first
-    if [[ "$arg_string" != "$first_arg" ]]; then
-        arg_string="${arg_string#* }"
-    else
-        arg_string=""
-    fi
 done
 
 ARGS="--nr_models $nr_models --minibatch_size $minibatch_size"
-
 echo "ARGS for python file: $ARGS"
 
 echo "Activating llms `date`"
