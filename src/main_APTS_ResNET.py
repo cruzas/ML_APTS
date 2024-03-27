@@ -132,7 +132,8 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     cum_times=[None]*trials
     for trial in range(trials):
         network = net_fun(**net_params).to(device)
-        optimizer = APTS_W(network.parameters(), model=network, loss_fn=loss_fn, **optimizer_params)
+        # optimizer = APTS_W(network.parameters(), model=network, loss_fn=loss_fn, **optimizer_params)
+        optimizer = torch.optim.Adam(network.parameters(), lr=0.001)
         losses[trial], accuracies[trial], cum_times[trial] = do_one_optimizer_test(
             train_loader=train_loader,
             test_loader=test_loader,
@@ -147,7 +148,8 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     if dist.get_rank() == 0:        
         # Save losses, accuracies, and cum times to a CSV file using Pandas
         df = pd.DataFrame({"losses": losses, "accuracies": accuracies, "cum_times": cum_times})
-        df.to_csv(f"results_APTS_W_{dataset}_{minibatch_size}_{nr_models}.csv", index=False)
+        # df.to_csv(f"results_APTS_W_{dataset}_{minibatch_size}_{nr_models}.csv", index=False)
+        df.to_csv(f"results_Adam_{dataset}_{minibatch_size}_{nr_models}.csv", index=False)
         print("Successfully saved to file.")
 
 

@@ -2,14 +2,11 @@ import os
 import csv
 import re
 
-# Change path to the location of this script
-os.chdir(os.path.dirname(os.path.abspath(__file__)))
-
 # List of original CSV files to be cleaned
 original_files = [
-    '../results_APTS_W_MNIST_10000_2.csv',
-    '../results_APTS_W_MNIST_10000_4.csv',
-    '../results_APTS_W_MNIST_10000_6.csv'
+    './results_csv/results_APTS_W_CIFAR10_10000_2.csv',
+    './results_csv/results_APTS_W_CIFAR10_10000_4.csv',
+    './results_csv/results_APTS_W_CIFAR10_10000_6.csv'
 ]
 
 # Function to clean cumulative times data

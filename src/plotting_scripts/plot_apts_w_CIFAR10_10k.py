@@ -11,12 +11,10 @@ def convert_string_to_list(string):
         print(f"Failed to convert: {string} (Error: {e})")
         return []
 
-os.chdir(os.path.dirname(os.path.abspath(__file__)))
-
 files = [
-    '../results_APTS_W_MNIST_10000_2_cleaned.csv',
-    '../results_APTS_W_MNIST_10000_4_cleaned.csv',
-    '../results_APTS_W_MNIST_10000_6_cleaned.csv'
+    './results_csv/results_APTS_W_CIFAR10_10000_2_cleaned.csv',
+    './results_csv/results_APTS_W_CIFAR10_10000_4_cleaned.csv',
+    './results_csv/results_APTS_W_CIFAR10_10000_6_cleaned.csv'
 ]
 
 avg_losses_per_epoch = {}
@@ -40,11 +38,11 @@ for file in files:
     avg_losses_per_epoch[N] = epoch_average_losses
     avg_accuracies_per_epoch[N] = epoch_average_accuracies
 
-file = "../adam_mnist_005_10000_accuracy_metrics.csv"
+file = "./results_csv/adam_cifar10_001_10000_accuracy_metrics.csv"
 df = pd.read_csv(file)
 avg_accuracies_adam_per_epoch = df['mean']
 
-file = "../adam_mnist_005_10000_loss_metrics.csv"
+file = "./results_csv/adam_cifar10_001_10000_loss_metrics.csv"
 df = pd.read_csv(file)
 avg_losses_adam_per_epoch = df['mean']
 
@@ -64,7 +62,7 @@ line1, = ax1.plot(epochs, avg_accuracies_adam_per_epoch, color='blue')
 ax2.plot(epochs, avg_losses_adam_per_epoch, color='blue')
 # Add the handle and label for the current N to the custom legend lists
 legend_handles.append(line1)
-legend_labels.append('Adam')
+legend_labels.append('Adam(lr:0.001)')
 
 colours = {'2': 'orange', '4': 'green', '6': 'red'}
 for N, accuracies in avg_accuracies_per_epoch.items():
@@ -79,15 +77,18 @@ for N, accuracies in avg_accuracies_per_epoch.items():
 
     # Add the handle and label for the current N to the custom legend lists
     legend_handles.append(line1)
-    legend_labels.append(f'APTS(N:{N})')
+    legend_labels.append(f'APTS_W(N:{N})')
 
-ax1.set_xlabel('Epochs', fontsize=14)
+ax1.set_xlabel('Iterations', fontsize=24)
 
-ax1.set_ylabel('Avg. accuracy', color='k', fontsize=14)
-ax2.set_ylabel('Avg. loss', color='k', fontsize=14)
+ax1.set_ylabel('Avg. accuracy (%)', color='k', fontsize=24)
+ax2.set_ylabel('Avg. loss', color='k', fontsize=24)
 
-ax1.set_ylim([80, 100])
-ax2.set_ylim([1.4, 2.3])
+ax1.set_xlim([0, 50])
+ax2.set_xlim([0, 50])
+
+ax1.set_ylim([0, 100])
+ax2.set_ylim([0, 2.3])
 
 ax1.tick_params('y', colors='k')
 ax2.tick_params('y', colors='k')
@@ -95,11 +96,15 @@ ax2.tick_params('y', colors='k')
 ax1.set_yscale('linear')
 ax2.set_yscale('linear')
 
-# Use the custom handles and labels for the legend
-ax1.legend(legend_handles, legend_labels, loc='center right', fontsize=14)
+# Set axis ticks font size
+ax1.tick_params(axis='both', which='major', labelsize=24)
+ax2.tick_params(axis='both', which='major', labelsize=24)
 
-plt.title('5 minibatches with 5% overlap', fontsize=24)
-plt.xlim([0, 100])
-plt.savefig(f'../APTS_W_MNIST_10000_2.png', bbox_inches='tight', dpi=300)
+# Use the custom handles and labels for the legend
+ax1.legend(legend_handles, legend_labels, loc='upper right', fontsize=14)
+
+plt.title('5 minibatches with 1% overlap', fontsize=24)
+plt.xlim([0, 50])
+plt.savefig(f'./plots/APTS_W_CIFAR10_10000.png', bbox_inches='tight', dpi=300)
 plt.show()
 
