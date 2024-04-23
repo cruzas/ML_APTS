@@ -69,11 +69,11 @@ for N, accuracies in avg_accuracies_per_epoch.items():
     legend_handles.append(line1)
     legend_labels.append(f'APTS_W(N:{N})')
 
-ax1.set_xlabel('Time (s)', fontsize=24)
+ax1.set_xlabel('Avg. time (s)', fontsize=24)
 
 ax1.set_ylabel('Avg. accuracy (%)', color='k', fontsize=24)
 
-ax1.set_xlim([0, 75])
+ax1.set_xlim([0, 87])
 
 ax1.set_ylim([0, 100])
 
@@ -85,9 +85,9 @@ ax1.set_yscale('linear')
 ax1.tick_params(axis='both', which='major', labelsize=24)
 
 # Use the custom handles and labels for the legend
-ax1.legend(legend_handles, legend_labels, loc='upper right', fontsize=14)
+ax1.legend(legend_handles, legend_labels, loc='lower right', fontsize=14)
 
 plt.title('6 minibatches with 5% overlap', fontsize=24)
-plt.xlim([0, 75])
+plt.xlim([0, 87])
 plt.savefig(f'./plots/times_APTS_W_MNIST_10000.png', bbox_inches='tight', dpi=300)
 plt.show()

@@ -3,10 +3,14 @@ import csv
 import re
 
 # List of original CSV files to be cleaned
+# original_files = [
+#     './results_csv/results_APTS_W_CIFAR10_10000_2.csv',
+#     './results_csv/results_APTS_W_CIFAR10_10000_4.csv',
+#     './results_csv/results_APTS_W_CIFAR10_10000_6.csv'
+# ]
+
 original_files = [
-    './results_csv/results_APTS_W_CIFAR10_10000_2.csv',
-    './results_csv/results_APTS_W_CIFAR10_10000_4.csv',
-    './results_csv/results_APTS_W_CIFAR10_10000_6.csv'
+    './results_csv/results_Adam_CIFAR10_10000_resnet18.csv'
 ]
 
 # Function to clean cumulative times data

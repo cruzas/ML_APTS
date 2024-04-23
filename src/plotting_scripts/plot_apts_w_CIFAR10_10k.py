@@ -38,13 +38,22 @@ for file in files:
     avg_losses_per_epoch[N] = epoch_average_losses
     avg_accuracies_per_epoch[N] = epoch_average_accuracies
 
-file = "./results_csv/adam_cifar10_001_10000_accuracy_metrics.csv"
-df = pd.read_csv(file)
-avg_accuracies_adam_per_epoch = df['mean']
+file = "./results_csv/results_Adam_CIFAR10_10000_resnet18_cleaned.csv"
+df_adam = pd.read_csv(file, converters={'losses': convert_string_to_list, 'accuracies': convert_string_to_list})
 
-file = "./results_csv/adam_cifar10_001_10000_loss_metrics.csv"
-df = pd.read_csv(file)
-avg_losses_adam_per_epoch = df['mean']
+epoch_average_losses_adam = []
+epoch_average_accuracies_adam = []
+
+losses_transposed_adam = list(zip(*df_adam['losses']))
+for epoch_losses_adam in losses_transposed_adam:
+    epoch_average_losses_adam.append(np.mean(epoch_losses_adam))
+
+accuracies_transposed_adam = list(zip(*df_adam['accuracies']))
+for epoch_accuracies_adam in accuracies_transposed_adam:
+    epoch_average_accuracies_adam.append(np.mean(epoch_accuracies_adam))
+
+avg_accuracies_adam_per_epoch = epoch_average_accuracies_adam
+avg_losses_adam_per_epoch = epoch_average_losses_adam
 
 plt.figure(figsize=(10, 6))
 
