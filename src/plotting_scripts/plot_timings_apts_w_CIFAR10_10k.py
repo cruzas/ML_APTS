@@ -45,6 +45,10 @@ for file in files:
     avg_accuracies_per_epoch[N] = epoch_average_accuracies
     avg_cum_times_per_epoch[N] = epoch_average_cum_times
 
+# Print final time for each N
+for N, times in avg_cum_times_per_epoch.items():
+    print(f'N: {N}, Final time: {times[-1]}')
+
 plt.figure(figsize=(10, 6))
 
 ax1 = plt.gca()  # Now primary axis for accuracies
@@ -64,11 +68,11 @@ for N, accuracies in avg_accuracies_per_epoch.items():
     legend_handles.append(line1)
     legend_labels.append(f'APTS_W(N:{N})')
 
-ax1.set_xlabel('Time (s)', fontsize=24)
+ax1.set_xlabel('Avg. time (s)', fontsize=24)
 
 ax1.set_ylabel('Avg. accuracy (%)', color='k', fontsize=24)
 
-ax1.set_xlim([0, 1500])
+ax1.set_xlim([0, 3000])
 
 ax1.set_ylim([0, 100])
 
@@ -83,7 +87,7 @@ ax1.tick_params(axis='both', which='major', labelsize=24)
 ax1.legend(legend_handles, legend_labels, loc='upper right', fontsize=14)
 
 plt.title('5 minibatches with 1% overlap', fontsize=24)
-plt.xlim([0, 1500])
+plt.xlim([0, 3000])
 plt.savefig(f'./plots/times_APTS_W_CIFAR10_10000.png', bbox_inches='tight', dpi=300)
 plt.show()
 
