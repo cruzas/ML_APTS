@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.autograd as autograd
-import fairscale, copy
+import copy
 
 class MyModel(nn.Module):
     def __init__(self):
