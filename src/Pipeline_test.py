@@ -265,7 +265,12 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     if rank == dist.get_world_size() - 1:
         print(f"Loss parallel model: {loss}")
             
-    print(list(model.parameters())[0])
+    # check gradients
+    if rank == 0:
+        loss.backward()
+        print(f"Derivative of sequential model:\n{[param.grad for param in model_seq.parameters()]}")
+
+    print(f"Derivative of PARALLEL model rank {rank}:\n{[param.grad for param in model.parameters()]}")
 
 
 if __name__ == '__main__':
