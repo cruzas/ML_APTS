@@ -11,6 +11,7 @@ import torch.distributed as dist
 import torchvision.datasets as datasets
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
+
 # User libraries
 #from optimizers.TR import TR
 #from optimizers.APTS_D import APTS_D
@@ -368,6 +369,11 @@ def prepare_distributed_environment(rank, master_addr, master_port, world_size):
 
     device_id = dist.get_rank()
     print(f"Device id: {device_id}")
+    # Setup RPC - assuming the RPC framework uses the same rank and world_size
+    # rpc_backend_options = dist.rpc.TensorPipeRpcBackendOptions()
+    # rpc_backend_options.init_method = f"tcp://{os.environ['MASTER_ADDR']}:{os.environ['MASTER_PORT']}"
+    # dist.rpc.init_rpc(f"worker{rank}", rank=rank, world_size=world_size, rpc_backend_options=rpc_backend_options)
+
 
         
 ### YOU SHOULD ADD ALL OPTIMIZERS YOU WISH TO SUPPORT IN THE FOLLOWING FUNCTIONS ###
