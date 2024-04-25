@@ -109,11 +109,11 @@ class Weight_Parallelized_Model(nn.Module):
             self.zero_grad()
             
         # Initialize the chunk_shapes tensor to store the shapes of the chunks
-        chunk_shapes = torch.zeros(chunks_amount, dtype=torch.int32)
+        chunk_shapes = torch.zeros(chunks_amount, dtype=torch.int32).to(f'cuda:{self.rank}' if self.backend == 'gloo' else f'cuda:{self.gpu_id}')
         if self.rank in self.rank_list[0]: # If the rank is in the first layer's rank list, send the input to the next device
             self.inputs = x if compute_grad else 0
             chunks = x.chunk(chunks_amount)
-            chunk_shapes = torch.tensor([chunk.shape[0] for chunk in chunks], dtype=torch.int32)
+            chunk_shapes = torch.tensor([chunk.shape[0] for chunk in chunks], dtype=torch.int32).to(f'cuda:{self.rank}' if self.backend == 'gloo' else f'cuda:{self.gpu_id}')
         # Broadcast the chunk_shapes tensor to all the ranks (this allows to know the shape of the input tensor for each rank in the pipeline and prepare the recv function)
         shape_transfer = dist.broadcast(tensor=chunk_shapes, src=self.rank_list[0][0], async_op=True) # broadcasting only the batch size | async operation to avoid blocking the first layer
         # Start the pipeline
