@@ -13,13 +13,13 @@ import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
 
 # User libraries
-#from optimizers.TR import TR
-#from optimizers.APTS_D import APTS_D
-#from optimizers.APTS_W import APTS_W
-#from models.neural_networks import *
-#import torchvision.models as models
-#from data_loaders.Power_DL import *
-#from data_loaders.OverlappingDistributedSampler import *
+from optimizers.TR import TR
+from optimizers.APTS_D import APTS_D
+from optimizers.APTS_W import APTS_W
+from models.neural_networks import *
+import torchvision.models as models
+from data_loaders.Power_DL import *
+from data_loaders.OverlappingDistributedSampler import *
 
 
 # Collect command-line arguments
@@ -345,9 +345,10 @@ def find_free_port():
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         return str(s.getsockname()[1])  
 
-def prepare_distributed_environment(rank, master_addr, master_port, world_size):
+def prepare_distributed_environment(rank=None, master_addr=None, master_port=None, world_size=None):
     device_id = 0
     if rank is None and master_addr is None and master_port is None and world_size is None: # we are on a cluster
+        print(f'Should be initializing {os.environ["SLURM_NNODES"]} nodes')
         ## Execute code on a cluster
         os.environ["MASTER_PORT"] = "29501"
         os.environ["WORLD_SIZE"] = os.environ["SLURM_NNODES"]
@@ -358,7 +359,9 @@ def prepare_distributed_environment(rank, master_addr, master_port, world_size):
             f"scontrol show hostname {node_list} | head -n1"
         )
         os.environ["MASTER_ADDR"] = master_node
+        print(f"Dist initialized before process group? {dist.is_initialized()}")
         dist.init_process_group(backend="nccl")
+        print(f"Dist initialized after init process group? {dist.is_initialized()} with world size {dist.get_world_size()}")
     else: # we are on a PC
         os.environ['MASTER_ADDR'] = master_addr
         os.environ['MASTER_PORT'] = master_port # A free port on the master node
