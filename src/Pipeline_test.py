@@ -251,7 +251,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             temp = torch.empty_like(param).to('cuda')
             dist.recv(tensor=temp, src=1)
             param.data = temp
-        elif rank == 1 and i >= 8:
+        if rank == 0 and i >= 8:
             temp = torch.empty_like(param).to('cuda')
             dist.recv(tensor=temp, src=2)
             param.data = temp
