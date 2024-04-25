@@ -164,7 +164,7 @@ class Weight_Parallelized_Model(nn.Module):
         if self.rank in self.rank_list[0]: # If the rank is in the first layer's rank list, send the input to the next device
             sample_shape = torch.tensor([self.outputs.shape[0]], dtype=torch.int32)
         # Broadcast the chunk_shapes tensor to all the ranks (this allows to know the shape of the input tensor for each rank in the pipeline and prepare the recv function)
-        shape_transfer = dist.broadcast(tensor=sample_shape.cpu(), src=self.rank_list[0][0], async_op=True) 
+        shape_transfer = dist.broadcast(tensor=sample_shape.cpu() if self.backend == 'gloo' else sample_shape, src=self.rank_list[0][0], async_op=True) 
         i = self.rank_list.index(self.ranks)
         if self.rank in self.rank_list[-1]: # End of the pipeline
             if len(self.rank_list[-1])==1:
