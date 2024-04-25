@@ -197,6 +197,8 @@ class Weight_Parallelized_Model(nn.Module):
 
 def main(rank=None, master_addr=None, master_port=None, world_size=None):
     prepare_distributed_environment(rank, master_addr, master_port, world_size)
+    rank = dist.get_rank() if dist.get_backend() == 'nccl' else rank
+
     print(f'Rank {rank} is ready.')
     criteria = torch.nn.CrossEntropyLoss()
 
