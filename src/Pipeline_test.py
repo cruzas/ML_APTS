@@ -204,14 +204,21 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
 
     NN1 = lambda in_features,out_features: nn.Sequential(nn.Linear(in_features,out_features), nn.ReLU(), nn.Linear(200, 200), nn.ReLU())
     NN2 = lambda in_features,out_features: nn.Sequential(nn.Linear(in_features,out_features), nn.ReLU(), nn.Linear(100, 50), nn.ReLU())
-    layer_list = [
-        (NN1, {'in_features': 100, 'out_features': 200}, (lambda samples: torch.tensor([samples,100], dtype=torch.int32), lambda samples: torch.tensor([samples,200], dtype=torch.int32))), # samples <- is the sample amount of the input tensor
-        (NN2, {'in_features': 200, 'out_features': 100},  (lambda samples: torch.tensor([samples,200], dtype=torch.int32), lambda samples: torch.tensor([samples,50 ], dtype=torch.int32))),
-    ]
-    
-    # Model = nn.Sequential(*[layer[0](**layer[1]) for layer in layer_list]).to('cuda:1')
-
-    rank_list = [0, 1]
+    NN3 = lambda in_features,out_features: nn.Sequential(nn.Linear(in_features,out_features), nn.ReLU(), nn.Linear(50, 50), nn.ReLU())
+   
+    if dist.get_world_size() == 3:
+        layer_list = [
+            (NN1, {'in_features': 100, 'out_features': 200}, (lambda samples: torch.tensor([samples,100], dtype=torch.int32), lambda samples: torch.tensor([samples,200], dtype=torch.int32))), # samples <- is the sample amount of the input tensor
+            (NN2, {'in_features': 200, 'out_features': 100},  (lambda samples: torch.tensor([samples,200], dtype=torch.int32), lambda samples: torch.tensor([samples,50 ], dtype=torch.int32))),
+            (NN3, {'in_features': 50, 'out_features': 50},   (lambda samples: torch.tensor([samples,50], dtype=torch.int32), lambda samples: torch.tensor([samples,50 ], dtype=torch.int32)))
+        ]
+        rank_list = [[0], [1], [2]]
+    else:
+        layer_list = [
+            (NN1, {'in_features': 100, 'out_features': 200}, (lambda samples: torch.tensor([samples,100], dtype=torch.int32), lambda samples: torch.tensor([samples,200], dtype=torch.int32))), # samples <- is the sample amount of the input tensor
+            (NN2, {'in_features': 200, 'out_features': 100},  (lambda samples: torch.tensor([samples,200], dtype=torch.int32), lambda samples: torch.tensor([samples,50 ], dtype=torch.int32))),
+        ]
+        rank_list = [[0], [1]]
     torch.manual_seed(0)
     model = Weight_Parallelized_Model(layer_list, rank_list)
     # # update Model params with the one of the model su  RANK 0
