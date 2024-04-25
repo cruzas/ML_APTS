@@ -228,7 +228,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     # print(list(model.parameters())[0])
     torch.manual_seed(0)
     x=torch.randn(10, 100)
-    output = model(x.to('cuda:0'), chunks_amount=1, reset_grad = True, compute_grad = True)
+    output = model(x.to('cuda'), chunks_amount=1, reset_grad = True, compute_grad = True)
     # if rank == 0:
     #     exact_output = Model(x.to('cuda:1'))
     #     print(torch.norm(exact_output))
@@ -244,6 +244,12 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     #     # print(torch.norm(torch.cat(params).flatten()))
     # else:
     #     loss = None
+    if rank == dist.get_world_size()-1:
+        target = torch.randint(0, 50, (10,50), dtype=torch.float32).to(f'cuda:{rank}' if dist.get_backend() == 'gloo' else f'cuda:{model.gpu_id}')
+        loss = criteria(output, target)
+    else:
+        loss = None 
+
     model.backward(loss)
     print('Hurra!')
     dist.barrier()
