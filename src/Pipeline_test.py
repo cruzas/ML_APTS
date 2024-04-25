@@ -256,7 +256,8 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             dist.recv(tensor=temp, src=2)
             param.data = temp
     if rank == 0:
-        output = model_seq(x)
+        model_seq = model_seq.to('cuda')
+        output = model_seq(x.to('cuda'))
         torch.manual_seed(0)
         target = torch.randint(0, 50, (10,50), dtype=torch.float32).to(f'cuda:{rank}' if dist.get_backend() == 'gloo' else f'cuda:{model.gpu_id}')
         loss = criteria(output, target)
