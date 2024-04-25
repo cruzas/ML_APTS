@@ -195,7 +195,7 @@ class Weight_Parallelized_Model(nn.Module):
         return None
 
 
-def main(rank, master_addr, master_port, world_size):
+def main(rank=None, master_addr=None, master_port=None, world_size=None):
     prepare_distributed_environment(rank, master_addr, master_port, world_size)
     print(f'Rank {rank} is ready.')
     criteria = torch.nn.CrossEntropyLoss()
@@ -285,7 +285,7 @@ def main(rank, master_addr, master_port, world_size):
         loss.backward()
         grad = torch.cat([param.grad.flatten() for param in Model.parameters()])
         
-        print(torch.norm(grad - grad2))
+        # print(torch.norm(grad - grad2))
         
 
 
@@ -294,7 +294,19 @@ def main(rank, master_addr, master_port, world_size):
 if __name__ == '__main__':
     torch.manual_seed(1)
 
-    world_size = torch.cuda.device_count()  
-    master_addr = 'localhost'
-    master_port = '12345'
-    mp.spawn(main, args=(master_addr, master_port, world_size), nprocs=world_size, join=True)
+    # world_size = torch.cuda.device_count()  
+    # master_addr = 'localhost'
+    # master_port = '12345'
+    # mp.spawn(main, args=(master_addr, master_port, world_size), nprocs=world_size, join=True)
+    if 1==1:
+        main()
+    else:
+        world_size = torch.cuda.device_count() if torch.cuda.is_available() else 0
+        if world_size == 0:
+            print("No CUDA device(s) detected.")
+            exit(0)
+
+        master_addr = 'localhost'
+        master_port = '12345'  
+        mp.spawn(main, args=(master_addr, master_port, world_size), nprocs=world_size, join=True)
+
