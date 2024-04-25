@@ -186,12 +186,12 @@ class Weight_Parallelized_Model(nn.Module):
         else: # middle of the pipeline
             shape_transfer.wait() # wait for the shape to be broadcasted
             data_grad = torch.empty(*self.shapes[i+1][0](sample_shape), device='cpu' if self.backend == 'gloo' else f'cuda:{self.gpu_id}', requires_grad=True)
-            data_grad, _ = distops.recv(data_grad, src=self.rank_list[1][0])       
+            data_grad, _ = distops.recv(data_grad, src=self.rank_list[i+1][0])       
             data_grad = data_grad.to(f'cuda:{self.rank}' if self.backend == 'gloo' else f'cuda:{self.gpu_id}')
             data_grad2 = autograd.grad(self.outputs, self.inputs, grad_outputs=data_grad, retain_graph=True)[0] # this is needed to compute the derivative at the previous layer
             for param in self.layers[0].parameters():
                 param.grad = autograd.grad(self.outputs, param, grad_outputs=data_grad, retain_graph=True)[0] 
-            distops.send(tensor=data_grad2.cpu() if self.backend == 'gloo' else data_grad2, dst=self.rank_list[-2][0]) # TODO make this async if possible
+            distops.send(tensor=data_grad2.cpu() if self.backend == 'gloo' else data_grad2, dst=self.rank_list[i-1][0]) # TODO make this async if possible
         return None
 
 
