@@ -209,41 +209,41 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         (NN2, {'in_features': 200, 'out_features': 100},  (lambda samples: torch.tensor([samples,200], dtype=torch.int32), lambda samples: torch.tensor([samples,50 ], dtype=torch.int32))),
     ]
     
-    Model = nn.Sequential(*[layer[0](**layer[1]) for layer in layer_list]).to('cuda:1')
+    # Model = nn.Sequential(*[layer[0](**layer[1]) for layer in layer_list]).to('cuda:1')
 
     rank_list = [0, 1]
     torch.manual_seed(0)
     model = Weight_Parallelized_Model(layer_list, rank_list)
-    # update Model params with the one of the model su  RANK 0
-    for i,param in enumerate(Model.parameters()):
-        if rank == 0 and i < 4:
-            param.data=list(model.parameters())[i].to('cuda:1')
-        elif rank == 1 and i >= 4:
-            dist.send(tensor=list(model.parameters())[i-4].cpu().detach(), dst=0)
-        if rank == 0 and i >= 4:
-            temp = torch.empty_like(param).to('cpu')
-            dist.recv(tensor=temp, src=1)
-            param.data=temp.to('cuda:1')
+    # # update Model params with the one of the model su  RANK 0
+    # for i,param in enumerate(Model.parameters()):
+    #     if rank == 0 and i < 4:
+    #         param.data=list(model.parameters())[i].to('cuda:1')
+    #     elif rank == 1 and i >= 4:
+    #         dist.send(tensor=list(model.parameters())[i-4].cpu().detach(), dst=0)
+    #     if rank == 0 and i >= 4:
+    #         temp = torch.empty_like(param).to('cpu')
+    #         dist.recv(tensor=temp, src=1)
+    #         param.data=temp.to('cuda:1')
         
     # print(list(model.parameters())[0])
     torch.manual_seed(0)
     x=torch.randn(10, 100)
     output = model(x.to('cuda:0'), chunks_amount=1, reset_grad = True, compute_grad = True)
-    if rank == 0:
-        exact_output = Model(x.to('cuda:1'))
-        print(torch.norm(exact_output))
-    # Every rank needs to enter the backward functi1on to compute the gradients
-    if rank == 1:
-        torch.manual_seed(0)
-        loss = criteria(output, torch.randint(0, 50, (10,50), dtype=torch.float32).to('cuda:1'))
-        print(torch.norm(output))
-        params = [param.flatten() for param in Model.parameters()]
-        # print(f'Layer 0 : {list(Model.parameters())[0]}')
-        # print(f'Layer 1 : {list(Model.parameters())[1]}')
-        # # norm of params
-        # print(torch.norm(torch.cat(params).flatten()))
-    else:
-        loss = None
+    # if rank == 0:
+    #     exact_output = Model(x.to('cuda:1'))
+    #     print(torch.norm(exact_output))
+    # # Every rank needs to enter the backward functi1on to compute the gradients
+    # if rank == 1:
+    #     torch.manual_seed(0)
+    #     loss = criteria(output, torch.randint(0, 50, (10,50), dtype=torch.float32).to('cuda:1'))
+    #     print(torch.norm(output))
+    #     params = [param.flatten() for param in Model.parameters()]
+    #     # print(f'Layer 0 : {list(Model.parameters())[0]}')
+    #     # print(f'Layer 1 : {list(Model.parameters())[1]}')
+    #     # # norm of params
+    #     # print(torch.norm(torch.cat(params).flatten()))
+    # else:
+    #     loss = None
     model.backward(loss)
     print('Hurra!')
     dist.barrier()
