@@ -1,14 +1,14 @@
 #!/bin/bash
 # SLURM script for Piz Daint
 
-#SBATCH --time=00:10:00
+#SBATCH --time=00:30:00
 #SBATCH --ntasks-per-core=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=1
 #SBATCH --hint=nomultithread
 #SBATCH --constraint=gpu
 #SBATCH --account=c24
-#SBATCH --partition=debug
+#SBATCH --partition=normal
 #SBATCH --exclusive
 
 echo "Running apts_w.job..."
@@ -20,38 +20,31 @@ export NCCL_DEBUG=INFO
 export NCCL_IB_HCA=ipogif0
 export NCCL_IB_CUDA_SUPPORT=1
 
-RUNPATH=/scratch/snx3000/scruzale/MultiscAI/ML2/
+RUNPATH=/scratch/snx3000/scruzale/ML_APTS/
 cd $RUNPATH || exit
 
-# First, split the arguments based on the comma delimiter
-arg_string="$1"
-while [[ -n "$arg_string" ]]; do
-    # Get the first argument
-    first_arg="${arg_string%% *}"  # this extracts up to the first space
-
-    # Parse this argument into key and value
-    IFS="=" read -r key value <<< "$first_arg"
-    # echo "Parsing: Key [$key] Value [$value]"  # Debug print
+# Iterate over all passed arguments
+for arg in "$@"; do
+    IFS='=' read -r key value <<< "$arg"
     case $key in
         --nr_models)
             nr_models="$value"
+            ;;
+        --minibatch_size)
+            minibatch_size="$value"
             ;;
         *)
             echo "Unknown argument: $key"
             exit 1
             ;;
     esac
-
-    # Remove the first argument from the string, but check if it was the last argument first
-    if [[ "$arg_string" != "$first_arg" ]]; then
-        arg_string="${arg_string#* }"
-    else
-        arg_string=""
-    fi
 done
 
-echo "Activating pytorch_daint_multigpu `date`"
-source activate pytorch_daint_multigpu
+ARGS="--nr_models $nr_models --minibatch_size $minibatch_size"
+echo "ARGS for python file: $ARGS"
+
+echo "Activating llms `date`"
+source activate llms
 echo "Calling python script `date`"
-srun python3 -u ./src/main_APTS_ResNET.py;
+srun python3 -u ./src/main_APTS_ResNET.py $ARGS;
 echo "All done $(date)"

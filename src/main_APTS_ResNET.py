@@ -3,6 +3,8 @@ import os
 import pprint,copy, torch
 import torch.multiprocessing as mp
 # User libraries
+# from optimizers.APTS_W import APTS_W
+# from optimizers.TR import TR
 from utils.utility import *
 from matplotlib import pyplot as plt
 import torch.distributed as dist
@@ -63,8 +65,11 @@ def get_apts_w_params(momentum=False, second_order=False, nr_models=2, max_iter=
     return APTS_W_PARAMS
     
 def main(rank=None, master_addr=None, master_port=None, world_size=None):
+    print("In main...")
     # Set up the distributed environment.
-    prepare_distributed_environment(rank, master_addr, master_port, world_size)
+    prepare_distributed_environment()
+
+    #print(f"Dist initialized after preparation? {dist.is_initialized()} with world size {dist.get_world_size()}")
 
     if rank is None:
         rank = dist.get_rank() if dist.is_initialized() else 0
@@ -73,12 +78,15 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     if master_port is None:
         master_port = os.environ["MASTER_PORT"]
     if world_size is None: 
+        #print(f"Come on, world size should be greater one: {dist.get_world_size()}")
         world_size = dist.get_world_size() if dist.is_initialized() else 1
+
+    print(f"World size {world_size}")
 
     # Rank ID
     rank = dist.get_rank() if dist.is_initialized() else 0
     parameter_decomposition = True # TODO: Implement data decomposition
-    # args = parse_args() # TODO: make this is easier to execute on a personal computer
+    args = parse_args() 
 
     torch.random.manual_seed(0)
 
@@ -90,25 +98,23 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     # args.nr_models = dist.get_world_size()
 
     # Training settings
-    trials = 3  # number of trials
-    epochs = 25  # number of epochs to run per trial
+    trials = 5  # number of trials
+    epochs = 50  # number of epochs to run per trial
     # net_nr = 4  # model number to choose
-    dataset = 'MNIST'  # name of the dataset
-    minibatch_size = int(2500)  # size of the mini-batches
+    dataset = 'CIFAR10'  # name of the dataset
+    minibatch_size = int(args.minibatch_size)  # size of the mini-batches
     overlap_ratio = 0.01  # overlap ratio between mini-batches
     # optimizer_name = 'APTS_W'  # name of the optimizer
     nr_models = world_size # amount of subdomains to use in the optimizer
+
+    # print("Mini-batch size: ", minibatch_size)
 
     loss_function = nn.CrossEntropyLoss
     loss_fn = loss_function
     optimizer_params = get_apts_w_params(momentum=False, second_order=False, nr_models=nr_models, max_iter=5, fdl=False, global_pass=True, device=None)
     
-    net_fun, net_params = MNIST_FCNN_Small, {}#models.resnet18, {'weights':None, 'progress':True}#get_net_fun_and_params(dataset, net_nr)
-        
-        
-    # print parameters norm:
-    # torch.random.manual_seed(0)
-    # print("Parameters norm: ", torch.norm(torch.cat([torch.flatten(p) for p in net_fun(**net_params).parameters()])))
+    # net_fun, net_params = MNIST_FCNN, {"hidden_sizes": [512, 256]} 
+    net_fun, net_params = torchvision.models.resnet18, {}
     
     # Data loading
     train_loader, test_loader = create_dataloaders(
@@ -126,8 +132,8 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     cum_times=[None]*trials
     for trial in range(trials):
         network = net_fun(**net_params).to(device)
-        optimizer = APTS_W(network.parameters(), model=network, loss_fn=loss_fn, **optimizer_params)
-        # optimizer = optim.Adam(network.parameters())
+        # optimizer = APTS_W(network.parameters(), model=network, loss_fn=loss_fn, **optimizer_params)
+        optimizer = torch.optim.Adam(network.parameters(), lr=0.001)
         losses[trial], accuracies[trial], cum_times[trial] = do_one_optimizer_test(
             train_loader=train_loader,
             test_loader=test_loader,
@@ -139,26 +145,16 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             device=device
         )
 
-    if dist.get_rank() == 0:
-       # print(
-        #    f"Rank {rank}. Trial {trial + 1}/{trials} finished. Loss: {losses[-1]:.4f}, Accuracy: {accuracies[-1]:.4f}. Cum. time: {[round(t, 2) for t in cum_times]}"
-        #)
-        # here we plot the accuracy after the training through matplotlib
-        # plt.plot(losses)
-        # hold on:
-        # Here we plot the test accuracies vs cum times
-        # plt.plot(cum_times, accuracies)
-        # plt.show()
-        
+    if dist.get_rank() == 0:        
         # Save losses, accuracies, and cum times to a CSV file using Pandas
         df = pd.DataFrame({"losses": losses, "accuracies": accuracies, "cum_times": cum_times})
-        df.to_csv(f"results_APTS_W_{nr_models}.csv", index=False)
+        # df.to_csv(f"results_APTS_W_{dataset}_{minibatch_size}_{nr_models}.csv", index=False)
+        df.to_csv(f"results_Adam_{dataset}_{minibatch_size}_{nr_models}.csv", index=False)
         print("Successfully saved to file.")
 
-    # print(f"Rank {rank}: Plot successful.")
 
 if __name__ == "__main__":    
-    if 1==2:
+    if 1==1:
         main()
     else:
         world_size = torch.cuda.device_count() if torch.cuda.is_available() else 0

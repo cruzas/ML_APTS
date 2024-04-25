@@ -445,6 +445,8 @@ class APTS_W(Optimizer):
                         # Compute new loss
                         new_loss = self.closure(inputs, targets, self.model, self.sequential_derivative)
 
+                        # TODO: this seems wrong. We should check if the new loss leads to a reduction. If not, we should go back to the original parameters.
+
                         # Compute the dogleg step with the hope that new_loss <= old_loss
                         radius = self.radius
                         w = 0; c = 0
