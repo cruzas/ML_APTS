@@ -158,7 +158,7 @@ class Weight_Parallelized_Model(nn.Module):
 
 
     def backward(self, loss):
-        # possible solutions: https://github.com/ag14774/diffdist/blob/master/diffdist/testing.py     (DIFFDIST)
+        # We used "diffdist" library: https://github.com/ag14774/diffdist/blob/master/diffdist/testing.py
         
         sample_shape = torch.zeros(1, dtype=torch.int32).to(f'cuda:{self.rank}' if self.backend == 'gloo' else f'cuda:{self.gpu_id}')
         if self.rank in self.rank_list[0]: # If the rank is in the first layer's rank list, send the input to the next device
@@ -213,12 +213,17 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             (NN3, {'in_features': 50, 'out_features': 50},   (lambda samples: torch.tensor([samples,50], dtype=torch.int32), lambda samples: torch.tensor([samples,50 ], dtype=torch.int32)))
         ]
         rank_list = [[0], [1], [2]]
-    else:
+    elif dist.get_world_size() == 2:
+        # layer_list = [
+        #     (NN1, {'in_features': 100, 'out_features': 200}, (lambda samples: torch.tensor([samples,100], dtype=torch.int32), lambda samples: torch.tensor([samples,200], dtype=torch.int32))), # samples <- is the sample amount of the input tensor
+        #     (NN2, {'in_features': 200, 'out_features': 100},  (lambda samples: torch.tensor([samples,200], dtype=torch.int32), lambda samples: torch.tensor([samples,50 ], dtype=torch.int32))),
+        # ]
+        # rank_list = [[0], [1]]
         layer_list = [
-            (NN1, {'in_features': 100, 'out_features': 200}, (lambda samples: torch.tensor([samples,100], dtype=torch.int32), lambda samples: torch.tensor([samples,200], dtype=torch.int32))), # samples <- is the sample amount of the input tensor
-            (NN2, {'in_features': 200, 'out_features': 100},  (lambda samples: torch.tensor([samples,200], dtype=torch.int32), lambda samples: torch.tensor([samples,50 ], dtype=torch.int32))),
+            (NN2, {'in_features': 100, 'out_features': 100},  (lambda samples: torch.tensor([samples,200], dtype=torch.int32), lambda samples: torch.tensor([samples,50 ], dtype=torch.int32))),
         ]
-        rank_list = [[0], [1]]
+        rank_list = [[0,1]]
+        
     torch.manual_seed(0)
     model = Weight_Parallelized_Model(layer_list, rank_list)
     torch.manual_seed(0)

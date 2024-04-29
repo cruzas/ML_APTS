@@ -2,7 +2,7 @@ import torch
 from torch.optim.optimizer import Optimizer
 import torch.distributed as dist # For parallel training
 import numpy as np
-from scipy.optimize._hessian_update_strategy import BFGS, SR1
+# from scipy.optimize._hessian_update_strategy import BFGS, SR1
 from hess_approx.OBS import *
 from hess_approx.LSR1 import *
 from hess_approx.LBGS import *
