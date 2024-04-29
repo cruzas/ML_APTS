@@ -1,11 +1,12 @@
 # to run this file (i.e. dtensor_example.py):
 # torchrun --standalone --nnodes=1 --nproc-per-node=4 dtensor_example.py
 import os
+import subprocess
 import math
 import torch, time
 from torch.distributed._tensor import init_device_mesh, Shard, distribute_tensor
 import torch.multiprocessing as mp
-from utils.utility import prepare_distributed_environment
+# from utils.utility import prepare_distributed_environment
 from torch import distributed as dist
 # from utils.new_mesh import *
 
@@ -17,7 +18,33 @@ from torch import distributed as dist
 
 
 # new "init_device_mesh" function
+def prepare_distributed_environment(rank=None, master_addr=None, master_port=None, world_size=None):
+    device_id = 0
+    if rank is None and master_addr is None and master_port is None and world_size is None: # we are on a cluster
+        print(f'Should be initializing {os.environ["SLURM_NNODES"]} nodes')
+        ## Execute code on a cluster
+        os.environ["MASTER_PORT"] = "29501"
+        os.environ["WORLD_SIZE"] = os.environ["SLURM_NNODES"]
+        os.environ["LOCAL_RANK"] = "0"
+        os.environ["RANK"] = os.environ["SLURM_NODEID"]
+        node_list = os.environ["SLURM_NODELIST"]
+        master_node = subprocess.getoutput(
+            f"scontrol show hostname {node_list} | head -n1"
+        )
+        os.environ["MASTER_ADDR"] = master_node
+        print(f"Dist initialized before process group? {dist.is_initialized()}")
+        dist.init_process_group(backend="nccl")
+        print(f"Dist initialized after init process group? {dist.is_initialized()} with world size {dist.get_world_size()}")
+    else: # we are on a PC
+        os.environ['MASTER_ADDR'] = master_addr
+        os.environ['MASTER_PORT'] = master_port # A free port on the master node
+        # os.environ['WORLD_SIZE'] = str(world_size) # The total number of GPUs in the distributed job
+        # os.environ['RANK'] = '0' # The unique identifier for this process (0-indexed)
+        # os.environ["PL_TORCH_DISTRIBUTED_BACKEND"] = "gloo" # "nccl" or "gloo"
+        dist.init_process_group(backend='gloo', rank=rank, world_size=world_size)
 
+    device_id = dist.get_rank()
+    print(f"Device id: {device_id}")
 
 
 
