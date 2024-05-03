@@ -102,7 +102,7 @@ def layer_input_output_shape(layer):
 class Weight_Parallelized_Subdomain(nn.Module):
     def __init__(self, model):
         super(Weight_Parallelized_Subdomain, self).__init__()
-        self.model = model 
+        self.model = model
 
     def forward(self):
         self.model.outputs = self.model.layer(self.model.inputs)
@@ -114,6 +114,9 @@ class Weight_Parallelized_Subdomain(nn.Module):
             
     def grad(self):
         return [param.grad for param in self.model.parameters()]
+    
+    def grad_norm(self):
+        return torch.norm(torch.cat([param.grad.flatten() for param in self.model.parameters()], dim=0), p=2).item()
 
 # Global gradient class
 class Weight_Parallelized_Gradient(nn.Module):
@@ -344,7 +347,8 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         group = dist.new_group(ranks=list_of_all_ranks)
         torch.manual_seed(0)
         model = Weight_Parallelized_Model(layer_list, rank_list)
-        optimizer = torch.optim.SGD(model.parameters(), lr=0.001)
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
+        optimizer2 = torch.optim.Adam(model.subdomain.parameters(), lr=0.0001)
 
         # Data loading TODO: load data only on master master rank
         train_loader, test_loader = create_dataloaders(
@@ -359,6 +363,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
 
         for epoch in range(100):
             for i, (x, y) in enumerate(train_loader):
+                model.zero_grad()
                 # Vectorize x 
                 x = x.view(x.size(0), -1)
                 output = model(x.to(device), chunks_amount=1, reset_grad = True, compute_grad = True)
@@ -375,6 +380,16 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
                 
                 # one sgd step
                 optimizer.step()
+                
+                # train a subdomain model
+                # if rank in rank_list[0]:
+                for asd in range(2):
+                    model.subdomain.zero_grad()
+                    out = model.subdomain.forward()
+                    # loss = criteria(out, y.to(device))
+                    # print(f'Epoch {epoch} subdomain loss {loss}')
+                    model.subdomain.backward()
+                    optimizer2.step()
 
             # Compute the test accuracy
             for j, (x_test, y_test) in enumerate(test_loader): # NOTE: NO MINIBACHES IN THE TEST SET
