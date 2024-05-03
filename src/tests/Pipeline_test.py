@@ -1,4 +1,5 @@
 import os
+import math
 import torch
 import torch.nn as nn
 import torch.distributed as dist
@@ -29,7 +30,7 @@ class G(nn.Module):
     def forward(self, x):
         return self.layer(x)
 
-
+# NOTE: TO BE DONE
 class TensorSharding(nn.Module):
     '''
     manually define sharding strategy for a layer (depending on the NN type).  
@@ -119,35 +120,48 @@ class Weight_Parallelized_Subdomain(nn.Module):
         return torch.norm(torch.cat([param.grad.flatten() for param in self.model.parameters()], dim=0), p=2).item()
 
 # Global gradient class
-class Weight_Parallelized_Gradient(nn.Module):
-    def __init__(self, rank_list, w_p_model, gpu_id=0):
+class Weight_Parallelized_Tensor(nn.Module):
+    def __init__(self, tensor, rank_list, backend, master_group, list_of_master_nodes, rank, gpu_id):
         super().__init__()  # Call to the superclass (nn.Module) constructor
+        self.tensor = tensor
         self.rank_list = rank_list
-        self.model = w_p_model
-
+        self.backend = backend
+        self.master_group = master_group
+        self.list_of_master_nodes = list_of_master_nodes
+        self.rank = rank
+        self.gpu_id = gpu_id
+        
+    def norm(self, p=2):
+        if p == 2:
+            return math.sqrt(self @ self)
+        else:
+            # Implement generic p
+            raise NotImplementedError("Only L2 norm is implemented.")
+    
     def __repr__(self):
-        return str(self.model)
+        return f'Rank {self.rank}\nGradient: {self.model.subdomain.grad()}'
     
     def __matmul__(self, a): # self.grad @ a
         return self * a
     
     def __rmatmul__(self, a): # a @ self.grad
         return a * self
-    
-    def __mul__(self, a):  # self.grad * a
-        if isinstance(a, Weight_Parallelized_Gradient):  # When both operands are Weight_Parallelized_Gradient instances
-            g1 = torch.cat([p.grad.flatten() for p in self.model.parameters()], dim=0)  # Flatten the gradients
-            g2 = torch.cat([p.grad.flatten() for p in a.model.parameters()], dim=0)  # Flatten the gradients
-            g3 = g1 @ g2
-            g3 = g3.to(f'cpu' if self.model.backend == 'gloo' else f'cuda:{self.gpu_id}')
-            if self.model.rank in self.model.list_of_master_nodes:
-                dist.reduce(tensor=g3, dst=self.rank_list[0][0], group=self.model.master_group, op=dist.ReduceOp.SUM)  # Sum the gradients on the master rank
-            return g3 # Multiply the internal models
-        else:
-            return Weight_Parallelized_Gradient(self.rank_list, self.model * a)  # Multiply model by a scalar or tensor
 
     def __rmul__(self, a):  # a * self.grad
         return self.__mul__(a)  # This handles the commutative property of multiplication
+    
+    def __mul__(self, a):  # self.grad * a
+        if isinstance(a, Weight_Parallelized_Tensor):  # When both operands are Weight_Parallelized_Tensor instances
+            g1 = torch.cat([p.flatten() for p in self.tensor], dim=0)  # Flatten the gradients
+            g2 = torch.cat([p.flatten() for p in a.tensor], dim=0)  # Flatten the gradients
+            g3 = g1 @ g2
+            g3 = g3.to(f'cpu' if self.backend == 'gloo' else f'cuda:{self.gpu_id}')
+            if self.rank in self.list_of_master_nodes:
+                dist.reduce(tensor=g3, dst=self.rank_list[0][0], group=self.master_group, op=dist.ReduceOp.SUM)  # Sum the gradients on the master rank
+            return g3.item() # Multiply the internal models
+        else:
+            return Weight_Parallelized_Tensor([p*a for p in self.tensor], rank_list=self.rank_list, backend=self.backend, master_group=self.master_group, list_of_master_nodes=self.list_of_master_nodes, rank=self.rank, gpu_id=self.gpu_id)   # Multiply model by a scalar or tensor
+
 
 
 
@@ -168,6 +182,7 @@ class Weight_Parallelized_Model(nn.Module):
         '''
         - input_shape: Shape of the input tensor. This is used to generate a dummy tensor for the first layer and compute the output shape of every layer to adapt the send/recv in the pipeline.
         
+        NOTE: grad_norm function returns the infinity norm of the subdomain gradient of the model (i.e. restricted to the current rank).
         Assumptions:
         1) Each sample has shape[0] = batch size -> each row is a sample.
         2) Only one layer is passed in the layer_list. Note that this counts sequential layers as one layer (e.g. nn.Sequential(nn.Linear(100,200), nn.ReLU(), nn.Linear(200,300)) counts as one layer).
@@ -204,10 +219,11 @@ class Weight_Parallelized_Model(nn.Module):
         self.layer.zero_grad()
     
     def grad(self):
-        return [param.grad for param in self.parameters()]
+        gradient = [param.grad for param in self.parameters()]
+        return Weight_Parallelized_Tensor(gradient, self.rank_list, self.backend, self.master_group, self.list_of_master_nodes, self.rank, self.gpu_id)
     
-    def grad_norm(self):
-        return torch.norm(torch.cat([param.grad.flatten() for param in self.parameters()], dim=0), p=2).item()
+    def subdomain_grad_norm(self, p=2):
+        return torch.norm(torch.cat([param.grad.flatten() for param in self.parameters()], dim=0), p=p).item()
 
     def shape_setup(self, x):
         # This should be a setup phase
@@ -216,7 +232,7 @@ class Weight_Parallelized_Model(nn.Module):
     
 
     
-    def forward(self, x, chunks_amount=2, reset_grad = False, compute_grad = True):
+    def forward(self, x, chunks_amount=1, reset_grad = False, compute_grad = True):
         assert chunks_amount == 1, 'This is a temporary solution to avoid problems in the backward pass due to concatenation of the tensors'
         # Initialize the input and output tensors (needed for the backward pass)
         self.inputs = torch.tensor(()).to(self.gpu_device) 
@@ -308,13 +324,127 @@ class Weight_Parallelized_Model(nn.Module):
         return None
 
 
+#define optimizer
+class APTS(torch.optim.Optimizer):
+    def __init__(self, model, criterion, subdomain_optimizer, subdomain_optimizer_defaults, global_optimizer, global_optimizer_defaults, lr=0.01, max_lr=1.0, min_lr=1e-4, max_subdomain_iter=5, fdl=False):
+        '''
+        We use infinity norm for the gradient norm.
+        '''
+        super(APTS, self).__init__()
+        self.lr = lr # start learning rate/global TR radius
+        self.max_lr = max_lr # max TR radius
+        self.min_lr = min_lr # min TR radius
+        self.max_subdomain_iter = max_subdomain_iter # max subdomain iterations
+        self.fdl = fdl # forced decreasing loss
+        self.model = model # subdomain model
+        self.criterion = criterion # loss function
+        # Throw an error if 'lr' not in subdomain_optimizer_defaults.keys()
+        if 'lr' not in subdomain_optimizer_defaults.keys() or lr <= 0:
+            raise ValueError('The subdomain optimizer MUST have a learning rate parameter denoted by "lr" and must be bigger than 0.')
+        self.subdomain_optimizer = subdomain_optimizer(parameters=model.subdomain.parameters(), **subdomain_optimizer_defaults) # subdomain optimizer
+        if 'lr' not in subdomain_optimizer_defaults.keys() or lr <= 0:
+            raise ValueError('The global optimizer MUST have a learning rate parameter denoted by "lr" and must be bigger than 0.')
+        self.global_optimizer = global_optimizer(parameters=model.parameters(), **global_optimizer_defaults) # global optimizer
+        
+    def closure(self, inputs, targets):
+        # Compute loss
+        self.model.zero_grad()
+        outputs = self.model(inputs)
+        # TODO: compute only for last layer
+        loss = self.criterion(outputs, targets)
+        # Compute gradient
+        self.model.backward()
+        return loss.item()
+
+    def subdomain_steps(self):
+        # Set up the learning rate
+        self.subdomain_optimizer.param_groups[0]['lr'] = self.lr/self.max_subdomain_iter
+        # Do subdomain steps
+        for _ in range(self.max_subdomain_iter):
+            self.subdomain_optimizer.zero_grad()
+            if self.model.rank in self.model.rank_list[-1]: # If the rank is in the last layer's rank list we could use TR since the loss is available
+                out = self.model.subdomain.forward()
+                # loss = self.criterion(out, targets)
+                self.model.subdomain.backward()
+                self.subdomain_optimizer.step()
+            else: # Every other rank
+                self.model.subdomain.forward()
+                self.model.subdomain.backward()
+                self.subdomain_optimizer.step()
+        # TODO: we have the gradient, we can compute its norm, we could use the norm to have an idea of the convergence of the subdomain optimization
+        return None
+
+    def step(self, inputs, targets):
+        # Compute loss
+        _ = self.closure(inputs, targets)
+
+        # Do subdomain steps
+        self.subdomain_steps()
+
+        # Do global TR step
+        self.global_optimizer.step()    
+
+class TR(torch.optim.Optimizer):
+    def __init__(self, model, criterion, lr=0.01, max_lr=1.0, min_lr=0.0001, max_iter=5):
+        '''
+        We use infinity norm for the gradient norm.
+        '''
+        super().__init__(model.parameters(), {'lr': lr, 'max_lr': max_lr, 'min_lr': min_lr, 'max_iter': max_iter})
+        self.model = model
+        self.lr = lr
+        self.max_lr = max_lr
+        self.min_lr = min_lr
+        self.criterion = criterion
+        self.max_iter = max_iter
+    
+    def closure(self, inputs, targets, compute_grad=False):
+        # Compute loss
+        self.model.zero_grad()
+        outputs = self.model(inputs)
+        loss = torch.zeros(1).to(self.model.gpu_device)
+        if self.model.rank == self.model.rank_list[-1][0]:
+            loss = self.criterion(outputs, targets)
+        dist.broadcast(tensor=loss, src=self.model.rank_list[-1][0], group=self.model.master_group)
+        if compute_grad:
+            # Compute gradient
+            self.model.backward(loss)
+        return loss.item() 
+    
+    
+    def step(self, inputs, targets):
+        # Compute the loss of the model
+        old_loss = self.closure(inputs, targets, compute_grad=True)
+        # Retrieve the gradient of the model
+        grad = self.model.grad()
+        # Compute the norm of the gradient
+        grad_norm = grad.norm()
+        # Rescale the gradient to e at the edges of the trust region
+        grad = grad * (self.lr/grad_norm)
+        # Make sure the loss decreases
+        new_loss = torch.inf; c = 0
+        while old_loss - new_loss < 0 and c < self.max_iter:
+            # TODO: implement reduction ratio for a standard TR 
+            for i,param in enumerate(self.model.parameters()):
+                param.data -= grad.tensor[i].data
+            new_loss = self.closure(inputs, targets, compute_grad=False)
+            if new_loss > old_loss:
+                if abs(self.lr - self.min_lr)/self.lr < 1e-6:
+                    break
+                old_lr = self.lr
+                self.lr = max(self.lr*0.5, self.min_lr)
+                try:
+                    grad = grad * (self.lr/old_lr)
+                except:
+                    print('ciao')
+            c += 1
+
 def main(rank=None, master_addr=None, master_port=None, world_size=None):
     prepare_distributed_environment(rank, master_addr, master_port, world_size)
     print(f"World size: {dist.get_world_size()}")
     rank = dist.get_rank() if dist.get_backend() == 'nccl' else rank
 
     print(f'Rank {rank} is ready.')
-    criteria = torch.nn.CrossEntropyLoss()
+    criterion = torch.nn.CrossEntropyLoss()
 
     NN1 = lambda in_features,out_features: nn.Sequential(nn.Linear(in_features,out_features), nn.ReLU(), nn.Linear(256, 256), nn.ReLU())
     NN2 = lambda in_features,out_features: nn.Sequential(nn.Linear(in_features,out_features), nn.ReLU(), nn.Linear(128, 128), nn.ReLU())
@@ -347,7 +477,8 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         group = dist.new_group(ranks=list_of_all_ranks)
         torch.manual_seed(0)
         model = Weight_Parallelized_Model(layer_list, rank_list)
-        optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
+        # optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
+        optimizer = TR(model, criterion)
         optimizer2 = torch.optim.Adam(model.subdomain.parameters(), lr=0.0001)
 
         # Data loading TODO: load data only on master master rank
@@ -368,7 +499,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
                 x = x.view(x.size(0), -1)
                 output = model(x.to(device), chunks_amount=1, reset_grad = True, compute_grad = True)
                 if rank == rank_list[-1][0]:
-                    loss = criteria(output, y.to(device))
+                    loss = criterion(output, y.to(device))
                     print(f'Epoch {epoch} loss {loss}')
                 else:
                     loss = None
@@ -379,17 +510,17 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
                 # print('Hurra 2!')
                 
                 # one sgd step
-                optimizer.step()
+                optimizer.step(x,y)
                 
                 # train a subdomain model
                 # if rank in rank_list[0]:
-                for asd in range(2):
-                    model.subdomain.zero_grad()
-                    out = model.subdomain.forward()
-                    # loss = criteria(out, y.to(device))
-                    # print(f'Epoch {epoch} subdomain loss {loss}')
-                    model.subdomain.backward()
-                    optimizer2.step()
+                # for asd in range(2):
+                #     model.subdomain.zero_grad()
+                #     out = model.subdomain.forward()
+                #     # loss = criterion(out, y.to(device))
+                #     # print(f'Epoch {epoch} subdomain loss {loss}')
+                #     model.subdomain.backward()
+                #     optimizer2.step()
 
             # Compute the test accuracy
             for j, (x_test, y_test) in enumerate(test_loader): # NOTE: NO MINIBACHES IN THE TEST SET
@@ -408,7 +539,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         # if rank == rank_list[-1][0]:
         #     torch.manual_seed(0)
         #     target = torch.randint(0, 50, (10,50), dtype=torch.float32).to(f'cuda:{rank}' if dist.get_backend() == 'gloo' else f'cuda:{model.gpu_id}')
-        #     loss = criteria(output, target)
+        #     loss = criterion(output, target)
         # else:
         #     loss = None 
 
@@ -416,8 +547,8 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         # print('Hurra!')
         # dist.barrier(group=group)
         
-        g1 = Weight_Parallelized_Gradient(rank_list, model)
-        g2 = Weight_Parallelized_Gradient(rank_list, model)
+        g1 = Weight_Parallelized_Tensor(rank_list, model)
+        g2 = Weight_Parallelized_Tensor(rank_list, model)
         g3 = g1 @ g2
         print(g3)
 
@@ -452,7 +583,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             output = model_seq(x.to('cuda'))
             torch.manual_seed(0)
             target = torch.randint(0, 50, (10,50), dtype=torch.float32).to(f'cuda:{rank}' if dist.get_backend() == 'gloo' else f'cuda:{model.gpu_id}')
-            loss = criteria(output, target)
+            loss = criterion(output, target)
             print(f"Loss sequential model: {loss}")
         if rank == dist.get_world_size() - 1:
             print(f"Loss parallel model: {loss}")
