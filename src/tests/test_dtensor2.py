@@ -79,7 +79,36 @@ def main2(rank=None, master_addr=None, master_port=None, world_size=None):
 def bytes_to_gb(bytes):
     return bytes / (1024 ** 3)
 
-def test_for_loop_parallel(rank, mesh):
+
+
+def main(rank=None, master_addr=None, master_port=None, world_size=None):
+    prepare_distributed_environment(rank, master_addr, master_port, world_size)
+    # Define which ranks belong to each group
+    if rank < 2:
+        # First group of ranks 0 and 1
+        group = dist.new_group(ranks=[0, 1])
+    else:
+        # Second group of ranks 2 and 3
+        group = dist.new_group(ranks=[2, 3])
+        
+    # Rank ID
+    rank = dist.get_rank() if dist.is_initialized() else 0
+
+    if dist.get_backend() == "nccl":
+        mesh = init_device_mesh(f"cuda:0", (2,))
+    else:
+        mesh = init_device_mesh(f"cuda:0", (2,))
+        # mesh = init_device_mesh(f"cuda", (2,))
+
+     # Set GPU based on rank; assuming each rank gets a separate GPU for this example
+    gpu_id = rank % torch.cuda.device_count()
+    torch.cuda.set_device(gpu_id)
+    device = torch.device(f"cuda:0")
+    group_rank = dist.get_rank(group)
+    print(f"Global rank: {rank}, Group rank: {group_rank}, Using GPU: {gpu_id}")
+
+
+
     # Set seed
     torch.manual_seed(0)
     torch.set_default_dtype(torch.float32)
@@ -132,21 +161,8 @@ def test_for_loop_parallel(rank, mesh):
             elapsed_time = start_event.elapsed_time(end_event)
             print(f"Device {rank}. Elapsed time: {elapsed_time/1000} seconds")
 
-
-def main(rank=None, master_addr=None, master_port=None, world_size=None):
-    prepare_distributed_environment(rank, master_addr, master_port, world_size)
-    print(dist.get_rank())
-    print(dist.get_world_size)
-
-    # Rank ID
-    rank = dist.get_rank() if dist.is_initialized() else 0
-
-    if dist.get_backend() == "nccl":
-        mesh1 = init_device_mesh(f"cuda:0", (2,))
-    else:
-        mesh1 = init_device_mesh(f"cuda:0", (2,))
-        # mesh1 = init_device_mesh(f"cuda", (2,))
-    test_for_loop_parallel(rank, mesh1)
+    # Cleanup
+    dist.destroy_process_group()
 
 if __name__ == '__main__':
     if "snx" in os.getcwd():
