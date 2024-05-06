@@ -278,7 +278,10 @@ class TR(Optimizer): # TR optimizer
                 raise NotImplementedError
                 predicted_improvement = g@(s*s_incr)# g_norm**2 * abs(s_incr) #- 1/2 * g_norm * s**2  # is like considering an identity approx of the Hessian
             else: # First order information only
-                predicted_improvement = g_norm**2 * abs(s_incr) 
+                if self.norm_type < 1000: # infinity norm ;)
+                    predicted_improvement = g_norm**self.norm_type * abs(s_incr) 
+                else:
+                    predicted_improvement = g@s * abs(s_incr) 
                     
             if actual_improvement > 0:
                 if actual_improvement / predicted_improvement < self.reduction_ratio and predicted_improvement > 0: # Update the trust region radius
