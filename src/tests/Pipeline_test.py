@@ -324,23 +324,7 @@ class Weight_Parallelized_Model(nn.Module):
             distops.send(tensor=data_grad2.cpu() if self.backend == 'gloo' else data_grad2, dst=self.rank_list[i-1][0]) # TODO make this async if possible
             # TODO / NOTE: maybe we can delete self.inputs to free memory. It is not used anymore after the backward pass. (even in subdomains)
         return None
-
-
-class CrossEntropyLoss(nn.CrossEntropyLoss):
-    def __init__(self, weight: Optional[Tensor] = None, size_average=None, ignore_index: int = -100,
-                 reduce=None, reduction: str = 'mean', label_smoothing: float = 0.0, rank_list=None) -> None:
-        super().__init__(weight, size_average, reduce, reduction)
-        self.ignore_index = ignore_index
-        self.label_smoothing = label_smoothing
-        self.rank_list = rank_list
-
-    def forward(self, input: Tensor, target: Tensor) -> Tensor:
-        if dist.get_rank() == self.model.rank_list[-1][0]:
-            return nn.CrossEntropyLoss(input, target)
-        return None
-        
-        
-
+    
 #define optimizer
 class APTS(torch.optim.Optimizer):
     def __init__(self, model, criterion, subdomain_optimizer, subdomain_optimizer_defaults, global_optimizer, global_optimizer_defaults, lr=0.01, max_lr=1.0, min_lr=1e-4, nu_1=0.25, nu_2=0.75, max_subdomain_iter=5, fdl=False):
@@ -422,22 +406,9 @@ class TR(torch.optim.Optimizer):
         self.max_iter = max_iter # max iterations for the TR optimization
         self.norm_type = norm_type 
     
-    def closure(self, inputs, targets, compute_grad=False):
-        # Compute loss
-        self.model.zero_grad()
-        outputs = self.model(inputs)
-        loss = torch.zeros(1).to(self.model.gpu_device)
-        if self.model.rank == self.model.rank_list[-1][0]:
-            loss = self.criterion(outputs, targets)
-        dist.broadcast(tensor=loss, src=self.model.rank_list[-1][0], group=self.model.master_group)
-        if compute_grad and torch.is_grad_enabled():
-            # Compute gradient
-            self.model.backward(loss)
-        return loss.item() 
-    
-    def step(self, inputs, targets):
+    def step(self, closure):
         # Compute the loss of the model
-        old_loss = self.closure(inputs, targets, compute_grad=True)
+        old_loss = closure(compute_grad=True)
         # Retrieve the gradient of the model
         grad = self.model.grad()
         # Compute the norm of the gradient
@@ -453,7 +424,7 @@ class TR(torch.optim.Optimizer):
             # TODO: Adaptive reduction factor -> if large difference in losses maybe divide by 4
             for i,param in enumerate(self.model.parameters()):
                 param.data -= grad.tensor[i].data
-            new_loss = self.closure(inputs, targets, compute_grad=False)
+            new_loss = closure(compute_grad=False)
             old_lr = self.lr
             
             # Compute the ratio of the loss reduction       
@@ -494,7 +465,41 @@ class TR(torch.optim.Optimizer):
             c += 1
 
 
+class ParallelLoss():
+    def __init__(self, rank_list, criterion, criterion_params={}):
+        # check if criterion is a class or a function
+        if isinstance(criterion, type):
+            self.criterion = criterion(**criterion_params)
+        else:
+            if len(criterion_params) > 0:
+                self.criterion = criterion.__class__(**criterion_params)
+            else:
+                self.criterion = criterion
+        self.rank_list = rank_list
+        
+    def __call__(self, x, y):
+        if dist.get_rank() == self.rank_list[-1][0]:
+            print('ciao')
+        return self.criterion(x,y) if dist.get_rank() == self.rank_list[-1][0] else None    
 
+def closure(inputs, targets, criterion, model, compute_grad=True, zero_grad=True):
+    if isinstance(criterion, type):
+        raise ValueError('Criterion must be an instance of a class.')
+    # Compute loss
+    def closure2(compute_grad=compute_grad, zero_grad=zero_grad):
+        if zero_grad:
+            model.zero_grad()
+        outputs = model(inputs)
+        loss = torch.zeros(1).to(model.gpu_device)
+        if model.rank == model.rank_list[-1][0]:
+            loss = criterion(outputs, targets)
+        dist.broadcast(tensor=loss, src=model.rank_list[-1][0], group=model.master_group)
+        if compute_grad and torch.is_grad_enabled():
+            # Compute gradient
+            model.backward(loss)
+        return loss.item()
+    return closure2 
+    
 def main(rank=None, master_addr=None, master_port=None, world_size=None):
     prepare_distributed_environment(rank, master_addr, master_port, world_size)
     print(f"World size: {dist.get_world_size()}")
@@ -502,6 +507,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
 
     print(f'Rank {rank} is ready.')
     criterion = torch.nn.CrossEntropyLoss()
+    
 
     NN1 = lambda in_features,out_features: nn.Sequential(nn.Linear(in_features,out_features), nn.ReLU(), nn.Linear(256, 256), nn.ReLU())
     NN2 = lambda in_features,out_features: nn.Sequential(nn.Linear(in_features,out_features), nn.ReLU(), nn.Linear(128, 128), nn.ReLU())
@@ -527,7 +533,6 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         # ]
         # # rank_list = [[0,1]]
         # rank_list = [[0],[1]]
-        
 
     list_of_all_ranks = [r for rank in rank_list for r in rank]
     if rank in list_of_all_ranks:
@@ -535,6 +540,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         torch.manual_seed(3456)
         model = Weight_Parallelized_Model(layer_list, rank_list)
         # optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
+        
         optimizer = TR(model, criterion)
         optimizer2 = torch.optim.Adam(model.subdomain.parameters(), lr=0.0001)
 
@@ -551,17 +557,12 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
 
         for epoch in range(1000):
             for i, (x, y) in enumerate(train_loader):
-                model.zero_grad()
                 # Vectorize x 
                 x = x.view(x.size(0), -1)
-                output = model(x.to(device), chunks_amount=1, reset_grad = True, compute_grad = True)
-
-                # TODO: to do: forward-loss-backward -> make a function which considers also the ranks
-                
                 # One optimizer step
-                optimizer.step(x,y)
+                optimizer.step(closure(x, y, torch.nn.CrossEntropyLoss(), model))
                 
-                # train a subdomain model
+                # Train a subdomain model
                 # if rank in rank_list[0]:
                 # for asd in range(2):
                 #     model.subdomain.zero_grad()
