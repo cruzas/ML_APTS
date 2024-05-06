@@ -13,6 +13,8 @@ from utils.utility import prepare_distributed_environment, create_dataloaders
 import torch.autograd as autograd
 import torch.distributed.rpc as rpc
 import diffdist.functional as distops
+from typing import Callable, Optional
+from torch import Tensor
 
 class F(nn.Module):
     def __init__(self):
@@ -324,9 +326,24 @@ class Weight_Parallelized_Model(nn.Module):
         return None
 
 
+class CrossEntropyLoss(nn.CrossEntropyLoss):
+    def __init__(self, weight: Optional[Tensor] = None, size_average=None, ignore_index: int = -100,
+                 reduce=None, reduction: str = 'mean', label_smoothing: float = 0.0, rank_list=None) -> None:
+        super().__init__(weight, size_average, reduce, reduction)
+        self.ignore_index = ignore_index
+        self.label_smoothing = label_smoothing
+        self.rank_list = rank_list
+
+    def forward(self, input: Tensor, target: Tensor) -> Tensor:
+        if dist.get_rank() == self.model.rank_list[-1][0]:
+            return nn.CrossEntropyLoss(input, target)
+        return None
+        
+        
+
 #define optimizer
 class APTS(torch.optim.Optimizer):
-    def __init__(self, model, criterion, subdomain_optimizer, subdomain_optimizer_defaults, global_optimizer, global_optimizer_defaults, lr=0.01, max_lr=1.0, min_lr=1e-4, max_subdomain_iter=5, fdl=False):
+    def __init__(self, model, criterion, subdomain_optimizer, subdomain_optimizer_defaults, global_optimizer, global_optimizer_defaults, lr=0.01, max_lr=1.0, min_lr=1e-4, nu_1=0.25, nu_2=0.75, max_subdomain_iter=5, fdl=False):
         '''
         We use infinity norm for the gradient norm.
         '''
@@ -338,6 +355,8 @@ class APTS(torch.optim.Optimizer):
         self.fdl = fdl # forced decreasing loss
         self.model = model # subdomain model
         self.criterion = criterion # loss function
+        self.nu_1 = nu_1 # lower bound for the reduction ratio
+        self.nu_2 = nu_2 # upper bound for the reduction ratio
         # Throw an error if 'lr' not in subdomain_optimizer_defaults.keys()
         if 'lr' not in subdomain_optimizer_defaults.keys() or lr <= 0:
             raise ValueError('The subdomain optimizer MUST have a learning rate parameter denoted by "lr" and must be bigger than 0.')
@@ -385,7 +404,7 @@ class APTS(torch.optim.Optimizer):
         self.global_optimizer.step()    
 
 class TR(torch.optim.Optimizer):
-    def __init__(self, model, criterion, lr=0.01, max_lr=1.0, min_lr=0.0001, max_iter=5):
+    def __init__(self, model, criterion, lr=0.01, max_lr=1.0, min_lr=0.0001, nu=0.5, inc_factor=2.0, dec_factor=0.5, nu_1=0.25, nu_2=0.75, max_iter=5, norm_type=2):
         '''
         We use infinity norm for the gradient norm.
         '''
@@ -395,7 +414,13 @@ class TR(torch.optim.Optimizer):
         self.max_lr = max_lr
         self.min_lr = min_lr
         self.criterion = criterion
-        self.max_iter = max_iter
+        self.inc_factor = inc_factor # increase factor for the learning rate
+        self.dec_factor = dec_factor # decrease factor for the learning rate
+        self.nu_1 = nu_1 # lower bound for the reduction ratio
+        self.nu_2 = nu_2 # upper bound for the reduction ratio
+        self.nu = min(nu, nu_1) # acceptable reduction ratio (cannot be bigger than nu_1)
+        self.max_iter = max_iter # max iterations for the TR optimization
+        self.norm_type = norm_type 
     
     def closure(self, inputs, targets, compute_grad=False):
         # Compute loss
@@ -405,11 +430,10 @@ class TR(torch.optim.Optimizer):
         if self.model.rank == self.model.rank_list[-1][0]:
             loss = self.criterion(outputs, targets)
         dist.broadcast(tensor=loss, src=self.model.rank_list[-1][0], group=self.model.master_group)
-        if compute_grad:
+        if compute_grad and torch.is_grad_enabled():
             # Compute gradient
             self.model.backward(loss)
         return loss.item() 
-    
     
     def step(self, inputs, targets):
         # Compute the loss of the model
@@ -417,26 +441,59 @@ class TR(torch.optim.Optimizer):
         # Retrieve the gradient of the model
         grad = self.model.grad()
         # Compute the norm of the gradient
-        grad_norm = grad.norm()
+        grad_norm2 = grad.norm(p=2)
+        grad_norm = grad.norm(p=self.norm_type) if self.norm_type != 2 else grad_norm2 
         # Rescale the gradient to e at the edges of the trust region
         grad = grad * (self.lr/grad_norm)
         # Make sure the loss decreases
         new_loss = torch.inf; c = 0
+
         while old_loss - new_loss < 0 and c < self.max_iter:
-            # TODO: implement reduction ratio for a standard TR 
+            stop = True if abs(self.lr - self.min_lr)/self.min_lr < 1e-6 else False
+            # TODO: Adaptive reduction factor -> if large difference in losses maybe divide by 4
             for i,param in enumerate(self.model.parameters()):
                 param.data -= grad.tensor[i].data
             new_loss = self.closure(inputs, targets, compute_grad=False)
-            if new_loss > old_loss:
-                if abs(self.lr - self.min_lr)/self.lr < 1e-6:
-                    break
-                old_lr = self.lr
-                self.lr = max(self.lr*0.5, self.min_lr)
-                try:
-                    grad = grad * (self.lr/old_lr)
-                except:
-                    print('ciao')
+            old_lr = self.lr
+            
+            # Compute the ratio of the loss reduction       
+            act_red = old_loss - new_loss # actual reduction
+            pred_red = (self.lr/grad_norm)*grad_norm2**2 # predicted reduction (first order approximation of the loss function)
+            red_ratio = act_red / pred_red # reduction ratio
+            
+            if dist.get_rank() == 0:
+                print(f'old loss: {old_loss}, new loss: {new_loss}, act_red: {act_red}, pred_red: {pred_red}, red_ratio: {red_ratio}')
+            if red_ratio < self.nu_1: # the reduction ratio is too small -> decrease the learning rate
+                self.lr = max(self.min_lr, self.dec_factor*self.lr)
+            elif red_ratio > self.nu_2: # the reduction ratio is good enough -> increase the learning rate
+                self.lr = min(self.max_lr, self.inc_factor*self.lr)
+                break
+            
+            # Else learning rate remains unchanged
+            if stop:
+                break
+            
+            if red_ratio < self.nu:
+                # In place of storing initial weights, we go backward from the current position whenever the step gets rejected (This only works with first order approximation of the loss)
+                if self.lr != self.min_lr:
+                    if c == 0: 
+                        grad = grad * (-self.lr/old_lr)
+                    else:
+                        grad = grad * (self.lr/old_lr)
+                else: # self.lr == self.min_lr
+                    if c == 0:
+                        grad = grad * (-(old_lr-self.lr)/old_lr)
+                    else:
+                        grad = grad * ((old_lr-self.lr)/old_lr)
+                if dist.get_rank() == 0:
+                    print(f'old loss: {old_loss}, new loss: {new_loss}, lr: {self.lr}')
+                    
+                    
+            else:
+                break
             c += 1
+
+
 
 def main(rank=None, master_addr=None, master_port=None, world_size=None):
     prepare_distributed_environment(rank, master_addr, master_port, world_size)
@@ -475,7 +532,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     list_of_all_ranks = [r for rank in rank_list for r in rank]
     if rank in list_of_all_ranks:
         group = dist.new_group(ranks=list_of_all_ranks)
-        torch.manual_seed(0)
+        torch.manual_seed(3456)
         model = Weight_Parallelized_Model(layer_list, rank_list)
         # optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
         optimizer = TR(model, criterion)
@@ -485,31 +542,23 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         train_loader, test_loader = create_dataloaders(
             dataset="MNIST",
             data_dir=os.path.abspath("./data"),
-            mb_size=6000,
+            mb_size=60000,
             overlap_ratio=0,
             parameter_decomposition=True,
             device="cuda:0"
         )
         device = decide_gpu_device(ws=dist.get_world_size(), backend=dist.get_backend(), gpu_id=0)
 
-        for epoch in range(100):
+        for epoch in range(1000):
             for i, (x, y) in enumerate(train_loader):
                 model.zero_grad()
                 # Vectorize x 
                 x = x.view(x.size(0), -1)
                 output = model(x.to(device), chunks_amount=1, reset_grad = True, compute_grad = True)
-                if rank == rank_list[-1][0]:
-                    loss = criterion(output, y.to(device))
-                    print(f'Epoch {epoch} loss {loss}')
-                else:
-                    loss = None
 
-                model.backward(loss)
-                # Print norm of the gradient
-                # print(f'Rank {rank} grad norm: {model.grad_norm()}')
-                # print('Hurra 2!')
+                # TODO: to do: forward-loss-backward -> make a function which considers also the ranks
                 
-                # one sgd step
+                # One optimizer step
                 optimizer.step(x,y)
                 
                 # train a subdomain model
