@@ -180,14 +180,14 @@ class Weight_Parallelized_Model(nn.Module):
         self.master_group = dist.new_group(ranks=self.list_of_master_nodes)
         self.gpu_id = gpu_id
         self.backend = dist.get_backend()
-        self.shapes = []
+        self.shapes = [0]*len(layer_list)
         self.gpu_device = decide_gpu_device(ws=dist.get_world_size(), backend=dist.get_backend(), gpu_id=0)
         self.inputs = torch.tensor(()).to(self.gpu_device)  # each rank will store here the input of the next rank or layer (so the output of the current layer)  | -> this is needed for the backward pass
         self.outputs = torch.tensor(()).to(self.gpu_device)  # each rank will store here the output of the previous rank or layer (so its input)                  | -> this is needed for the backward pass
         self.grad_output = torch.tensor(()).to(self.gpu_device) # each rank will store here the gradient of the output of the current layer (so the gradient of the loss w.r.t. the output of the current layer) | -> this is needed for the backward pass
         # layer_list = [[layer_class, {}] if type(layer_class) is not list and type(layer_class) is not tuple else [layer_class[0], layer_class[1]] for layer_class in layer_list]
-        for i, ((layer_class, params, (input_shape, output_shape)), ranks)  in enumerate(zip(layer_list, rank_list)): # Create each layer and assign it to the specified rank (device)
-            self.shapes.append((input_shape, output_shape))
+        for i, ((layer_class, params, (input_shape, output_shape)), ranks) in enumerate(zip(layer_list, rank_list)): # Create each layer and assign it to the specified rank (device)
+            self.shapes[i] = ((input_shape, output_shape))
             if self.rank in ranks:
                 if len(ranks) == 1: # No tensor parallelism (no horizontal slicing)
                     self.layer = layer_class(**params).to(self.gpu_device) # Initialize the layer with provided parameters

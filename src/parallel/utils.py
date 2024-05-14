@@ -54,7 +54,7 @@ def closure(inputs, targets, criterion, model, compute_grad=True, zero_grad=True
         outputs = model(inputs)
         loss = torch.zeros(1).to(model.gpu_device)
         if model.rank == model.rank_list[-1][0]:
-            loss = criterion(outputs, targets)
+            loss = criterion(outputs, targets.to(outputs.device))
         dist.broadcast(tensor=loss, src=model.rank_list[-1][0], group=model.master_group)
         if compute_grad and torch.is_grad_enabled():
             # Compute gradient
