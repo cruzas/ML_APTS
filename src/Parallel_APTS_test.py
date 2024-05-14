@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import torch.distributed as dist
 import torch.multiprocessing as mp
-# add the path to the sys.path
+# Add the path to the sys.path
 import sys
 # Make the following work on Windows and MacOS
 sys.path.append(os.path.join(os.getcwd(), "src"))
@@ -34,7 +34,6 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     rank_list = [[0], [1]]
     train_loader = ParallelizedDataLoader(dataset=train_dataset, device_list=[0,1], rank_list=rank_list, batch_size=30000, shuffle=True, num_workers=2, pin_memory=True)
     # test_loader = ParallelizedDataLoader(dataset=test_dataset, device_list=[0,1], rank_list=rank_list, batch_size=10000, shuffle=False)
-
     if rank == 0:
         for i, (x, y) in enumerate(train_loader):
             print(f"Sample {i}: {x}, {y}")
