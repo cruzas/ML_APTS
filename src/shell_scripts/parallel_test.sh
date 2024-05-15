@@ -1,12 +1,13 @@
 #!/bin/bash
 
 # Define the arrays for each parameter
-optimizers=("SGD" "Adam")
-batch_sizes=(100 500)
-learning_rates=(0.01 0.001)
-trials=3
+optimizers=("SGD")
+batch_sizes=(100)
+learning_rates=(0.01)
+trials=1
 epochs=2
-datasets=("mnist" "cifar10")
+nodes=2
+datasets=("cifar10")
 
 # Iterate over each combination of parameters
 for optimizer in "${optimizers[@]}"
@@ -17,9 +18,15 @@ do
         do
             for dataset in "${datasets[@]}"
             do
-                # Run the training script in parallel
-                python train.py --optimizer $optimizer --batch_size $batch_size --learning_rate $learning_rate --epochs $epochs --dataset $dataset --trials $trials 
+                # Make job name depend on the parameters
+                job_name="test_${optimizer}_${batch_size}_${learning_rate}_${dataset}"
+                error_file="${job_name}.err"
+                output_file="${job_name}.out"
+                
+                sbatch --nodes=$nodes --job-name="$job_name" --output="$output_file" --error="$error_file" parallel_test.job "$optimizer" "$batch_size" "$learning_rate" "$trials" "$epochs" "$dataset"
             done
         done
     done
 done
+
+echo "All combinations done."
