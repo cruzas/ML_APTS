@@ -42,22 +42,28 @@ class ParallelLoss():
         if dist.get_rank() == self.rank_list[-1][0]:
             print('ciao')
         return self.criterion(x,y) if dist.get_rank() == self.rank_list[-1][0] else None    
-    
 
-def closure(inputs, targets, criterion, model, compute_grad=True, zero_grad=True):
+def closure(inputs, targets, criterion, model, compute_grad=True, zero_grad=True, output=False, counter=True):
     if isinstance(criterion, type):
         raise ValueError('Criterion must be an instance of a class.')
     # Compute loss
-    def closure2(compute_grad=compute_grad, zero_grad=zero_grad):
+    def closure2(compute_grad=compute_grad, zero_grad=zero_grad, output=output, counter=counter):
         if zero_grad:
             model.zero_grad()
-        outputs = model(inputs)
+        with torch.set_grad_enabled(compute_grad):
+            outputs = model(inputs, count_f=counter)
         loss = torch.zeros(1).to(model.gpu_device)
         if model.rank == model.rank_list[-1][0]:
             loss = criterion(outputs, targets.to(outputs.device))
-        dist.broadcast(tensor=loss, src=model.rank_list[-1][0], group=model.master_group)
+        dist.broadcast(tensor=loss.detach(), src=model.rank_list[-1][0], group=model.master_group)
         if compute_grad and torch.is_grad_enabled():
             # Compute gradient
-            model.backward(loss)
-        return loss.item()
+            model.backward(loss, count_g=counter)
+        if output:
+            if model.rank == model.rank_list[-1][0]:
+                return loss.item(), outputs.detach()
+            else:
+                return loss.item(), None
+        else:
+            return loss.item()
     return closure2 

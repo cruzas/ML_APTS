@@ -1,4 +1,6 @@
 import os
+import time
+import pandas as pd
 import torch
 import torchvision
 import torch.nn as nn
@@ -17,6 +19,7 @@ from parallel.networks import *
 from torchvision import datasets, transforms
 
 def main(rank=None, master_addr=None, master_port=None, world_size=None):
+    torch.manual_seed(1)
     prepare_distributed_environment(rank, master_addr, master_port, world_size)
     print(f"World size: {dist.get_world_size()}")
     rank = dist.get_rank() if dist.get_backend() == 'nccl' else rank
@@ -30,7 +33,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     trainloader = torch.utils.data.DataLoader(trainset, batch_size=100, shuffle=True, num_workers=2)
 
     testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform)
-    testloader = torch.utils.data.DataLoader(testset, batch_size=100, shuffle=False, num_workers=2)
+    testloader = torch.utils.data.DataLoader(testset, batch_size=1000, shuffle=False, num_workers=2)
 
     # Define the device (use GPU if available)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -38,13 +41,6 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     # Instantiate the model, loss function, and optimizer
     net = ResNet().to(device)
     net2 = ResNet().to(device)
-
-        # layer_list = [
-        #    module,  parameters ,                             ( input_shape, output_shape)
-        #     (NN1, {'in_features': 784, 'out_features': 256}, (lambda samples: torch.tensor([samples,784], dtype=torch.int32), lambda samples: torch.tensor([samples,256], dtype=torch.int32))), # samples <- is the sample amount of the input tensor
-        #     (NN3, {'in_features': 256, 'out_features': 64},  (lambda samples: torch.tensor([samples,256], dtype=torch.int32), lambda samples: torch.tensor([samples,10], dtype=torch.int32))),
-        # ]
-        # now make layer_list for ResNet using net only
     for sample in trainloader:
         break
     
@@ -96,21 +92,46 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             for data in testloader:
                 images, labels = data
                 images, labels = images.to(device), labels.to(device)
-                outputs = net(images)
-                _, predicted = torch.max(outputs.data, 1)
-                total += labels.size(0)
-                correct += (predicted == labels).sum().item()
-        
-        print(f'Accuracy on the 10000 test images: {100 * correct / total:.2f}%')
+                closuree = closure(images, labels, criterion, net, compute_grad=False, zero_grad=True, output=True, counter=False)       
+                test_loss, test_outputs = closuree()
+                if dist.get_rank() == net.rank_list[-1][0]:
+                    print(f'Loss: {test_loss:.4f}')
+                    _, predicted = torch.max(test_outputs.data, 1)
+                    total += labels.size(0)
+                    correct += (predicted == labels.to(predicted.device)).sum().item()
+        if dist.get_rank() == net.rank_list[-1][0]:
+            print(f'Accuracy on the 10000 test images: {100 * correct / total:.2f}%')
 
     # Train the network for a few epochs
-    for epoch in range(10):  # Number of epochs can be adjusted
+    num_epochs = 10
+    epoch_times = [0] * num_epochs
+    epoch_usage_times = [0] * num_epochs
+    epoch_num_f_evals = [0] * num_epochs
+    epoch_num_g_evals = [0] * num_epochs
+    epoch_num_sf_evals = [0] * num_epochs
+    epoch_num_sg_evals = [0] * num_epochs
+    for epoch in range(num_epochs):  # Number of epochs can be adjusted
+        epoch_start = time.time()
+        net.num_f_evals = 0
+        net.num_g_evals = 0
+        net.subdomain.num_f_evals = 0 
+        net.subdomain.num_g_evals = 0 
         train(epoch)
+        epoch_times[epoch] = time.time() - epoch_start
+        epoch_usage_times[epoch] = net.f_time + net.g_time + net.subdomain.f_time + net.subdomain.g_time
+        epoch_num_f_evals[epoch] = net.num_f_evals 
+        epoch_num_g_evals[epoch] = net.num_g_evals
+        epoch_num_sf_evals[epoch] = net.subdomain.num_f_evals
+        epoch_num_sg_evals[epoch] = net.subdomain.num_g_evals
         test()
-
-
+    infos = [epoch_times, epoch_usage_times, epoch_num_f_evals, epoch_num_g_evals, epoch_num_sf_evals, epoch_num_sg_evals]
+    # save this information to a CSV file through pandas
+    df = pd.DataFrame(infos).T
+    df.columns = ['Epoch Time', 'Epoch Usage Time', 'Epoch Num f evals', 'Epoch Num g evals', 'Epoch Num sf evals', 'Epoch Num sg evals']
+    # make the CSV file depend on the optimizer
+    df.to_csv(f'epoch_info_{optimizer.__class__.__name__}.csv', index=False)
+    
 if __name__ == '__main__':
-    torch.manual_seed(1)
     if 1==2:
         main()
     else:
