@@ -1,51 +1,71 @@
-import os
-import time
-import pandas as pd
-import torch
-import torchvision
+import torch 
+import time 
+import torch.multiprocessing as mp
+import torch.distributed as dist
+import torch.utils
+from torch.utils.data import DataLoader
 import torch.nn as nn
 import torch.optim as optim
-import torch.distributed as dist
-import torch.multiprocessing as mp
-# Add the path to the sys.path
-import sys
-# Make the following work on Windows and MacOS
-sys.path.append(os.path.join(os.getcwd(), "src"))
+import argparse
 from utils.utility import prepare_distributed_environment, create_dataloaders
-from parallel.models import *
-from parallel.optimizers import *
-from parallel.utils import *
+import torchvision
+from torchvision import transforms
 from parallel.networks import *
-from torchvision import datasets, transforms
+from parallel.models import *
+from parallel.utils import *
+import pandas as pd
+
+# Make a function that reads arguments from the command line
+def parse_args():
+    parser = argparse.ArgumentParser(description='Parallel test')
+    # We will have optimizer name, batch size, learning rate, number of trials, number of epochs
+    parser.add_argument('--optimizer', type=str, default='adam', help='Optimizer name')
+    parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
+    parser.add_argument('--learning_rate', type=float, default=0.001, help='Learning rate')
+    parser.add_argument('--trials', type=int, default=10, help='Number of trials')
+    parser.add_argument('--epochs', type=int, default=10, help='Number of epochs')
+    parser.add_argument('--dataset', type=str, default='cifar10', help='Dataset name')
+    return parser.parse_args()
 
 def main(rank=None, master_addr=None, master_port=None, world_size=None):
-    prepare_distributed_environment(rank, master_addr, master_port, world_size)
+    args = parse_args()
+    # Optimizer 
+    optimizer_name = args.optimizer
+    batch_size = args.batch_size
+    learning_rate = args.learning_rate
+    trials = args.trials
+    epochs = args.epochs
+    dataset = args.dataset
+    
     torch.manual_seed(1)
-    print(f"World size: {dist.get_world_size()}")
-    rank = dist.get_rank() if dist.get_backend() == 'nccl' else rank
+    prepare_distributed_environment(rank, master_addr, master_port, world_size)
+    rank = dist.get_rank() if dist.get_backend() != 'nccl' else rank
+    transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
 
-    transform = transforms.Compose(
-        [transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))])
+    # Load the dataset 
+    if dataset == 'cifar10':
+        trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
+        testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform)
+    elif dataset == 'mnist':
+        trainset = torchvision.datasets.MNIST(root='./data', train=True, download=True, transform=transform)
+        testset = torchvision.datasets.MNIST(root='./data', train=False, download=True, transform=transform)
+    else:
+        raise ValueError(f'Dataset {dataset} not supported')  
 
-    # Load the CIFAR-10 dataset
-    trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
-    trainloader = torch.utils.data.DataLoader(trainset, batch_size=100, shuffle=True, num_workers=2)
+    # Create the dataloaders
+    trainloader = DataLoader(trainset, batch_size=batch_size, shuffle=True, num_workers=2)
+    testloader = DataLoader(testset, batch_size=batch_size, shuffle=False, num_workers=2)
 
-    testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform)
-    testloader = torch.utils.data.DataLoader(testset, batch_size=1000, shuffle=False, num_workers=2)
-
-    # Define the device (use GPU if available)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # Define the device 
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')   
 
     # Instantiate the model, loss function, and optimizer
     net = ResNet().to(device)
-    net2 = ResNet().to(device)
     for sample in trainloader:
         break
     
     # Reset trainloader
-    trainloader = torch.utils.data.DataLoader(trainset, batch_size=100, shuffle=True, num_workers=2)
+    trainloader = DataLoader(trainset, batch_size=100, shuffle=True, num_workers=2)
     
     sample = sample[0]
     layers = []
@@ -54,10 +74,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         raise ValueError("Number of layers must be greater than or equal to the number of ranks.")
     layers_per_rank = tot_layers // world_size
     for i in range(world_size):
-        if i < world_size - 1:
-            layers.append(nn.Sequential(*net.layer_list[i*layers_per_rank:(i+1)*layers_per_rank]))
-        else:
-            layers.append(nn.Sequential(*net2.layer_list[i*layers_per_rank:]))
+        layers.append(nn.Sequential(*net.layer_list[i*layers_per_rank:(i+1)*layers_per_rank]))
             
     layer_list = [0]*len(layers)
     for i, l in enumerate(layers):
