@@ -13,6 +13,7 @@ from parallel.optimizers import *
 from parallel.utils import *
 from parallel.dataloaders import ParallelizedDataLoader
 from torchvision import datasets, transforms
+from torch.utils.data import DataLoader
 
 def main(rank=None, master_addr=None, master_port=None, world_size=None):
     prepare_distributed_environment(rank, master_addr, master_port, world_size)
@@ -32,12 +33,14 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     print(f"Memory consumption of train_dataset: {sys.getsizeof(train_dataset)}")
 
     rank_list = [[0], [1]]
-    train_loader = ParallelizedDataLoader(dataset=train_dataset, device_list=[0,1], rank_list=rank_list, batch_size=30000, shuffle=True, num_workers=2, pin_memory=True)
+    train_loader = DataLoader(train_dataset, batch_size=6000, shuffle=True, num_workers=2, pin_memory=True)
+    test_loader = DataLoader(test_dataset, batch_size=6000, shuffle=True, num_workers=2, pin_memory=True)
+    # train_loader = ParallelizedDataLoader(dataset=train_dataset, device_list=[0,1], rank_list=rank_list, batch_size=30000, shuffle=True, num_workers=2, pin_memory=True)
     # test_loader = ParallelizedDataLoader(dataset=test_dataset, device_list=[0,1], rank_list=rank_list, batch_size=10000, shuffle=False)
 
-    if rank == 0:
-        for i, (x, y) in enumerate(train_loader):
-            print(f"Sample {i}: {x}, {y}")
+    # if rank == 0:
+    #     for i, (x, y) in enumerate(train_loader):
+    #         print(f"Sample {i}: {x}, {y}")
 
     print(f'Rank {rank} is ready.')
     criterion = torch.nn.CrossEntropyLoss()
@@ -110,7 +113,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             # Compute the test accuracy
             for j, (x_test, y_test) in enumerate(test_loader): # NOTE: NO MINIBACHES IN THE TEST SET
                 x_test = x_test.view(x_test.size(0), -1)
-                output_test = model(x_test.to(device), chunks_amount=1, reset_grad = True, compute_grad = True)
+                output_test = model(x_test.to(device), chunks_amount=1, reset_grad = True, compute_grad = False)
                 if rank == rank_list[-1][0]:
                     # Compute the accuracy NOT THE LOSS
                     accuracy = (output_test.argmax(dim=1) == y_test.to(device)).float().mean()

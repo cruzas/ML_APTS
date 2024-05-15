@@ -12,7 +12,6 @@ class APTS(torch.optim.Optimizer):
                 setattr(self, key, self.param_groups[0][key])
         self.model = model # subdomain model
         self.criterion = criterion # loss function
-        
         # Throw an error if 'lr' not in subdomain_optimizer_defaults.keys()
         if lr <= 0:
             raise ValueError('The learning rate "lr" must be bigger than 0.')
@@ -53,7 +52,6 @@ class APTS(torch.optim.Optimizer):
         # Store the initial parameters and gradients
         initial_parameters = self.model.parameters(clone=True)
         initial_grads = self.model.grad(clone=True)
-        
         # Do subdomain steps
         self.subdomain_steps()
         with torch.no_grad():
@@ -78,7 +76,6 @@ class APTS(torch.optim.Optimizer):
                 new_loss = closure(compute_grad=False, zero_grad=True)
                 # Empty cache to avoid memory problems
                 torch.cuda.empty_cache()
-
         # Do global TR step
         self.global_optimizer.step(closure)    
         # Update the learning rate
@@ -156,8 +153,6 @@ class TR(torch.optim.Optimizer):
                         grad = grad * ((old_lr-self.lr)/old_lr)
                 if dist.get_rank() == 0:
                     print(f'old loss: {old_loss}, new loss: {new_loss}, lr: {self.lr}')
-                    
-                    
             else:
                 break
             c += 1
