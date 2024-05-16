@@ -51,19 +51,26 @@ def closure(inputs, targets, criterion, model, compute_grad=True, zero_grad=True
         if zero_grad:
             model.zero_grad()
         with torch.set_grad_enabled(compute_grad):
-            outputs = model(inputs, count_f=counter)
-        loss = torch.zeros(1).to(model.gpu_device)
-        if model.rank == model.rank_list[-1][0]:
-            loss = criterion(outputs, targets.to(outputs.device))
-        dist.broadcast(tensor=loss.detach(), src=model.rank_list[-1][0], group=model.master_group)
-        if compute_grad and torch.is_grad_enabled():
-            # Compute gradient
-            model.backward(loss, count_g=counter)
-        if output:
-            if model.rank == model.rank_list[-1][0]:
-                return loss.item(), outputs.detach()
+            if model.__class__.__name__ == 'Weight_Parallelized_Model':
+                outputs = model(inputs, count_f=counter)
             else:
-                return loss.item(), None
-        else:
-            return loss.item()
+                outputs = model(inputs)
+        if outputs is not None:
+            loss = torch.zeros(1).to(model.gpu_device)
+            if model.rank == model.rank_list[-1][0]:
+                loss = criterion(outputs, targets.to(outputs.device))
+            dist.broadcast(tensor=loss.detach(), src=model.rank_list[-1][0], group=model.master_group)
+            if compute_grad and torch.is_grad_enabled():
+                # Compute gradient
+                if model.__class__.__name__ == 'Weight_Parallelized_Model':
+                    model.backward(loss, count_g=counter)
+                else:
+                    loss.backward()
+            if output:
+                if model.rank == model.rank_list[-1][0]:
+                    return loss.item(), outputs.detach()
+                else:
+                    return loss.item(), None
+            else:
+                return loss.item()
     return closure2 
