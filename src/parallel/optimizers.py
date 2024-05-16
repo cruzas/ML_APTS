@@ -1,7 +1,64 @@
 import torch
 import torch.distributed as dist
+# Paper [1]: OFFO minimization algorithms for second-order optimality and their complexity, S. Gratton and Ph. L. Toint, https://arxiv.org/pdf/2203.03351
 
-# Create OFFO TR
+
+class ASTR1(torch.optim.Optimizer):
+    def __init__(self, params, zeta=0.5, theta=1.0, mu=0.5):
+        """
+        Adaptive Stochastic Trust Region Optimizer (ASTR1).
+        
+        Args:
+            model: PyTorch model.
+            lr (float): Initial learning rate.
+            min_lr (float): Minimum learning rate.
+            tau (float): Constant for GCP step.
+        """
+        super().__init__(params, {})
+        self.zeta = zeta
+        self.theta = theta
+        self.mu = mu
+        # # Clone the gradients
+        # self.g_sum = [0*param.detach().clone() for param in params]
+        self.g_sum = [0 for _ in params]
+
+    @torch.no_grad()
+    def compute_grad_norm2(self):
+        # Compute gradient norm
+        g_norm = 0
+        for p in self.param_groups[0]['params']:
+            if p.grad is not None:
+                g_norm += p.grad.norm().item()**2
+        return g_norm**0.5
+
+    def step(self, closure):
+        """
+        Perform a single optimization step.
+        
+        Args:
+            closure (callable): A closure that reevaluates the model and returns the loss.
+        
+        Returns:
+            None
+        """
+        # Step 1: Define the TR
+        closure(compute_grad=True)
+        self.g_sum = [self.g_sum[i] + param.grad for i, param in enumerate(self.param_groups[0]['params'])]
+
+        delta = [(self.zeta + g**2)**self.mu for g in self.g_sum]  # v in equation 3.1 of paper [1]
+        delta = [self.theta**0.5*t for t in delta]  # w in equation 3.1 of paper [1]
+        delta = [torch.abs(param.grad) / delta[i] for i, param in enumerate(self.param_groups[0]['params'])] # in equation 2.6 of Algorithm 2.1 in paper [1]
+
+        # Step 2: Hessian approximation TODO
+
+        # Step 3: GCP Step (since Hessian is set to 0, second order terms are not considered)
+        # Choose a step that satisfies Equations (2.4) and (2.5)  in paper [1]
+        # s_L = [-torch.sign(param.grad) * delta[i] for i, param in enumerate(self.param_groups[0]['params'])]
+
+        # Update the parameters
+        for i, param in enumerate(self.param_groups[0]['params']):
+            param.data += -torch.sign(param.grad) * delta[i]
+
 class OFFO_TR(torch.optim.Optimizer):
     def __init__(self, params, lr=0.01, max_lr=1.0, min_lr=0.0001, inc_factor=2.0, dec_factor=0.5, max_iter=5):
         super(OFFO_TR, self).__init__(params, {'lr': lr, 'max_lr': max_lr, 'min_lr': min_lr, 'max_iter': max_iter})
@@ -78,8 +135,7 @@ class OFFO_TR(torch.optim.Optimizer):
                 c += 1
             
         self.update_param_group()
-            
-
+        
 class APTS(torch.optim.Optimizer):
     def __init__(self, model, criterion, subdomain_optimizer, subdomain_optimizer_defaults, global_optimizer, global_optimizer_defaults, lr=0.01, max_subdomain_iter=5, dogleg=False):
         '''
