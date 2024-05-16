@@ -6,3 +6,7 @@ src/optimizers/.DS_Store
 src/.DS_Store
 .DS_Store
 data/
+*.err
+*.out
+*.npz
+*.csv
