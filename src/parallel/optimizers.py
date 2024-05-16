@@ -1,6 +1,84 @@
 import torch
 import torch.distributed as dist
 
+# Create OFFO TR
+class OFFO_TR(torch.optim.Optimizer):
+    def __init__(self, params, criterion, lr=0.01, max_lr=1.0, min_lr=0.0001, nu=0.5, inc_factor=2.0, dec_factor=0.5, nu_1=0.25, nu_2=0.75, max_iter=5, norm_type=2):
+        super(OFFO_TR, self).__init__(params, {'lr': lr, 'max_lr': max_lr, 'min_lr': min_lr, 'max_iter': max_iter})
+        self.lr = lr
+        self.criterion = criterion
+        self.inc_factor = inc_factor # increase factor for the learning rate
+        self.dec_factor = dec_factor # decrease factor for the learning rate
+        self.nu_1 = nu_1 # lower bound for the reduction ratio
+        self.nu_2 = nu_2 # upper bound for the reduction ratio
+        self.nu = min(nu, nu_1) # acceptable reduction ratio (cannot be bigger than nu_1)
+        self.max_iter = max_iter # max iterations for the TR optimization (when the step gets rejected it starts a new iteration and stops only once the step is accepted or the maximum amout is reached)
+        self.norm_type = norm_type 
+        self.min_lr = min_lr
+        self.max_lr = max_lr
+
+    def update_param_group(self):
+        for key in self.param_groups[0].keys():
+            if key not in ['params']:
+                self.param_groups[0][key] = getattr(self, key)
+    
+    def compute_grad_norm2(self):
+        # Compute gradient norm
+        g_norm = 0
+        for p in self.param_groups[0]['params']:
+            if p.grad is not None:
+                g_norm += p.grad.norm().item()**2
+        return g_norm**0.5
+        
+    def step(self, closure=None):
+        # Check if gradient is already available, if it isn't then do a forward step
+        if list(self.param_groups[0]['params'][0])[0].grad is None:
+            closure()
+
+        grad_norm_before = self.compute_grad_norm2()
+        grad_norm_after = torch.inf
+
+        # Take a step
+        c = 0
+        grad = [p.grad for p in self.param_groups[0]['params']]
+        while grad_norm_after > grad_norm_before and c < self.max_iter:
+            stop = True if abs(self.lr - self.min_lr)/self.min_lr < 1e-6 else False
+            old_lr = self.lr
+            for i, param in enumerate(self.param_groups[0]['params']):
+                param.data -= param.grad.tensor[i].data*self.lr/grad_norm_before
+
+            closure() # To recompute gradient 
+            grad_norm_after = self.compute_grad_norm2()
+            
+            # Check the gradient norm condition
+            if grad_norm_after < grad_norm_before:
+                # Accept the step and possibly increase the radius
+                self.lr = min(self.inc_factor * self.lr, self.max_lr)
+                break
+            else:
+                # Decrease the radius
+                self.lr = max(self.lr * self.dec_factor, self.min_lr)
+
+            if self.lr != self.min_lr:
+                if c == 0: 
+                    grad = [g * (-self.lr/old_lr) for g in grad]
+                else:
+                    grad = [g * (self.lr/old_lr) for g in grad]
+            else: # self.lr == self.min_lr
+                if c == 0:
+                    grad = [g * (-(old_lr-self.lr)/old_lr) for g in grad]
+                else:
+                    grad = [g * ((old_lr-self.lr)/old_lr) for g in grad]    
+
+            # Else learning rate remains unchanged
+            if stop:
+                break
+            c += 1
+            
+        self.update_param_group()
+            
+
+
 class APTS(torch.optim.Optimizer):
     def __init__(self, model, criterion, subdomain_optimizer, subdomain_optimizer_defaults, global_optimizer, global_optimizer_defaults, lr=0.01, max_subdomain_iter=5, dogleg=False):
         '''
@@ -76,8 +154,10 @@ class APTS(torch.optim.Optimizer):
                 new_loss = closure(compute_grad=False, zero_grad=True)
                 # Empty cache to avoid memory problems
                 torch.cuda.empty_cache()
+
         # Do global TR step
-        self.global_optimizer.step(closure)    
+        self.global_optimizer.step(closure)   
+         
         # Update the learning rate
         self.lr = self.global_optimizer.lr
         self.update_param_group()
@@ -104,7 +184,7 @@ class TR(torch.optim.Optimizer):
     def step(self, closure):
         # Compute the loss of the model
         old_loss = closure(compute_grad=True)
-        # Retrieve the gradient of the model
+        # Retrieve the gradient of the model  TODO: check if this is a copy by reference or not (if not we could use param.data -= param.grad ..... below)
         grad = self.model.grad()
         # Compute the norm of the gradient
         grad_norm2 = grad.norm(p=2)
