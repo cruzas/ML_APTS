@@ -67,7 +67,6 @@ class Weight_Parallelized_Subdomain(nn.Module):
         self.model.outputs = self.model.layer(self.model.inputs)
         if count_f: self.num_f_evals += 1
         self.f_time += time.time() - start
-        return self.model.outputs
 
     def backward(self, count_g=True):
         start = time.time()
