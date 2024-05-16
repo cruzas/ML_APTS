@@ -4,7 +4,10 @@ import torch.optim as optim
 import torchvision
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
-from parallel.optimizers import OFFO_TR
+from parallel.optimizers import OFFO_TR, ASTR1
+from data_loaders.Power_DL import Power_DL
+from torch.optim import adagrad
+
 # from parallel.utils import closure
 
 # Define transformations for the training set
@@ -14,8 +17,9 @@ transform = transforms.Compose([
 ])
 
 # Load the MNIST dataset
+# torch.manual_seed(0)
 train_set = torchvision.datasets.MNIST(root='./data', train=True, download=True, transform=transform)
-train_loader = DataLoader(train_set, batch_size=64, shuffle=True)
+train_loader = Power_DL(train_set, minibatch_size=60000, shuffle=True)
 
 # Define a simple neural network
 class SimpleNN(nn.Module):
@@ -33,19 +37,22 @@ class SimpleNN(nn.Module):
         return x
 
 # Initialize the network, loss function, and optimizer
-model = SimpleNN()
+
+model = SimpleNN().to('cuda')
 criterion = nn.CrossEntropyLoss()
-optimizer = OFFO_TR(model.parameters(), lr=0.01, max_lr=1.0, min_lr=0.00000000000000000001, inc_factor=2.0, dec_factor=0.5, max_iter=100)
+optimizer = optim.Adagrad(model.parameters())#adagrad.Adagrad(model.parameters()) 
+
+# ASTR1(model.parameters())
 
 def closure(inputs,labels):
     optimizer.zero_grad()
-    outputs = model(inputs)
-    loss = criterion(outputs, labels)
+    outputs = model(inputs.to('cuda'))
+    loss = criterion(outputs, labels.to('cuda'))
     loss.backward()
     return loss
 
 # Training loop
-for epoch in range(10):  # Number of epochs
+for epoch in range(200):  # Number of epochs
     running_loss = 0.0
     for i, data in enumerate(train_loader, 0):
         inputs, labels = data
@@ -58,6 +65,7 @@ for epoch in range(10):  # Number of epochs
         running_loss  += Closure()
         if i % 100 == 99:    # Print every 100 mini-batches
             print(f"[Epoch {epoch + 1}, Batch {i + 1}] loss: {running_loss / 100:.3f}")
-            running_loss = 0.0
-
+            # running_loss = 0.0
+    print(f"[Epoch {epoch + 1}, Batch {i + 1}] loss: {running_loss / 100:.3f}")
+    running_loss = 0.0
 print("Finished Training")
