@@ -1,11 +1,12 @@
 #!/bin/bash
 
 # Define the arrays for each parameter
-optimizers=("SGD")
-batch_sizes=(100)
-learning_rates=(0.01 0.02 0.04 0.08 0.16 0.32 0.64 1.0)
-trials=1
-epochs=100
+optimizers=("Adam")
+batch_sizes=(128)
+# learning_rates=(0.01 0.02 0.04 0.08 0.16 0.32 0.64 1.0)
+learning_rates=(0.001)
+trials=5
+epochs=300
 nodes=2
 datasets=("cifar10")
 
