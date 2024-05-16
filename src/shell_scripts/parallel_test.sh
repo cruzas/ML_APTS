@@ -2,11 +2,11 @@
 
 # Define the arrays for each parameter
 optimizers=("Adam")
-batch_sizes=(128)
+batch_sizes=(200)
 # learning_rates=(0.01 0.02 0.04 0.08 0.16 0.32 0.64 1.0)
 learning_rates=(0.001)
 trials=5
-epochs=300
+epochs=50
 nodes=2
 datasets=("cifar10")
 
