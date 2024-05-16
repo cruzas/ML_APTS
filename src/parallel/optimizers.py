@@ -20,7 +20,7 @@ class ASTR1(torch.optim.Optimizer):
         self.mu = mu
         # # Clone the gradients
         # self.g_sum = [0*param.detach().clone() for param in params]
-        self.g_sum = [0 for _ in params]
+        self.g_sum = [0 for _ in self.param_groups[0]['params']]
 
     @torch.no_grad()
     def compute_grad_norm2(self):
@@ -42,7 +42,7 @@ class ASTR1(torch.optim.Optimizer):
             None
         """
         # Step 1: Define the TR
-        closure(compute_grad=True)
+        closure()
         self.g_sum = [self.g_sum[i] + param.grad for i, param in enumerate(self.param_groups[0]['params'])]
 
         delta = [(self.zeta + g**2)**self.mu for g in self.g_sum]  # v in equation 3.1 of paper [1]
@@ -55,9 +55,19 @@ class ASTR1(torch.optim.Optimizer):
         # Choose a step that satisfies Equations (2.4) and (2.5)  in paper [1]
         # s_L = [-torch.sign(param.grad) * delta[i] for i, param in enumerate(self.param_groups[0]['params'])]
 
+        # old_params = [param.data.clone().flatten().detach() for param in self.param_groups[0]['params']]
         # Update the parameters
         for i, param in enumerate(self.param_groups[0]['params']):
-            param.data += -torch.sign(param.grad) * delta[i]
+            delta[i] = torch.min(delta[i], torch.ones_like(delta[i])) # make sure that each component of delta is smaller than 1:
+            g = torch.min(torch.abs(param.grad), delta[i]) * torch.sign(param.grad)
+            param.data += -g * delta[i]
+            
+        # # norm of delta
+        # delta_norm = sum([torch.norm(delta[i]) for i in range(len(delta))])
+        # # print the length of the step
+        # new_params = [param.data.clone().flatten().detach() for param in self.param_groups[0]['params']]
+        # step_length = sum([torch.norm(new_params[i] - old_params[i]) for i in range(len(new_params))])
+        # print(f'step length: {step_length} delta norm: {delta_norm}')
 
 class OFFO_TR(torch.optim.Optimizer):
     def __init__(self, params, lr=0.01, max_lr=1.0, min_lr=0.0001, inc_factor=2.0, dec_factor=0.5, max_iter=5):
