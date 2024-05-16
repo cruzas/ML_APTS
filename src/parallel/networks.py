@@ -29,11 +29,13 @@ class BasicBlock(nn.Module):
         return out
 
 class ResNet(nn.Module):
-    def __init__(self, block=BasicBlock, num_layers=2, num_classes=10):
+    # Number of layers is 4, number of classes is 10. This is equivalent to the ResNet-18 architecture.
+    def __init__(self, block=BasicBlock, num_layers=4, num_classes=10):
         super(ResNet, self).__init__()
         self.in_planes = 64
         self.module = nn.ModuleList()
         self.layer_list = [nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False), nn.BatchNorm2d(64), nn.ReLU()]
+
         for l in range(num_layers):
             blocks = self._make_layer(block, (l+1)*64, 1, stride=min(2,l+1))
             for b in range(len(blocks)):

@@ -21,34 +21,27 @@ import numpy as np
 def parse_args():
     parser = argparse.ArgumentParser(description='Parallel test')
     # We will have optimizer name, batch size, learning rate, number of trials, number of epochs
-    parser.add_argument('--optimizer', type=str, default='adam', help='Optimizer name')
-    parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
+    parser.add_argument('--optimizer', type=str, default='sgd', help='Optimizer name')
+    parser.add_argument('--batch_size', type=int, default=128, help='Batch size')
     parser.add_argument('--lr', type=float, default=0.001, help='Learning rate')
     parser.add_argument('--trials', type=int, default=10, help='Number of trials')
     parser.add_argument('--epochs', type=int, default=10, help='Number of epochs')
     parser.add_argument('--dataset', type=str, default='cifar10', help='Dataset name')
     return parser.parse_args()
 
-def get_dataset(dataset, transform):
+def get_dataset(dataset, transform_train, transform_test):
     if dataset == 'cifar10':
-        return torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform), \
-               torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform)
+        return torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform_train), \
+               torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform_train)
     elif dataset == 'mnist':
-        return torchvision.datasets.MNIST(root='./data', train=True, download=True, transform=transform), \
-               torchvision.datasets.MNIST(root='./data', train=False, download=True, transform=transform)
+        return torchvision.datasets.MNIST(root='./data', train=True, download=True, transform=transform_test), \
+               torchvision.datasets.MNIST(root='./data', train=False, download=True, transform=transform_test)
     else:
         raise ValueError(f'Dataset {dataset} not supported')
 
-def get_optimizer(optimizer_name, net, learning_rate):
-    optimizers = {
-        'sgd': optim.SGD(net.parameters(), lr=learning_rate, momentum=0.9, weight_decay=5e-4),
-        'adam': optim.Adam(net.parameters(), lr=learning_rate),
-        'apts': APTS(net.parameters(), lr=learning_rate)
-    }
-    return optimizers.get(optimizer_name.lower(), None)
-
 def main(rank=None, master_addr=None, master_port=None, world_size=None):
     args = parse_args()
+    print(f'args: {args}')
     optimizer_name, batch_size, learning_rate, trials, epochs, dataset = \
         args.optimizer, args.batch_size, args.lr, args.trials, args.epochs, args.dataset
     filename = f'{optimizer_name}_{dataset}_{batch_size}_{learning_rate}_{epochs}_{trials}.npz'
@@ -57,14 +50,14 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     prepare_distributed_environment(rank, master_addr, master_port, world_size)
     rank = dist.get_rank() if dist.get_backend() != 'nccl' else rank
     world_size = dist.get_world_size() if dist.is_initialized() else world_size
-    transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
+    transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
 
     all_trials = {key: np.empty((trials, epochs)) for key in 
                   ['epoch_loss', 'epoch_accuracy', 'epoch_times', 'epoch_usage_times', 
                    'epoch_num_f_evals', 'epoch_num_g_evals', 'epoch_num_sf_evals', 'epoch_num_sg_evals']}
     for trial in range(trials):
         torch.manual_seed(1000*trial + 1)
-        trainset, testset = get_dataset(dataset, transform)
+        trainset, testset = get_dataset(dataset, transform, transform)
         trainloader = DataLoader(trainset, batch_size=batch_size, shuffle=True, num_workers=2)
         testloader = DataLoader(testset, batch_size=batch_size, shuffle=False, num_workers=2)
 
@@ -72,7 +65,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')   
 
         # Instantiate the model, loss function, and optimizer
-        net = ResNet().to(device)
+        net = ResNet(num_layers=2).to(device) # Equivalent to ResNet-18
         for sample in trainloader:
             break
         
@@ -102,13 +95,19 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
 
         # Check if optimizer_name in lower case is 'sgd'
         if optimizer_name.lower() == 'sgd':
-            optimizer = optim.SGD(net.parameters(), lr=learning_rate, momentum=0.9)
+            # SGD from torch optim
+            optimizer = optim.SGD(net.parameters(), lr=0.1, momentum=0.9, weight_decay=1e-4) # According to https://arxiv.org/pdf/1512.03385
         elif optimizer_name.lower() == 'adam':
-            optimizer = optim.Adam(net.parameters(), lr=learning_rate)
-        elif optimizer_name.lower() == 'apts':
+            # Adam from torch optim
+            optimizer = optim.Adam(net.parameters(), lr=0.001, betas=(0.9, 0.999), weight_decay=0)
+        elif optimizer_name.lower() == 'APTS':
             optimizer = APTS(net.parameters(), lr=learning_rate)
         else:
             raise ValueError(f'Optimizer {optimizer_name} not supported')
+        
+        # Define the learning rate scheduler
+        if optimizer_name.lower() == 'sgd':
+            scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[150, 250], gamma=0.1)
 
         # Training function
         def train(epoch):
@@ -157,6 +156,10 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             net.zero_counters()
             all_trials['epoch_loss'][trial, epoch] = train(epoch)
             all_trials['epoch_times'][trial, epoch] = time.time() - epoch_start
+            
+            if optimizer_name.lower() == 'sgd': 
+                scheduler.step()
+            
             all_trials['epoch_accuracy'][trial, epoch] = test()
             if dist.get_rank() == net.rank_list[-1][0]:
                 all_trials['epoch_usage_times'][trial, epoch] = net.f_time + net.g_time + net.subdomain.f_time + net.subdomain.g_time
