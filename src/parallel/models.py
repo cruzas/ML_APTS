@@ -212,6 +212,16 @@ class Weight_Parallelized_Model(nn.Module):
         self.f_time = 0 # Forward pass time
         self.g_time = 0 # Gradient computation time
 
+    def zero_counters(self):
+        self.num_f_evals = 0
+        self.num_g_evals = 0
+        self.f_time = 0
+        self.g_time = 0
+        self.subdomain.num_f_evals = 0
+        self.subdomain.num_g_evals = 0
+        self.subdomain.f_time = 0
+        self.subdomain.g_time = 0
+
     def zero_grad(self):
         self.layer.zero_grad()
     
