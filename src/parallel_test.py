@@ -58,8 +58,8 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     for trial in range(trials):
         torch.manual_seed(1000*trial + 1)
         trainset, testset = get_dataset(dataset, transform, transform)
-        trainloader = DataLoader(trainset, batch_size=batch_size, shuffle=True, num_workers=2)
-        testloader = DataLoader(testset, batch_size=batch_size, shuffle=False, num_workers=2)
+        trainloader = DataLoader(trainset, batch_size=batch_size, shuffle=True)
+        testloader = DataLoader(testset, batch_size=batch_size, shuffle=False)
 
         # Define the device 
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')   
@@ -70,7 +70,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             break
         
         # Reset trainloader
-        trainloader = DataLoader(trainset, batch_size=100, shuffle=True, num_workers=2)
+        trainloader = DataLoader(trainset, batch_size=batch_size, shuffle=True)
         
         sample = sample[0]
         layers = []
@@ -100,7 +100,9 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         elif optimizer_name.lower() == 'adam':
             # Adam from torch optim
             optimizer = optim.Adam(net.parameters(), lr=0.001, betas=(0.9, 0.999), weight_decay=0)
-        elif optimizer_name.lower() == 'APTS':
+        elif optimizer_name.lower() == 'tradam':
+            optimizer = TRAdam(net.parameters(), lr=learning_rate)
+        elif optimizer_name.lower() == 'apts':
             optimizer = APTS(net.parameters(), lr=learning_rate)
         else:
             raise ValueError(f'Optimizer {optimizer_name} not supported')
