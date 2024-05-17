@@ -1,6 +1,80 @@
 import torch
+import time
 import torch.distributed as dist
 # Paper [1]: OFFO minimization algorithms for second-order optimality and their complexity, S. Gratton and Ph. L. Toint, https://arxiv.org/pdf/2203.03351
+# import adagrad
+
+class TRAdam(torch.optim.Optimizer):
+    def __init__(self, params, lr, betas=(0.9, 0.999), eps=1e-8, norm_type=torch.inf):
+
+        super(TRAdam, self).__init__(params, {'lr': lr, 'betas': betas, 'eps': eps, 'norm_type': norm_type})
+        self.lr = lr
+        self.betas = betas
+        self.eps = eps
+        self.norm_type = norm_type
+        if norm_type != 2 and norm_type != torch.inf:
+            raise ValueError('The norm type must be 2 or torch.inf')
+        self.m = [0 for _ in self.param_groups[0]['params']]
+        self.v = [0 for _ in self.param_groups[0]['params']]
+        self.t = 0
+        self.timings = {'t1':0, 't2':0, 't3':0, 't4':0, 't5':0, 't6':0, 't7':0, 't8':0, 't9':0}
+    
+    def get_timings(self):
+        timings = {key: self.timings[key]/self.t for key in self.timings.keys()}
+        return timings
+    
+    def zero_timers(self):
+        self.timings = {'t1':0, 't2':0, 't3':0, 't4':0, 't5':0, 't6':0, 't7':0, 't8':0, 't9':0}
+
+    def step(self ,closure=None):
+        self.t += 1
+        loss = closure() if closure is not None else None 
+        with torch.no_grad():
+            tic = time.time()
+            s = [0 for _ in self.param_groups[0]['params']]
+            self.timings['t1'] += time.time() - tic
+            step_length = 0
+            for i, p in enumerate(self.param_groups[0]['params']):
+                if p.grad is None:
+                    continue
+                grad = p.grad
+                if grad.is_sparse:
+                    raise RuntimeError('Adam does not support sparse gradients')
+                tic = time.time()
+                # Initialize m
+                self.m[i] = self.betas[0]*self.m[i] + (1-self.betas[0])*grad
+                self.timings['t2'] += time.time() - tic
+                # Initialize v
+                tic = time.time()
+                self.v[i] = self.betas[1]*self.v[i] + (1-self.betas[1])*grad**2
+                self.timings['t3'] += time.time() - tic
+
+                tic = time.time()
+                m_hat = self.m[i]/(1 - self.betas[0]**self.t) # m_hat
+                self.timings['t4'] += time.time() - tic
+                tic = time.time()
+                v_hat = self.v[i]/(1 - self.betas[1]**self.t) # v_hat
+                self.timings['t5'] += time.time() - tic
+                
+                tic = time.time()
+                s[i] = m_hat/(v_hat**0.5 + self.eps)
+                self.timings['t6'] += time.time() - tic
+                tic = time.time()
+                if self.norm_type == torch.inf:
+                    step_length = max(step_length, torch.norm(s[i], p=self.norm_type).item())
+                else:
+                    step_length += torch.norm(s[i]).item()**2
+                self.timings['t7'] += time.time() - tic
+
+            tic = time.time()
+            step_length = step_length**0.5 if self.norm_type == 2 else step_length                
+            self.timings['t8'] += time.time() - tic
+            tic = time.time()
+            for i,p in enumerate(self.param_groups[0]['params']):
+                # p.data -= s[i] * self.lr/step_length if step_length > self.lr and 2==1 else self.lr*s[i]
+                p.data -= s[i] * self.lr/step_length if step_length > self.lr else s[i]
+            self.timings['t9'] += time.time() - tic
+        return loss
 
 
 class ASTR1(torch.optim.Optimizer):
@@ -167,6 +241,7 @@ class APTS(torch.optim.Optimizer):
         else:
             global_optimizer_defaults.update({'lr': lr})
             self.global_optimizer = global_optimizer(params=model.subdomain.parameters(), **global_optimizer_defaults) # standard PyTorch optimizers
+        self.timings = {'glob_opt_t':0, 'loc_opt_t':0, 'other_1': 0, 'other_2':0, 'other_3':0, 'other_4':0, 'closure_1':0, 'closure_2':0}
     
     # override of param_group (update)
     def update_param_group(self):
@@ -183,51 +258,79 @@ class APTS(torch.optim.Optimizer):
             self.model.subdomain.forward()
             self.model.subdomain.backward()
             #normalize gradient to 1 to avoid going out of the trust region
-            grad_norm = self.model.subdomain.grad_norm()
-            if grad_norm > 1: 
-                for param in self.model.subdomain.parameters():
-                    param.grad /= grad_norm
+            # grad_norm = self.model.subdomain.grad_norm()
+            # if grad_norm > 1: 
+            #     for param in self.model.subdomain.parameters():
+            #         param.grad /= grad_norm
             self.subdomain_optimizer.step()
         # TODO: we have the gradient, we can compute its norm, we could use the norm to have an idea of the convergence of the subdomain optimization
         self.update_param_group()
 
+    def zero_timers(self):
+        self.timings = {'glob_opt_t':0, 'loc_opt_t':0, 'other_1': 0, 'other_2':0, 'other_3':0, 'other_4':0, 'closure_1':0, 'closure_2':0}
+        self.subdomain_optimizer.zero_timers()
+
     def step(self, closure):
         # Compute loss
+        tic = time.time()
         initial_loss = closure(compute_grad=True, zero_grad=True)
+        self.timings['closure_1'] += time.time() - tic
+        
         # Store the initial parameters and gradients
+        tic = time.time()
         initial_parameters = self.model.parameters(clone=True)
         initial_grads = self.model.grad(clone=True)
+        self.timings['other_1'] += time.time() - tic
         # Do subdomain steps
+        tic = time.time()
         self.subdomain_steps()
+        self.timings['loc_opt_t'] += time.time() - tic
         with torch.no_grad():
+            tic = time.time()
             new_loss = closure(compute_grad=False, zero_grad=True)
+            self.timings['closure_2'] += time.time() - tic
+            tic = time.time()
             step = self.model.parameters(clone=False) - initial_parameters
             # Compute the dogleg step with the hope that new_loss <= old_loss
             lr = self.lr
             w = 0; c = 0
-            while new_loss > initial_loss and self.dogleg and c>=5: 
-                c += 1
-                # Decrease lr to decrease size of step...
-                lr = lr/2
-                # ... while moving towards the steepest descent direction (-g)
-                w = min(w + 0.2, 1)
-                step2 = ((1-w)*step) - (w*initial_grads)
-                # The step length is "lr", with   lr <= self.lr (global TR lr)
-                step2 = (lr/step2.norm())*step2
+            self.timings['other_2'] += time.time() - tic
+            tic = time.time()
+            if self.dogleg:
+                while new_loss > initial_loss and c>=5: 
+                    c += 1
+                    # Decrease lr to decrease size of step...
+                    lr = lr/2
+                    # ... while moving towards the steepest descent direction (-g)
+                    w = min(w + 0.2, 1)
+                    step2 = ((1-w)*step) - (w*initial_grads)
+                    # The step length is "lr", with   lr <= self.lr (global TR lr)
+                    step2 = (lr/step2.norm())*step2
+                    # Update the model with the new params
+                    for i,p in enumerate(self.model.parameters()):
+                        p.copy_(initial_parameters.tensor[i] + step2.tensor[i])
+                    # Compute new global loss
+                    new_loss = closure(compute_grad=False, zero_grad=True)
+                    # Empty cache to avoid memory problems
+                    torch.cuda.empty_cache()
+            else:
                 # Update the model with the new params
+                
                 for i,p in enumerate(self.model.parameters()):
-                    p.copy_(initial_parameters.tensor[i] + step2.tensor[i])
-                # Compute new global loss
-                new_loss = closure(compute_grad=False, zero_grad=True)
-                # Empty cache to avoid memory problems
-                torch.cuda.empty_cache()
+                    p.copy_(initial_parameters.tensor[i] + step.tensor[i])
+            self.timings['other_3'] += time.time() - tic
 
         # Do global TR step
+        tic = time.time()
         self.global_optimizer.step(closure)   
+        self.timings['glob_opt_t'] += time.time() - tic
          
         # Update the learning rate
+        tic = time.time()
         self.lr = self.global_optimizer.lr
         self.update_param_group()
+        self.timings['other_4'] += time.time() - tic
+        return new_loss
 
 class TR(torch.optim.Optimizer):
     def __init__(self, model, criterion, lr=0.01, max_lr=1.0, min_lr=0.0001, nu=0.5, inc_factor=2.0, dec_factor=0.5, nu_1=0.25, nu_2=0.75, max_iter=5, norm_type=2):
@@ -274,8 +377,8 @@ class TR(torch.optim.Optimizer):
             pred_red = self.lr*grad_norm2 # predicted reduction (first order approximation of the loss function)
             red_ratio = act_red / pred_red # reduction ratio
             
-            if dist.get_rank() == 0:
-                print(f'old loss: {old_loss}, new loss: {new_loss}, act_red: {act_red}, pred_red: {pred_red}, red_ratio: {red_ratio}')
+            # if dist.get_rank() == 0:
+            #     print(f'old loss: {old_loss}, new loss: {new_loss}, act_red: {act_red}, pred_red: {pred_red}, red_ratio: {red_ratio}')
             if red_ratio < self.nu_1: # the reduction ratio is too small -> decrease the learning rate
                 self.lr = max(self.min_lr, self.dec_factor*self.lr)
             elif red_ratio > self.nu_2: # the reduction ratio is good enough -> increase the learning rate
@@ -298,8 +401,8 @@ class TR(torch.optim.Optimizer):
                         grad = grad * (-(old_lr-self.lr)/old_lr)
                     else:
                         grad = grad * ((old_lr-self.lr)/old_lr)
-                if dist.get_rank() == 0:
-                    print(f'old loss: {old_loss}, new loss: {new_loss}, lr: {self.lr}')
+                # if dist.get_rank() == 0:
+                #     print(f'old loss: {old_loss}, new loss: {new_loss}, lr: {self.lr}')
             else:
                 break
             c += 1

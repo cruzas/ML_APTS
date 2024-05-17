@@ -21,7 +21,7 @@ import numpy as np
 def parse_args():
     parser = argparse.ArgumentParser(description='Parallel test')
     # We will have optimizer name, batch size, learning rate, number of trials, number of epochs
-    parser.add_argument('--optimizer', type=str, default='sgd', help='Optimizer name')
+    parser.add_argument('--optimizer', type=str, default='APTS', help='Optimizer name')
     parser.add_argument('--batch_size', type=int, default=128, help='Batch size')
     parser.add_argument('--lr', type=float, default=0.001, help='Learning rate')
     parser.add_argument('--trials', type=int, default=10, help='Number of trials')
@@ -96,14 +96,18 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         # Check if optimizer_name in lower case is 'sgd'
         if optimizer_name.lower() == 'sgd':
             # SGD from torch optim
-            optimizer = optim.SGD(net.parameters(), lr=0.1, momentum=0.9, weight_decay=1e-4) # According to https://arxiv.org/pdf/1512.03385
+            optimizer = optim.SGD(net.parameters(), lr=learning_rate, momentum=0.9, weight_decay=1e-4) # According to https://arxiv.org/pdf/1512.03385
         elif optimizer_name.lower() == 'adam':
             # Adam from torch optim
-            optimizer = optim.Adam(net.parameters(), lr=0.001, betas=(0.9, 0.999), weight_decay=0)
+            optimizer = optim.Adam(net.parameters(), lr=learning_rate, betas=(0.9, 0.999), weight_decay=0)
         elif optimizer_name.lower() == 'tradam':
             optimizer = TRAdam(net.parameters(), lr=learning_rate)
         elif optimizer_name.lower() == 'apts':
-            optimizer = APTS(net.parameters(), lr=learning_rate)
+            subdomain_optimizer = TRAdam
+            subdomain_optimizer_defaults = {'lr': 1e99}
+            global_optimizer = TR
+            global_optimizer_defaults = {'lr': learning_rate, 'max_iter': 3}    
+            optimizer = APTS(model=net, lr=learning_rate, dogleg=False, subdomain_optimizer=subdomain_optimizer, subdomain_optimizer_defaults=subdomain_optimizer_defaults, criterion=criterion, global_optimizer=global_optimizer, global_optimizer_defaults=global_optimizer_defaults)
         else:
             raise ValueError(f'Optimizer {optimizer_name} not supported')
         
@@ -116,17 +120,36 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             # net.train()
             running_loss = 0.0
             count = 0
+            tic = time.time()
+            tot_time_load_data = 0
+            time_spent_in_optimizer = 0
             for i, data in enumerate(trainloader, 0):
                 inputs, labels = data
                 inputs, labels = inputs.to(device), labels.to(device)
-                closuree = closure(inputs, labels, criterion, net, compute_grad=True, zero_grad=True)        
-                running_loss += optimizer.step(closuree)
+                tot_time_load_data += time.time() - tic
+                tic = time.time()
+                closuree = closure(inputs, labels, criterion, net, compute_grad=True, zero_grad=True)     
+                loss = optimizer.step(closuree) 
+                time_spent_in_optimizer += time.time() - tic
+                running_loss += loss if loss is not None else 0
                 count += 1
                 # Print every 100 epochs
                 if i % 100 == 99:
                     if dist.get_rank() == net.rank_list[-1][0]:
-                        print(f'Epoch: {epoch + 1}, Batch: {i + 1}, Loss: {running_loss / 100:.4f}')
+                        tot_time = tot_time_load_data + time_spent_in_optimizer
+
+                        print(f'''Epoch: {epoch + 1}, Batch: {i+1} 
+                              MODEL avg f_time     = {net.f_time/count:.3f},   MODEL avg g_time     = {net.g_time/count:.3f}, 
+                              SUBDOMAIN avg f_time = {net.subdomain.f_time/count:.3f},   SUBDOMAIN avg g_time = {net.subdomain.g_time/count:.3f}, 
+                              avg time in optimizer= {time_spent_in_optimizer/count:.3f},   avg time loading data= {tot_time_load_data/count:.3f},
+                              avg time per iter    = {tot_time/count:.3f},      Loss: {running_loss / 100:.4f}''')
+                        timings = {k : round(v/count,3) for k, v in optimizer.timings.items()}
+                        print(timings)
+                        timings2 = optimizer.subdomain_optimizer.timings
+                        print({k : round(v/count,3) for k, v in timings2.items()})
+                        # print(f'Epoch: {epoch + 1}, Batch: {i + 1}, Loss: {running_loss / 100:.4f}')
                     # running_loss = 0.0
+                tic = time.time()
             running_loss = running_loss/count
             return running_loss
 
@@ -156,9 +179,13 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         for epoch in range(epochs):  # Number of epochs can be adjusted
             epoch_start = time.time()
             net.zero_counters()
+            optimizer.zero_timers()
             all_trials['epoch_loss'][trial, epoch] = train(epoch)
             all_trials['epoch_times'][trial, epoch] = time.time() - epoch_start
             
+            if dist.get_rank() == net.rank_list[-1][0]:
+                print(f'Epoch {epoch} loss: {all_trials["epoch_loss"][trial, epoch]} accuracy: {all_trials["epoch_accuracy"][trial, epoch]}')
+
             if optimizer_name.lower() == 'sgd': 
                 scheduler.step()
             
@@ -175,7 +202,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         np.savez(filename, **all_trials)    
     
 if __name__ == '__main__':
-    if 1==1:
+    if 1==2:
         main()
     else:
         world_size = torch.cuda.device_count() if torch.cuda.is_available() else 0
