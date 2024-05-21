@@ -8,5 +8,4 @@ src/.DS_Store
 data/
 *.err
 *.out
-*.npz
 *.csv
