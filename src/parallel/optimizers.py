@@ -5,7 +5,7 @@ import torch.distributed as dist
 # import adagrad
 
 class TRAdam(torch.optim.Optimizer):
-    def __init__(self, params, lr, betas=(0.9, 0.999), eps=1e-8, norm_type=2): #torch.inf
+    def __init__(self, params, lr, betas=(0.9, 0.999), eps=1e-8, norm_type=torch.inf): #torch.inf
 
         super(TRAdam, self).__init__(params, {'lr': lr, 'betas': betas, 'eps': eps, 'norm_type': norm_type})
         self.lr = lr
@@ -25,7 +25,35 @@ class TRAdam(torch.optim.Optimizer):
     
     def zero_timers(self):
         self.timings = {'t1':0, 't2':0, 't3':0, 't4':0, 't5':0, 't6':0, 't7':0, 't8':0, 't9':0, 't7b':0, 't10':0}
-
+    def display_avg_timers(self):
+        '''Display the timings of the optimizer in a table format with ordered columns'''
+        timings = self.get_timings()
+        total_time = sum(timings.values())
+        
+        # Create headers
+        headers = ["Timer", "Time (s)", "Percentage (%)"]
+        
+        # Create rows for each timer
+        rows = [
+            [key, f'{timings[key]:.4f}', f'{(timings[key]/total_time)*100:.2f}%']
+            for key in sorted(timings.keys())
+        ]
+        
+        # Find the maximum width of each column
+        col_widths = [max(len(row[i]) for row in rows + [headers]) for i in range(3)]
+        
+        # Create a format string for each row
+        row_format = '  '.join(f'{{:<{col_width}}}' for col_width in col_widths)
+        
+        # Create the table
+        table = []
+        table.append(row_format.format(*headers))
+        table.append('-' * sum(col_widths))
+        for row in rows:
+            table.append(row_format.format(*row))
+        
+        return '\n'.join(table)
+            
     def step(self ,closure=None):
         self.t += 1
         loss = closure() if closure is not None else None 
@@ -64,6 +92,9 @@ class TRAdam(torch.optim.Optimizer):
                     
                     if self.norm_type == torch.inf:
                         step_length = max(step_length, torch.norm(s[i], p=self.norm_type).item())
+                        # print(f'step length: {step_length}, upper bound: {1}')
+                        # if step_length > 1.01:
+                        #     print('asd')
                     else:
                         step_length += torch.norm(s[i]).item()**2
                     self.timings['t7'] += time.time() - tic
@@ -122,13 +153,13 @@ class TRAdam(torch.optim.Optimizer):
                 if self.norm_type == torch.inf:
                     # Compute the maximum step length
                     step_length = max(step_lengths)
+                    print(f'step length: {step_length}, upper bound: {((1-self.betas[1])**0.5)/(1-self.betas[0])}')
+                    if step_length > ((1-self.betas[1])**0.5)/(1-self.betas[0]):
+                        print('asd')
                 else:
-                    step_length = sum(step_lengths)
+                    step_length = sum(step_lengths)**0.5
                 self.timings['t7b'] += time.time() - tic
                 
-            tic = time.time()
-            step_length = step_length**0.5 if self.norm_type == 2 else step_length                
-            self.timings['t8'] += time.time() - tic
             tic = time.time()
             for i,p in enumerate(self.param_groups[0]['params']):
                 # p.data -= s[i] * self.lr/step_length if step_length > self.lr and 2==1 else self.lr*s[i]
