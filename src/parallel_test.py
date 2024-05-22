@@ -28,13 +28,21 @@ def parse_args():
     parser.add_argument('--dataset', type=str, default='mnist', help='Dataset name')
     return parser.parse_args()
 
-def get_dataset(dataset, transform_train, transform_test):
+def get_dataset(dataset):
     if dataset == 'cifar10':
-        return torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform_train), \
-               torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform_train)
+        transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+        return torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform), \
+               torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform)
     elif dataset == 'mnist':
-        return torchvision.datasets.MNIST(root='./data', train=True, download=True, transform=transform_test), \
-               torchvision.datasets.MNIST(root='./data', train=False, download=True, transform=transform_test)
+        # Transform for MNIST
+        transform = transforms.Compose([
+            transforms.RandomRotation(10),
+            transforms.RandomAffine(0, translate=(0.1, 0.1)),
+            transforms.ToTensor(),
+            transforms.Normalize((0.1307,), (0.3081,))
+        ])
+        return torchvision.datasets.MNIST(root='./data', train=True, download=True, transform=transform), \
+               torchvision.datasets.MNIST(root='./data', train=False, download=True, transform=transform)
     else:
         raise ValueError(f'Dataset {dataset} not supported')
 
@@ -50,14 +58,12 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         prepare_distributed_environment(rank, master_addr, master_port, world_size)
         rank = dist.get_rank() if dist.get_backend() != 'nccl' else rank
         world_size = dist.get_world_size() if dist.is_initialized() else world_size
-        transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
-
         all_trials = {key: np.empty((trials, epochs)) for key in 
                     ['epoch_loss', 'epoch_accuracy', 'epoch_times', 'epoch_usage_times', 
                     'epoch_num_f_evals', 'epoch_num_g_evals', 'epoch_num_sf_evals', 'epoch_num_sg_evals']}
         for trial in range(trials):
             torch.manual_seed(1000*trial + 1)
-            trainset, testset = get_dataset(dataset, transform, transform)
+            trainset, testset = get_dataset(dataset)
             trainloader = DataLoader(trainset, batch_size=batch_size, shuffle=True)
             testloader = DataLoader(testset, batch_size=batch_size, shuffle=False)
 
@@ -141,9 +147,8 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
                     count += 1
                     # Print every 100 epochs
                     if i % 100 == 99:
-                        if dist.get_rank() == net.rank_list[-1][0]:
+                        if dist.get_rank() == net.rank_list[-1][0] and optimizer_name.lower() == 'apts':
                             tot_time = tot_time_load_data + time_spent_in_optimizer
-
                             print(f'''Epoch: {epoch + 1}, Batch: {i+1} 
                                 MODEL avg f_time     = {net.f_time/count:.3f},   MODEL avg g_time     = {net.g_time/count:.3f}, 
                                 SUBDOMAIN avg f_time = {net.subdomain.f_time/count:.3f},   SUBDOMAIN avg g_time = {net.subdomain.g_time/count:.3f}, 
@@ -185,7 +190,8 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             for epoch in range(epochs):  # Number of epochs can be adjusted
                 epoch_start = time.time()
                 net.zero_counters()
-                optimizer.zero_timers()
+                if optimizer_name.lower() == 'apts':
+                    optimizer.zero_timers()
                 all_trials['epoch_loss'][trial, epoch] = train(epoch)
                 all_trials['epoch_times'][trial, epoch] = time.time() - epoch_start
                 
