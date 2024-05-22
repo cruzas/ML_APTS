@@ -27,8 +27,9 @@ def normalize_dataset(data, mean=[], std=[]):
 
 
 class Power_DL():
-    def __init__(self, dataset, 
-                 minibatch_size=1, 
+    def __init__(self, 
+                 dataset, 
+                 batch_size=1, 
                  shuffle=False, 
                  device=torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'), 
                  precision=torch.get_default_dtype(), 
@@ -38,7 +39,7 @@ class Power_DL():
                  std=[]):
         
         self.dataset = dataset
-        self.minibatch_size = minibatch_size
+        self.batch_size = batch_size
         self.shuffle = shuffle
         self.device = device
         self.iter = 0
@@ -46,7 +47,7 @@ class Power_DL():
         self.precision = int(''.join([c for c in str(precision) if c.isdigit()]))
         self.overlap = overlapping_samples
         self.SHARED_OVERLAP = SHARED_OVERLAP
-        self.minibatch_amount = int(np.ceil(len(self.dataset)/self.minibatch_size))
+        self.minibatch_amount = int(np.ceil(len(self.dataset)/self.batch_size))
         if self.minibatch_amount == 1:
             if self.overlap !=0:
                 print('(Power_DL) Warning: overlap is not used. Only 1 minibatch (full dataset).')
@@ -59,10 +60,10 @@ class Power_DL():
             self.dataset.data = torch.from_numpy(self.dataset.data)
 
         if round(self.overlap) != self.overlap and self.overlap<1 and self.overlap>0: #overlap is a percentage
-            self.overlap = int(self.overlap*self.minibatch_size)
-        if self.overlap == self.minibatch_size:
+            self.overlap = int(self.overlap*self.batch_size)
+        if self.overlap == self.batch_size:
             raise ValueError('Overlap cannot be equal to the minibatch size, this will generate "mini"batches with the entire dataframe each.')
-        elif self.overlap > self.minibatch_size:
+        elif self.overlap > self.batch_size:
             raise ValueError('Overlap cannot be higher than minibatch size.')
         
         # if 'torch' in str(self.dataset.data.__class__):
@@ -131,7 +132,7 @@ class Power_DL():
     
 
     def __next__(self):
-        index_set = self.indices[ self.iter*self.minibatch_size : self.iter*self.minibatch_size+self.minibatch_size ]
+        index_set = self.indices[ self.iter*self.batch_size : self.iter*self.batch_size+self.batch_size ]
         self.iter += 1
         if len(index_set) == 0:
             raise StopIteration()
@@ -142,9 +143,9 @@ class Power_DL():
             for i in range(self.minibatch_amount):
                 if i != self.iter:
                     if self.SHARED_OVERLAP:
-                        indexes = torch.tensor([range(i*self.minibatch_size, i*self.minibatch_size+self.overlap)], device=self.device)
+                        indexes = torch.tensor([range(i*self.batch_size, i*self.batch_size+self.overlap)], device=self.device)
                     else:
-                        indexes = torch.randint(i*self.minibatch_size, i*self.minibatch_size+self.minibatch_size, (self.overlap,), device=self.device) # generate "self.overlap" random indeces inside the i-th minibatch
+                        indexes = torch.randint(i*self.batch_size, i*self.batch_size+self.batch_size, (self.overlap,), device=self.device) # generate "self.overlap" random indeces inside the i-th minibatch
                     overlapping_indices = torch.cat([overlapping_indices, self.indices[indexes]], 0)
             
             index_set = torch.cat([index_set, overlapping_indices], 0) # Combining the original index set with the overlapping indices

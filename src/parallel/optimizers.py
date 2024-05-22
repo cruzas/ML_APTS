@@ -17,14 +17,19 @@ class TRAdam(torch.optim.Optimizer):
         self.m = [0 for _ in self.param_groups[0]['params']]
         self.v = [0 for _ in self.param_groups[0]['params']]
         self.t = 0
-        self.timings = {'t1':0, 't2':0, 't3':0, 't4':0, 't5':0, 't6':0, 't7':0, 't8':0, 't9':0, 't7b':0, 't10':0}
+        self.timings = {}
     
+    def reset_momentum(self):
+        self.m = [0 for _ in self.param_groups[0]['params']]
+        self.v = [0 for _ in self.param_groups[0]['params']]
+
     def get_timings(self):
-        timings = {key: self.timings[key]/self.t for key in self.timings.keys()}
+        timings = {key: self.timings[key] for key in self.timings.keys()}
         return timings
     
     def zero_timers(self):
-        self.timings = {'t1':0, 't2':0, 't3':0, 't4':0, 't5':0, 't6':0, 't7':0, 't8':0, 't9':0, 't7b':0, 't10':0}
+        self.timings = {key: 0 for key in self.timings.keys()}
+        
     def display_avg_timers(self):
         '''Display the timings of the optimizer in a table format with ordered columns'''
         timings = self.get_timings()
@@ -52,264 +57,58 @@ class TRAdam(torch.optim.Optimizer):
         for row in rows:
             table.append(row_format.format(*row))
         
+        print('\n'.join(table))
         return '\n'.join(table)
             
     def step(self ,closure=None):
         self.t += 1
+        tic = time.time()
         loss = closure() if closure is not None else None 
+        self.timings['TRAdam_closure_1'] = self.timings.get('TRAdam_closure_1',0) + time.time() - tic
         with torch.no_grad():
-            if 1==1:
+            s = [0 for _ in self.param_groups[0]['params']]
+            step_length = 0
+            for i, p in enumerate(self.param_groups[0]['params']):  # TODO: Run this in parallel through cuda streams ?
+                if p.grad is None:
+                    continue
+                grad = p.grad
+                if grad.is_sparse:
+                    raise RuntimeError('Adam does not support sparse gradients')
                 tic = time.time()
-                s = [0 for _ in self.param_groups[0]['params']]
-                self.timings['t1'] += time.time() - tic
-                step_length = 0
-                for i, p in enumerate(self.param_groups[0]['params']):
-                    if p.grad is None:
-                        continue
-                    grad = p.grad
-                    if grad.is_sparse:
-                        raise RuntimeError('Adam does not support sparse gradients')
-                    tic = time.time()
-                    # Initialize m
-                    self.m[i] = self.betas[0]*self.m[i] + (1-self.betas[0])*grad
-                    self.timings['t2'] += time.time() - tic
-                    # Initialize v
-                    tic = time.time()
-                    self.v[i] = self.betas[1]*self.v[i] + (1-self.betas[1])*grad**2
-                    self.timings['t3'] += time.time() - tic
-
-                    tic = time.time()
-                    m_hat = self.m[i]/(1 - self.betas[0]**self.t) # m_hat
-                    self.timings['t4'] += time.time() - tic
-                    tic = time.time()
-                    v_hat = self.v[i]/(1 - self.betas[1]**self.t) # v_hat
-                    self.timings['t5'] += time.time() - tic
-                    
-                    tic = time.time()
-                    s[i] = m_hat/(v_hat.sqrt() + self.eps)
-                    self.timings['t6'] += time.time() - tic
-                    tic = time.time()
-                    
-                    if self.norm_type == torch.inf:
-                        step_length = max(step_length, torch.norm(s[i], p=self.norm_type).item())
-                        # print(f'step length: {step_length}, upper bound: {1}')
-                        # if step_length > 1.01:
-                        #     print('asd')
-                    else:
-                        step_length += torch.norm(s[i]).item()**2
-                    self.timings['t7'] += time.time() - tic
-            else:
-                streams = [torch.cuda.Stream() for _ in range(len(self.param_groups[0]['params']))]
-                step_lengths = [0 for _ in self.param_groups[0]['params']]
+                # Initialize m
+                self.m[i] = self.betas[0]*self.m[i] + (1-self.betas[0])*grad
+                self.timings['TRAdam_init_m'] = self.timings.get('TRAdam_init_m',0) + time.time() - tic
+                # Initialize v
                 tic = time.time()
-                s = [0 for _ in self.param_groups[0]['params']]
-                self.timings['t1'] += time.time() - tic
-                step_length = 0; timings=[{'t1':0, 't2':0, 't3':0, 't4':0, 't5':0, 't6':0, 't7':0, 't8':0, 't9':0, 't7b':0, 't10':0} for _ in self.param_groups[0]['params']]
-                for i, p in enumerate(self.param_groups[0]['params']):
-                    if p.grad is None:
-                        continue
-                    grad = p.grad
-                    if grad.is_sparse:
-                        raise RuntimeError('Adam does not support sparse gradients')
-                    
-                    with torch.cuda.stream(streams[i]):
-                        tic = time.time()
-                        # Initialize m
-                        self.m[i] = self.betas[0] * self.m[i] + (1 - self.betas[0]) * grad
-                        timings[i]['t2'] += time.time() - tic
-
-                        # Initialize v
-                        tic = time.time()
-                        self.v[i] = self.betas[1] * self.v[i] + (1 - self.betas[1]) * grad ** 2
-                        timings[i]['t3'] += time.time() - tic
-
-                        tic = time.time()
-                        m_hat = self.m[i] / (1 - self.betas[0] ** self.t)  # m_hat
-                        timings[i]['t4'] += time.time() - tic
-
-                        tic = time.time()
-                        v_hat = self.v[i] / (1 - self.betas[1] ** self.t)  # v_hat
-                        timings[i]['t5'] += time.time() - tic
-
-                        tic = time.time()
-                        s[i] = m_hat / (v_hat.sqrt() + self.eps)
-                        timings[i]['t6'] += time.time() - tic
-                        
-                        tic = time.time()
-                        step_lengths[i] = torch.norm(s[i], p=self.norm_type).item() if self.norm_type == torch.inf else torch.norm(s[i]).item() ** 2
-                        timings[i]['t7'] += time.time() - tic
-                        print(f'iteration {i} - time t7 {timings[i]["t7"]}')
+                self.v[i] = self.betas[1]*self.v[i] + (1-self.betas[1])*grad**2
+                self.timings['TRAdam_init_v'] = self.timings.get('TRAdam_init_v',0) + time.time() - tic
 
                 tic = time.time()
-                for stream in streams:
-                    stream.synchronize()
-                self.timings['t10'] += time.time() - tic        
-                    
-                for i in range(len(self.param_groups[0]['params'])):
-                    for key in timings[i].keys():
-                        self.timings[key] += timings[i][key]
-                        
+                m_hat = self.m[i]/(1 - self.betas[0]**self.t) # m_hat
+                self.timings['TRAdam_init_mhat'] = self.timings.get('TRAdam_init_mhat',0) + time.time() - tic
+                tic = time.time()
+                v_hat = self.v[i]/(1 - self.betas[1]**self.t) # v_hat
+                self.timings['TRAdam_init_vhat'] = self.timings.get('TRAdam_init_vhat',0) + time.time() - tic
+                
+                tic = time.time()
+                s[i] = m_hat/(v_hat.sqrt() + self.eps)
+                self.timings['TRAdam_comp_step'] = self.timings.get('TRAdam_comp_step',0) + time.time() - tic
+                
                 tic = time.time()
                 if self.norm_type == torch.inf:
-                    # Compute the maximum step length
-                    step_length = max(step_lengths)
-                    print(f'step length: {step_length}, upper bound: {((1-self.betas[1])**0.5)/(1-self.betas[0])}')
-                    if step_length > ((1-self.betas[1])**0.5)/(1-self.betas[0]):
-                        print('asd')
+                    #step_length = max(step_length, torch.norm(s[i], p=self.norm_type).item())
+                    step_length = 1 # upper bound for the step length to spare computation time (TODO: Check if this is actually true)
                 else:
-                    step_length = sum(step_lengths)**0.5
-                self.timings['t7b'] += time.time() - tic
+                    step_length += torch.norm(s[i]).item()**2
+                self.timings['TRAdam_step_length'] = self.timings.get('TRAdam_step_length',0) + time.time() - tic
                 
             tic = time.time()
             for i,p in enumerate(self.param_groups[0]['params']):
                 # p.data -= s[i] * self.lr/step_length if step_length > self.lr and 2==1 else self.lr*s[i]
                 p.data -= s[i] * self.lr/step_length if step_length > self.lr else s[i]
-            self.timings['t9'] += time.time() - tic
+            self.timings['TRAdam_take_step'] = self.timings.get('TRAdam_take_step',0) + time.time() - tic
         return loss
 
-
-class ASTR1(torch.optim.Optimizer):
-    def __init__(self, params, zeta=0.5, theta=1.0, mu=0.5):
-        """
-        Adaptive Stochastic Trust Region Optimizer (ASTR1).
-        
-        Args:
-            model: PyTorch model.
-            lr (float): Initial learning rate.
-            min_lr (float): Minimum learning rate.
-            tau (float): Constant for GCP step.
-        """
-        super().__init__(params, {})
-        self.zeta = zeta
-        self.theta = theta
-        self.mu = mu
-        # # Clone the gradients
-        # self.g_sum = [0*param.detach().clone() for param in params]
-        self.g_sum = [0 for _ in self.param_groups[0]['params']]
-
-    @torch.no_grad()
-    def compute_grad_norm2(self):
-        # Compute gradient norm
-        g_norm = 0
-        for p in self.param_groups[0]['params']:
-            if p.grad is not None:
-                g_norm += p.grad.norm().item()**2
-        return g_norm**0.5
-
-    def step(self, closure):
-        """
-        Perform a single optimization step.
-        
-        Args:
-            closure (callable): A closure that reevaluates the model and returns the loss.
-        
-        Returns:
-            None
-        """
-        # Step 1: Define the TR
-        closure()
-        self.g_sum = [self.g_sum[i] + param.grad for i, param in enumerate(self.param_groups[0]['params'])]
-
-        delta = [(self.zeta + g**2)**self.mu for g in self.g_sum]  # v in equation 3.1 of paper [1]
-        delta = [self.theta**0.5*t for t in delta]  # w in equation 3.1 of paper [1]
-        delta = [torch.abs(param.grad) / delta[i] for i, param in enumerate(self.param_groups[0]['params'])] # in equation 2.6 of Algorithm 2.1 in paper [1]
-
-        # Step 2: Hessian approximation TODO
-
-        # Step 3: GCP Step (since Hessian is set to 0, second order terms are not considered)
-        # Choose a step that satisfies Equations (2.4) and (2.5)  in paper [1]
-        # s_L = [-torch.sign(param.grad) * delta[i] for i, param in enumerate(self.param_groups[0]['params'])]
-
-        # old_params = [param.data.clone().flatten().detach() for param in self.param_groups[0]['params']]
-        # Update the parameters
-        for i, param in enumerate(self.param_groups[0]['params']):
-            delta[i] = torch.min(delta[i], torch.ones_like(delta[i])) # make sure that each component of delta is smaller than 1:
-            g = torch.min(torch.abs(param.grad), delta[i]) * torch.sign(param.grad)
-            param.data += -g * delta[i]
-            
-        # # norm of delta
-        # delta_norm = sum([torch.norm(delta[i]) for i in range(len(delta))])
-        # # print the length of the step
-        # new_params = [param.data.clone().flatten().detach() for param in self.param_groups[0]['params']]
-        # step_length = sum([torch.norm(new_params[i] - old_params[i]) for i in range(len(new_params))])
-        # print(f'step length: {step_length} delta norm: {delta_norm}')
-
-class OFFO_TR(torch.optim.Optimizer):
-    def __init__(self, params, lr=0.01, max_lr=1.0, min_lr=0.0001, inc_factor=2.0, dec_factor=0.5, max_iter=5):
-        super(OFFO_TR, self).__init__(params, {'lr': lr, 'max_lr': max_lr, 'min_lr': min_lr, 'max_iter': max_iter})
-        self.lr = lr
-        self.inc_factor = inc_factor # increase factor for the learning rate
-        self.dec_factor = dec_factor # decrease factor for the learning rate
-        self.max_iter = max_iter # max iterations for the TR optimization (when the step gets rejected it starts a new iteration and stops only once the step is accepted or the maximum amout is reached)
-        self.min_lr = min_lr
-        self.max_lr = max_lr
-
-    def update_param_group(self):
-        for key in self.param_groups[0].keys():
-            if key not in ['params']:
-                self.param_groups[0][key] = getattr(self, key)
-    
-    @torch.no_grad()
-    def compute_grad_norm2(self):
-        # Compute gradient norm
-        g_norm = 0
-        for p in self.param_groups[0]['params']:
-            if p.grad is not None:
-                g_norm += p.grad.norm().item()**2
-        return g_norm**0.5
-        
-    def step(self, closure=None):
-        # Check if gradient is already available, if it isn't then do a forward step
-        with torch.no_grad():
-            grad = list(self.param_groups[0]['params'][0])[0].grad
-        if grad is None:
-            closure()
-        
-        grad_norm_before = self.compute_grad_norm2()
-        grad_norm_after = torch.inf
-
-        # Take a step
-        c = 0
-        grad = [p.grad for p in self.param_groups[0]['params']]
-        while grad_norm_after > grad_norm_before and c < self.max_iter:
-            stop = True if abs(self.lr - self.min_lr)/self.min_lr < 1e-6 else False
-            old_lr = self.lr
-            with torch.no_grad():
-                for i, param in enumerate(self.param_groups[0]['params']):
-                    param.data -= param.grad.data*self.lr/grad_norm_before
-
-            closure() # To recompute gradient 
-            
-            with torch.no_grad():
-                grad_norm_after = self.compute_grad_norm2()
-                print(f' grad_norm_before: {grad_norm_before}, grad_norm_after: {grad_norm_after}')
-                
-                # Check the gradient norm condition
-                if grad_norm_after < grad_norm_before:
-                    # Accept the step and possibly increase the radius
-                    self.lr = min(self.inc_factor * self.lr, self.max_lr)
-                    break
-                else:
-                    # Decrease the radius
-                    self.lr = max(self.lr * self.dec_factor, self.min_lr)
-
-                if self.lr != self.min_lr:
-                    if c == 0: 
-                        grad = [g * (-self.lr/old_lr) for g in grad]
-                    else:
-                        grad = [g * (self.lr/old_lr) for g in grad]
-                else: # self.lr == self.min_lr
-                    if c == 0:
-                        grad = [g * (-(old_lr-self.lr)/old_lr) for g in grad]
-                    else:
-                        grad = [g * ((old_lr-self.lr)/old_lr) for g in grad]    
-
-                # Else learning rate remains unchanged
-                if stop:
-                    break
-                c += 1
-            
-        self.update_param_group()
         
 class APTS(torch.optim.Optimizer):
     def __init__(self, model, criterion, subdomain_optimizer, subdomain_optimizer_defaults, global_optimizer, global_optimizer_defaults, lr=0.01, max_subdomain_iter=5, dogleg=False):
@@ -332,8 +131,44 @@ class APTS(torch.optim.Optimizer):
         else:
             global_optimizer_defaults.update({'lr': lr})
             self.global_optimizer = global_optimizer(params=model.subdomain.parameters(), **global_optimizer_defaults) # standard PyTorch optimizers
-        self.timings = {'glob_opt_t':0, 'loc_opt_t':0, 'other_1': 0, 'other_2':0, 'other_3':0, 'other_4':0, 'closure_1':0, 'closure_2':0}
-    
+        self.timings = {'smoother':0, 'precond':0, 'copy_params': 0, 'step_comp':0, 'dogleg':0, 'other_4':0, 'closure_1':0, 'closure_2':0}
+   
+    def get_timings(self):
+        timings = {key: self.timings[key] for key in self.timings.keys()}
+        if 'tradam' in str(self.subdomain_optimizer).lower():
+            timings.update(self.subdomain_optimizer.get_timings())
+        return timings
+
+    def display_avg_timers(self):
+        '''Display the timings of the optimizer in a table format with ordered columns'''
+        timings = self.get_timings()
+        timings.pop('precond')
+        total_time = sum(timings.values())
+        headers = ["Timer", "Time (s)", "Percentage (%)"]
+        
+        # Create rows for each timer
+        rows = [
+            [key, f'{timings[key]:.4f}', f'{(timings[key]/total_time)*100:.2f}%']
+            for key in sorted(timings.keys())
+        ]
+        
+        # Find the maximum width of each column
+        col_widths = [max(len(row[i]) for row in rows + [headers]) for i in range(3)]
+        
+        # Create a format string for each row
+        row_format = '  '.join(f'{{:<{col_width}}}' for col_width in col_widths)
+        
+        # Create the table
+        table = []
+        table.append(row_format.format(*headers))
+        table.append('-' * sum(col_widths))
+        for row in rows:
+            table.append(row_format.format(*row))
+        
+        print('\n'.join(table))
+        return '\n'.join(table)
+        
+        
     # override of param_group (update)
     def update_param_group(self):
         for key in self.param_groups[0].keys():
@@ -348,17 +183,14 @@ class APTS(torch.optim.Optimizer):
             self.subdomain_optimizer.zero_grad()
             self.model.subdomain.forward()
             self.model.subdomain.backward()
-            #normalize gradient to 1 to avoid going out of the trust region
-            # grad_norm = self.model.subdomain.grad_norm()
-            # if grad_norm > 1: 
-            #     for param in self.model.subdomain.parameters():
-            #         param.grad /= grad_norm
             self.subdomain_optimizer.step()
-        # TODO: we have the gradient, we can compute its norm, we could use the norm to have an idea of the convergence of the subdomain optimization
+        # Check if TRAdam is used as the local optimizer
+        if 'tradam' in str(self.subdomain_optimizer).lower():
+            self.subdomain_optimizer.reset_momentum()
         self.update_param_group()
 
     def zero_timers(self):
-        self.timings = {'glob_opt_t':0, 'loc_opt_t':0, 'other_1': 0, 'other_2':0, 'other_3':0, 'other_4':0, 'closure_1':0, 'closure_2':0}
+        self.timings = {key: 0 for key in self.timings.keys()}
         self.subdomain_optimizer.zero_timers()
 
     def step(self, closure):
@@ -371,11 +203,11 @@ class APTS(torch.optim.Optimizer):
         tic = time.time()
         initial_parameters = self.model.parameters(clone=True)
         initial_grads = self.model.grad(clone=True)
-        self.timings['other_1'] += time.time() - tic
+        self.timings['copy_params'] += time.time() - tic
         # Do subdomain steps
         tic = time.time()
         self.subdomain_steps()
-        self.timings['loc_opt_t'] += time.time() - tic
+        self.timings['precond'] += time.time() - tic
         with torch.no_grad():
             tic = time.time()
             new_loss = closure(compute_grad=False, zero_grad=True)
@@ -385,7 +217,7 @@ class APTS(torch.optim.Optimizer):
             # Compute the dogleg step with the hope that new_loss <= old_loss
             lr = self.lr
             w = 0; c = 0
-            self.timings['other_2'] += time.time() - tic
+            self.timings['step_comp'] += time.time() - tic
             tic = time.time()
             if self.dogleg:
                 while new_loss > initial_loss and c>=5: 
@@ -406,21 +238,18 @@ class APTS(torch.optim.Optimizer):
                     torch.cuda.empty_cache()
             else:
                 # Update the model with the new params
-                
                 for i,p in enumerate(self.model.parameters()):
                     p.copy_(initial_parameters.tensor[i] + step.tensor[i])
-            self.timings['other_3'] += time.time() - tic
+            self.timings['dogleg'] += time.time() - tic
 
         # Do global TR step
         tic = time.time()
         self.global_optimizer.step(closure)   
-        self.timings['glob_opt_t'] += time.time() - tic
+        self.timings['smoother'] += time.time() - tic
          
         # Update the learning rate
-        tic = time.time()
         self.lr = self.global_optimizer.lr
         self.update_param_group()
-        self.timings['other_4'] += time.time() - tic
         return new_loss
 
 class TR(torch.optim.Optimizer):
