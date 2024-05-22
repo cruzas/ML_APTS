@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Define the arrays for each parameter
-optimizers=("Adam")
+optimizers=("APTS")
 batch_sizes=(200)
 trials=5
 epochs=50

@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --account=c24
-#SBATCH --time=12:00:00
+#SBATCH --time=24:00:00
 #SBATCH --ntasks-per-core=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=1
@@ -39,5 +39,5 @@ echo "Dataset: $dataset"
 echo "Activating llms $(date)"
 source activate llms
 echo "Calling python script $(date)"
-srun python3 -u ./src/parallel_test.py --optimizer "$optimizer" --batch_size "$batch_size" --lr "$learning_rate" --trials "$trials" --epochs "$epochs" --dataset "$dataset"
+srun python3 -u src/parallel_test.py --optimizer "$optimizer" --batch_size "$batch_size" --lr "$learning_rate" --trials "$trials" --epochs "$epochs" --dataset "$dataset"
 echo "Test done $(date)"

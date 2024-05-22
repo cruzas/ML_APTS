@@ -203,7 +203,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         np.savez(filename, **all_trials)    
     
 if __name__ == '__main__':
-    if 1==2:
+    if 1==1:
         main()
     else:
         world_size = torch.cuda.device_count() if torch.cuda.is_available() else 0

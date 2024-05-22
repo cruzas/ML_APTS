@@ -142,7 +142,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     df.to_csv(f'epoch_info_{optimizer.__class__.__name__}.csv', index=False)
     
 if __name__ == '__main__':
-    if 1==2:
+    if 1==1:
         main()
     else:
         world_size = torch.cuda.device_count() if torch.cuda.is_available() else 0
