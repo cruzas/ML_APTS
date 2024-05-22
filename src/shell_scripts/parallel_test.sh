@@ -1,12 +1,12 @@
 #!/bin/bash
 
 # Define the arrays for each parameter
-optimizers=("SGD")
+optimizers=("APTS")
 batch_sizes=(200)
 trials=5
-epochs=10
+epochs=50
 nodes=2
-datasets=("mnist")
+datasets=("cifar10")
 
 # Iterate over each combination of parameters
 for optimizer in "${optimizers[@]}"
@@ -35,7 +35,7 @@ do
             fi
 
             # Make job name depend on the parameters
-            job_name="test_${optimizer}_${batch_size}_${learning_rate}_${dataset}"
+            job_name="test_${optimizer}_beta_${batch_size}_${learning_rate}_${dataset}"
             error_file="${job_name}.err"
             output_file="${job_name}.out"
             
