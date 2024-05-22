@@ -14,14 +14,14 @@ class CNN(nn.Module):
         self.pool = nn.MaxPool2d(kernel_size=2)
         self.fc1 = nn.Linear(64*5*5, 128)
         self.fc2 = nn.Linear(128, 10)
-        self.dropout = nn.Dropout(0.5)
+        # self.dropout = nn.Dropout(0.5)
 
     def forward(self, x):
         x = self.pool(F.relu(self.conv1(x)))
         x = self.pool(F.relu(self.conv2(x)))
         x = x.view(-1, 64*5*5)
         x = F.relu(self.fc1(x))
-        x = self.dropout(x)
+        # x = self.dropout(x)
         x = self.fc2(x)
         return F.log_softmax(x, dim=1)
 
@@ -48,7 +48,7 @@ transform = transforms.Compose([
 # Load data
 train_dataset = datasets.MNIST(root='./data', train=True, download=True, transform=transform)
 test_dataset = datasets.MNIST(root='./data', train=False, download=True, transform=transform)
-train_loader = DataLoader(train_dataset, batch_size=60000, shuffle=True)
+train_loader = DataLoader(train_dataset, batch_size=20000, shuffle=True)
 test_loader = DataLoader(test_dataset, batch_size=10000, shuffle=False)
 
 # Training function
