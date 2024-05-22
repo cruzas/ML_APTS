@@ -131,7 +131,7 @@ class APTS(torch.optim.Optimizer):
         else:
             global_optimizer_defaults.update({'lr': lr})
             self.global_optimizer = global_optimizer(params=model.subdomain.parameters(), **global_optimizer_defaults) # standard PyTorch optimizers
-        self.timings = {'smoother':0, 'precond':0, 'copy_params': 0, 'step_comp':0, 'dogleg':0, 'other_4':0, 'closure_1':0, 'closure_2':0}
+        self.timings = {'smoother':0, 'precond':0, 'copy_params': 0, 'step_comp':0, 'dogleg':0, 'closure_1':0, 'closure_2':0}
    
     def get_timings(self):
         timings = {key: self.timings[key] for key in self.timings.keys()}

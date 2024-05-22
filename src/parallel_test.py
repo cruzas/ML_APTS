@@ -71,9 +71,10 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             # testloader = DataLoader(testset, batch_size=batch_size, shuffle=False)
             # Use Power_DL instead of DataLoader for the trainloader and testloader
             trainset, _ = get_dataset(dataset)
-            trainloader = Power_DL(dataset=trainset, batch_size=batch_size, shuffle=True, device=torch.device('cuda:0'))
             # Define the device 
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')   
+            print(f"Device is {device}")
+            trainloader = Power_DL(dataset=trainset, batch_size=batch_size, shuffle=True, device=device)
 
             # Instantiate the model, loss function, and optimizer
             if dataset == 'cifar10':
@@ -84,8 +85,8 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
                 # Reset trainloader
                 # trainloader = DataLoader(trainset, batch_size=batch_size, shuffle=True)
                 trainset, testset = get_dataset(dataset)
-                trainloader = Power_DL(dataset=trainset, batch_size=batch_size, shuffle=True, device=torch.device('cuda:0'))
-                testloader = Power_DL(dataset=testset, batch_size=batch_size, shuffle=False, device=torch.device('cuda:0'))
+                trainloader = Power_DL(dataset=trainset, batch_size=batch_size, shuffle=True, device=device)
+                testloader = Power_DL(dataset=testset, batch_size=batch_size, shuffle=False, device=device)
                 
                 sample = sample[0]
                 layers = []
@@ -167,6 +168,8 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
                             _, predicted = torch.max(test_outputs.data, 1)
                             total += labels.size(0)
                             correct += (predicted == labels.to(predicted.device)).sum().item()
+                if dist.get_rank() == net.rank_list[-1][0]:
+                    accuracy = 100 * correct / total
                 return accuracy
 
             # Train and test the model
@@ -178,15 +181,12 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
                 all_trials['epoch_loss'][trial, epoch] = train(epoch)
                 all_trials['epoch_times'][trial, epoch] = time.time() - epoch_start
                 
-                if dist.get_rank() == net.rank_list[-1][0]:
-                    print(f'Epoch {epoch} loss: {all_trials["epoch_loss"][trial, epoch]} accuracy: {all_trials["epoch_accuracy"][trial, epoch]}')
-
                 if optimizer_name.lower() == 'sgd': 
                     scheduler.step()
                 
                 all_trials['epoch_accuracy'][trial, epoch] = test()
                 if dist.get_rank() == net.rank_list[-1][0]:
-                    print(f'Epoch {epoch} accuracy: {all_trials["epoch_accuracy"][trial, epoch]}')
+                    print(f'Epoch {epoch} loss: {all_trials["epoch_loss"][trial, epoch]} accuracy: {all_trials["epoch_accuracy"][trial, epoch]}')
 
                     all_trials['epoch_usage_times'][trial, epoch] = net.f_time + net.g_time + net.subdomain.f_time + net.subdomain.g_time
                     all_trials['epoch_num_f_evals'][trial, epoch] = net.num_f_evals
@@ -199,7 +199,8 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             np.savez(filename, **all_trials)    
     
 if __name__ == '__main__':
-    if 1==2:
+    # Check if snx3000 is in the current path
+    if 1==1:
         main()
     else:
         world_size = torch.cuda.device_count() if torch.cuda.is_available() else 0
