@@ -78,7 +78,8 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
 
             # Instantiate the model, loss function, and optimizer
             if dataset == 'cifar10':
-                net = ResNet(num_layers=2).to(device) # Equivalent to ResNet-18
+                # Number of layers is the number of hidden layers, and excludes the input and output layers
+                net = ResNet(num_layers=3).to(device) # Equivalent to ResNet-18 if num_layers=2
                 for sample in trainloader:
                     break
                 
@@ -89,13 +90,17 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
                 testloader = Power_DL(dataset=testset, batch_size=batch_size, shuffle=False, device=device)
                 
                 sample = sample[0]
+
                 layers = []
                 tot_layers = len(net.layer_list)
                 if tot_layers < world_size:
                     raise ValueError("Number of layers must be greater than or equal to the number of ranks.")
                 layers_per_rank = tot_layers // world_size
                 for i in range(world_size):
-                    layers.append(nn.Sequential(*net.layer_list[i*layers_per_rank:(i+1)*layers_per_rank]))
+                    if i < world_size-1:
+                        layers.append(nn.Sequential(*net.layer_list[i*layers_per_rank:(i+1)*layers_per_rank]))
+                    else:
+                        layers.append(nn.Sequential(*net.layer_list[i*layers_per_rank:]))
                         
                 layer_list = [0]*len(layers)
                 for i, l in enumerate(layers):
@@ -104,12 +109,13 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
                     sample = l(sample)
                     output_shape = lambda samples, sample=sample: torch.cat([torch.tensor([samples], dtype=torch.int32), torch.tensor(sample.shape[1:])])
                     layer_list[i] = ([lambda l=l: l, {}, (input_shape, output_shape)])
+
             elif dataset == 'mnist':
                 layer_list = [
                 (CNNPart1, {}, ((1, 28, 28), (64, 5, 5))),  # Adjust input and output shapes according to the actual sizes
                 (CNNPart2, {}, ((64, 5, 5), (128,))),        # Adjust input and output shapes
                 (CNNPart3, {}, ((128,), (10,)))              # Adjust input and output shapes
-]
+                ]
             rank_list = [[r] for r in range(world_size)]
             net = Weight_Parallelized_Model(layer_list, rank_list)
             criterion = nn.CrossEntropyLoss()
@@ -199,8 +205,11 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             np.savez(filename, **all_trials)    
     
 if __name__ == '__main__':
-    # Check if snx3000 is in the current path
-    if 1==1:
+    try:
+        operative_system = os.environ['OS']
+    except:
+        operative_system = 'Linux'
+    if 'Windows' not in operative_system:
         main()
     else:
         world_size = torch.cuda.device_count() if torch.cuda.is_available() else 0
@@ -210,7 +219,7 @@ if __name__ == '__main__':
 
         master_addr = 'localhost'
         master_port = '12345'  
-        world_size = 2
+        world_size = 3
         mp.spawn(main, args=(master_addr, master_port, world_size), nprocs=world_size, join=True)
 
 

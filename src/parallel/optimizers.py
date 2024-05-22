@@ -185,8 +185,8 @@ class APTS(torch.optim.Optimizer):
             self.model.subdomain.backward()
             self.subdomain_optimizer.step()
         # Check if TRAdam is used as the local optimizer
-        if 'tradam' in str(self.subdomain_optimizer).lower():
-            self.subdomain_optimizer.reset_momentum()
+        # if 'tradam' in str(self.subdomain_optimizer).lower():
+        #     self.subdomain_optimizer.reset_momentum()
         self.update_param_group()
 
     def zero_timers(self):

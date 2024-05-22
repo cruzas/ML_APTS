@@ -35,13 +35,18 @@ class ResNet(nn.Module):
         super(ResNet, self).__init__()
         self.in_planes = 64
         self.module = nn.ModuleList()
-        self.layer_list = [nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False), nn.BatchNorm2d(64), nn.ReLU()]
+        self.layer_list = [nn.Sequential(nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False), nn.BatchNorm2d(64), nn.ReLU())]
+        # self.layer_list =  [nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False), nn.BatchNorm2d(64), nn.ReLU()]
 
         for l in range(num_layers):
-            blocks = self._make_layer(block, (l+1)*64, 1, stride=min(2,l+1))
+            if l == num_layers - 1:
+                blocks = self._make_layer(block, (l+1)*64, 1, stride=2)
+            else:
+                blocks = self._make_layer(block, (l+1)*64, 1, stride=1)
             for b in range(len(blocks)):
                 self.layer_list.append(blocks[b])
         self.linear = nn.Sequential(
+            # Make this depend on the final block output size
             nn.AvgPool2d(16),  # Adjust the pooling size to match the input image size
             nn.Flatten(),
             nn.Linear( (l+1) * 64 * block.expansion, num_classes)
