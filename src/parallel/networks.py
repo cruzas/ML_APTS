@@ -5,6 +5,7 @@ import torch.optim as optim
 import torchvision
 import torchvision.transforms as transforms
 
+# ResNet-18 implementation
 class BasicBlock(nn.Module):
     expansion = 1
     def __init__(self, in_planes, planes, stride=1):
@@ -63,3 +64,55 @@ class ResNet(nn.Module):
             x = module(x)
         return x
 
+# CNN implementation for MNIST
+class CNN(nn.Module):
+    def __init__(self):
+        super(CNN, self).__init__()
+        self.conv1 = nn.Conv2d(1, 32, kernel_size=3)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=3)
+        self.pool = nn.MaxPool2d(kernel_size=2)
+        self.fc1 = nn.Linear(64*5*5, 128)
+        self.fc2 = nn.Linear(128, 10)
+        self.dropout = nn.Dropout(0.5)
+
+    def forward(self, x):
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
+        x = x.view(-1, 64*5*5)
+        x = F.relu(self.fc1(x))
+        x = self.dropout(x)
+        x = self.fc2(x)
+        return F.log_softmax(x, dim=1)
+
+class CNNPart1(nn.Module):
+    def __init__(self):
+        super(CNNPart1, self).__init__()
+        self.conv1 = nn.Conv2d(1, 32, kernel_size=3)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=3)
+        self.pool = nn.MaxPool2d(kernel_size=2)
+
+    def forward(self, x):
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
+        return x
+
+class CNNPart2(nn.Module):
+    def __init__(self):
+        super(CNNPart2, self).__init__()
+        self.fc1 = nn.Linear(64*5*5, 128)
+
+    def forward(self, x):
+        x = x.view(-1, 64*5*5)
+        x = F.relu(self.fc1(x))
+        return x
+
+class CNNPart3(nn.Module):
+    def __init__(self):
+        super(CNNPart3, self).__init__()
+        self.fc2 = nn.Linear(128, 10)
+        self.dropout = nn.Dropout(0.5)
+
+    def forward(self, x):
+        x = self.dropout(x)
+        x = self.fc2(x)
+        return F.log_softmax(x, dim=1)

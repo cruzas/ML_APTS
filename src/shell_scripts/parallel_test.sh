@@ -6,7 +6,7 @@ batch_sizes=(200)
 trials=5
 epochs=50
 nodes=2
-datasets=("cifar10")
+datasets=("mnist")
 
 # Iterate over each combination of parameters
 for optimizer in "${optimizers[@]}"
