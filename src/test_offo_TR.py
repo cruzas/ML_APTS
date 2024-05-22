@@ -59,7 +59,7 @@ def closure(inputs,labels):
     return loss
 
 # Training loop
-for epoch in range(5):  # Number of epochs
+for epoch in range(50):  # Number of epochs
     running_loss = 0.0
     for i, data in enumerate(train_loader, 0):
         inputs, labels = data
@@ -73,7 +73,7 @@ for epoch in range(5):  # Number of epochs
         if i % 100 == 99:    # Print every 100 mini-batches
             print(f"[Epoch {epoch + 1}, Batch {i + 1}] loss: {running_loss / 100:.3f}")
             # running_loss = 0.0
-    print(f"[Epoch {epoch + 1}, Batch {i + 1}] loss: {running_loss / 100:.3f}")
+    print(f"[Epoch {epoch + 1}, Batch {i + 1}] loss: {running_loss / 100:.3f} \nTimers: {optimizer.display_avg_timers()}")
     running_loss = 0.0
 
     # Compute the test accuracy
