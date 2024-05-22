@@ -1,7 +1,8 @@
 import numpy as np
 
 # Load the data from the npz file
-loaded_results = np.load('../SGD_cifar10_200_0.1_2_3.npz')
+# loaded_results = np.load('SGD_cifar10_200_0.1_50_5.npz')
+loaded_results = np.load('Adam_cifar10_200_0.001_50_5.npz')
 
 # Initialize a dictionary to store the results
 results = {key: loaded_results[key] for key in loaded_results}

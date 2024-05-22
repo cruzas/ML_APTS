@@ -67,65 +67,7 @@ class TRAdam(torch.optim.Optimizer):
                     else:
                         step_length += torch.norm(s[i]).item()**2
                     self.timings['t7'] += time.time() - tic
-            else:
-                streams = [torch.cuda.Stream() for _ in range(len(self.param_groups[0]['params']))]
-                step_lengths = [0 for _ in self.param_groups[0]['params']]
-                tic = time.time()
-                s = [0 for _ in self.param_groups[0]['params']]
-                self.timings['t1'] += time.time() - tic
-                step_length = 0; timings=[{'t1':0, 't2':0, 't3':0, 't4':0, 't5':0, 't6':0, 't7':0, 't8':0, 't9':0, 't7b':0, 't10':0} for _ in self.param_groups[0]['params']]
-                for i, p in enumerate(self.param_groups[0]['params']):
-                    if p.grad is None:
-                        continue
-                    grad = p.grad
-                    if grad.is_sparse:
-                        raise RuntimeError('Adam does not support sparse gradients')
                     
-                    with torch.cuda.stream(streams[i]):
-                        tic = time.time()
-                        # Initialize m
-                        self.m[i] = self.betas[0] * self.m[i] + (1 - self.betas[0]) * grad
-                        timings[i]['t2'] += time.time() - tic
-
-                        # Initialize v
-                        tic = time.time()
-                        self.v[i] = self.betas[1] * self.v[i] + (1 - self.betas[1]) * grad ** 2
-                        timings[i]['t3'] += time.time() - tic
-
-                        tic = time.time()
-                        m_hat = self.m[i] / (1 - self.betas[0] ** self.t)  # m_hat
-                        timings[i]['t4'] += time.time() - tic
-
-                        tic = time.time()
-                        v_hat = self.v[i] / (1 - self.betas[1] ** self.t)  # v_hat
-                        timings[i]['t5'] += time.time() - tic
-
-                        tic = time.time()
-                        s[i] = m_hat / (v_hat.sqrt() + self.eps)
-                        timings[i]['t6'] += time.time() - tic
-                        
-                        tic = time.time()
-                        step_lengths[i] = torch.norm(s[i], p=self.norm_type).item() if self.norm_type == torch.inf else torch.norm(s[i]).item() ** 2
-                        timings[i]['t7'] += time.time() - tic
-                        print(f'iteration {i} - time t7 {timings[i]["t7"]}')
-
-                tic = time.time()
-                for stream in streams:
-                    stream.synchronize()
-                self.timings['t10'] += time.time() - tic        
-                    
-                for i in range(len(self.param_groups[0]['params'])):
-                    for key in timings[i].keys():
-                        self.timings[key] += timings[i][key]
-                        
-                tic = time.time()
-                if self.norm_type == torch.inf:
-                    # Compute the maximum step length
-                    step_length = max(step_lengths)
-                else:
-                    step_length = sum(step_lengths)
-                self.timings['t7b'] += time.time() - tic
-                
             tic = time.time()
             step_length = step_length**0.5 if self.norm_type == 2 else step_length                
             self.timings['t8'] += time.time() - tic
