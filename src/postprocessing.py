@@ -27,9 +27,9 @@ def compute_average_and_variance_per_epoch(results):
     return {'accuracy': mean_accuracy, 'var_accuracy': variance_accuracy, 'loss': mean_loss, 'var_loss': variance_loss, 'times': mean_times, 'usage_times': mean_usage_times, 'num_f_evals': mean_f_evals, 'var_num_f_evals': variance_f_evals, 'num_g_evals': mean_g_evals, 'var_num_g_evals': variance_g_evals, 'num_sf_evals': mean_sf_evals, 'var_num_sf_evals': variance_sf_evals, 'num_sg_evals': mean_sg_evals, 'var_num_sg_evals': variance_sg_evals}
 
 # Load the data from the npz files
-sgd_results = np.load('SGD_cifar10_200_0.1_50_5.npz')
-adam_results = np.load('Adam_cifar10_200_0.001_50_5.npz')
-apts_results = np.load('APTS_cifar10_200_0.001_50_5.npz')
+sgd_results = np.load('SGD_cifar10_200_0.1_50_5_2.npz')
+adam_results = np.load('Adam_cifar10_200_0.001_50_5_2.npz')
+apts_results = np.load('APTS_cifar10_200_0.001_50_5_2.npz')
 
 # Compute average accuracy and loss per epoch and their variances
 sgd_mvs = compute_average_and_variance_per_epoch(sgd_results)
@@ -201,11 +201,11 @@ epochs = np.arange(0, sgd_mvs['accuracy'].shape[0])
 # plt.show()
 
 # Plot the ratio of the number of gradient evaluations of APTS to number of subdomain gradient evaluations of APTS versus number of epochs
-plt.figure(figsize=(12, 8))
-plt.plot(epochs, apts_cum_g_evals / apts_cum_sg_evals, marker='^', color='red', label='APTS')
-plt.xlabel('Number of Epochs')
-plt.ylabel('Ratio of Cumulative Number of Gradient Evaluations')
-plt.legend()
-plt.title('Ratio of Cumulative Number of Gradient Evaluations of APTS to Number of Subdomain Gradient Evaluations of APTS versus Number of Epochs')
-plt.show()
+# plt.figure(figsize=(12, 8))
+# plt.plot(epochs, apts_cum_g_evals / apts_cum_sg_evals, marker='^', color='red', label='APTS')
+# plt.xlabel('Number of Epochs')
+# plt.ylabel('Ratio of Cumulative Number of Gradient Evaluations')
+# plt.legend()
+# plt.title('Ratio of Cumulative Number of Gradient Evaluations of APTS to Number of Subdomain Gradient Evaluations of APTS versus Number of Epochs')
+# plt.show()
 

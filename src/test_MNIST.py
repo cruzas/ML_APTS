@@ -33,9 +33,9 @@ model = CNN().to(device)
 criterion = nn.CrossEntropyLoss()
 
 # Select optimizer: SGD or Adam
-optimizer = optim.Adam(model.parameters(), lr=0.001)
+# optimizer = optim.Adam(model.parameters(), lr=0.001)
 # For SGD, use the following line instead:
-# optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
+optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
 
 # Data augmentation and normalization
 transform = transforms.Compose([
@@ -48,7 +48,7 @@ transform = transforms.Compose([
 # Load data
 train_dataset = datasets.MNIST(root='./data', train=True, download=True, transform=transform)
 test_dataset = datasets.MNIST(root='./data', train=False, download=True, transform=transform)
-train_loader = DataLoader(train_dataset, batch_size=200, shuffle=True)
+train_loader = DataLoader(train_dataset, batch_size=60000, shuffle=True)
 test_loader = DataLoader(test_dataset, batch_size=10000, shuffle=False)
 
 # Training function
