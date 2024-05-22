@@ -51,13 +51,14 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     print(f'args: {args}')
     optimizer_name, batch_size, learning_rate, trials, epochs, dataset = \
         args.optimizer, args.batch_size, args.lr, args.trials, args.epochs, args.dataset
-    filename = f'{optimizer_name}_{dataset}_{batch_size}_{learning_rate}_{epochs}_{trials}.npz'
+    
+    prepare_distributed_environment(rank, master_addr, master_port, world_size)
+    world_size = dist.get_world_size() if dist.is_initialized() else world_size
 
+    filename = f'{optimizer_name}_{dataset}_{batch_size}_{learning_rate}_{epochs}_{trials}_{world_size}.npz'
     # Do experiment only if the filename doesn't already exist
     if not os.path.exists(filename):
-        prepare_distributed_environment(rank, master_addr, master_port, world_size)
         rank = dist.get_rank() if dist.get_backend() != 'nccl' else rank
-        world_size = dist.get_world_size() if dist.is_initialized() else world_size
         all_trials = {key: np.empty((trials, epochs)) for key in 
                     ['epoch_loss', 'epoch_accuracy', 'epoch_times', 'epoch_usage_times', 
                     'epoch_num_f_evals', 'epoch_num_g_evals', 'epoch_num_sf_evals', 'epoch_num_sg_evals']}
