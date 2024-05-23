@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import glob
 
 # Function to compute average and variance per epoch for both accuracy and loss
 def compute_average_and_variance_per_epoch(results):
@@ -24,12 +25,57 @@ def compute_average_and_variance_per_epoch(results):
     variance_sg_evals = np.var(results['epoch_num_sg_evals'], axis=0)
 
     # Return a dictionary for easy access
-    return {'accuracy': mean_accuracy, 'var_accuracy': variance_accuracy, 'loss': mean_loss, 'var_loss': variance_loss, 'times': mean_times, 'usage_times': mean_usage_times, 'num_f_evals': mean_f_evals, 'var_num_f_evals': variance_f_evals, 'num_g_evals': mean_g_evals, 'var_num_g_evals': variance_g_evals, 'num_sf_evals': mean_sf_evals, 'var_num_sf_evals': variance_sf_evals, 'num_sg_evals': mean_sg_evals, 'var_num_sg_evals': variance_sg_evals}
+    return {
+        'accuracy': mean_accuracy, 'var_accuracy': variance_accuracy,
+        'loss': mean_loss, 'var_loss': variance_loss,
+        'times': mean_times, 'usage_times': mean_usage_times,
+        'num_f_evals': mean_f_evals, 'var_num_f_evals': variance_f_evals,
+        'num_g_evals': mean_g_evals, 'var_num_g_evals': variance_g_evals,
+        'num_sf_evals': mean_sf_evals, 'var_num_sf_evals': variance_sf_evals,
+        'num_sg_evals': mean_sg_evals, 'var_num_sg_evals': variance_sg_evals
+    }
 
-# Load the data from the npz files
-sgd_results = np.load('SGD_cifar10_200_0.1_50_5_2.npz')
-adam_results = np.load('Adam_cifar10_200_0.001_50_5_2.npz')
-apts_results = np.load('APTS_cifar10_200_0.001_50_5_2.npz')
+# Function to load and combine results from trial files
+def load_and_combine_trials(file_pattern, epochs):
+    """
+    Loads and combines results from trial files matching the given pattern.
+
+    Args:
+    - file_pattern (str): Pattern to match the trial files (e.g., 'SGD_nl6_cifar10_200_0.01_1_2_t*.npz').
+    - epochs (int): Number of epochs.
+
+    Returns:
+    - dict: A dictionary containing combined results with keys corresponding to different metrics.
+            Each value is a NumPy array of shape (trials, epochs).
+    """
+    # Initialize empty lists to accumulate data from each trial
+    all_trials = {key: [] for key in [
+        'epoch_loss', 'epoch_accuracy', 'epoch_times', 'epoch_usage_times',
+        'epoch_num_f_evals', 'epoch_num_g_evals', 'epoch_num_sf_evals', 'epoch_num_sg_evals'
+    ]}
+
+    # Loop over all files matching the pattern
+    for file in glob.glob(file_pattern):
+        # Load the trial data
+        trial_data = np.load(file)
+        
+        # Append the data to the corresponding lists in all_trials
+        for key in all_trials.keys():
+            all_trials[key].append(trial_data[key])
+
+    # Convert lists to NumPy arrays with the appropriate shape (trials, epochs)
+    for key in all_trials.keys():
+        all_trials[key] = np.stack(all_trials[key])
+
+    return all_trials
+
+# Define the number of epochs
+epochs = 1  # Replace with the actual number of epochs if different
+
+# Load and combine results for each optimizer
+sgd_results = load_and_combine_trials('SGD_nl6_cifar10_200_0.01_1_2_t*.npz', epochs)
+adam_results = load_and_combine_trials('Adam_nl6_cifar10_200_0.001_1_2_t*.npz', epochs)
+apts_results = load_and_combine_trials('APTS_nl6_cifar10_200_0.001_1_2_t*.npz', epochs)
 
 # Compute average accuracy and loss per epoch and their variances
 sgd_mvs = compute_average_and_variance_per_epoch(sgd_results)
