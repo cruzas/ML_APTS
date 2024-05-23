@@ -1,12 +1,31 @@
 #!/bin/bash
 
 # Define the arrays for each parameter
-optimizers=("SGD" "Adam")
+# optimizers=("SGD" "Adam" "APTS")
+optimizers=("SGD")
 batch_sizes=(200)
-trials=3
-epochs=50
-nodes=2 
+epochs=1
+nodes_SGD_Adam=2
+nodes_APTS=(2 4 8)
+# trial_numbers=(1 2 3)
+trial_numbers=(2)
 datasets=("cifar10")
+
+submit_job() {
+    local optimizer=$1
+    local batch_size=$2
+    local dataset=$3
+    local trial_number=$4
+    local learning_rate=$5
+    local nodes=$6
+
+    job_name="${optimizer}_nl6_${dataset}_${batch_size}_${learning_rate}_${epochs}_${nodes}_t${trial_number}"
+    error_file="${job_name}.err"
+    output_file="${job_name}.out"
+
+    sbatch --nodes="$nodes" --job-name="$job_name" --output="$output_file" --error="$error_file" parallel_test.job "$optimizer" "$batch_size" "$learning_rate" "$trial_number" "$epochs" "$dataset"
+}
+
 # Iterate over each combination of parameters
 for optimizer in "${optimizers[@]}"
 do
@@ -14,75 +33,26 @@ do
     do   
         for dataset in "${datasets[@]}"
         do
-            # If optimizer is SGD, set learning rate to 0.1. Else, 0.001
-            if [ "$optimizer" == "SGD" ]
-            then
-                # If dataset is CIFAR-10, set learning rate to 0.01
-                if [ "$dataset" == "cifar10" ]
+            for trial_number in "${trial_numbers[@]}"
+            do
+                if [ "$optimizer" == "SGD" ] || [ "$optimizer" == "Adam" ]
                 then
-                    learning_rate=0.01
+                    nodes="$nodes_SGD_Adam"
+                    if [ "$optimizer" == "SGD" ] && [ "$dataset" == "cifar10" ]
+                    then
+                        learning_rate=0.01
+                    else
+                        learning_rate=0.001
+                    fi
+                    submit_job "$optimizer" "$batch_size" "$dataset" "$trial_number" "$learning_rate" "$nodes"
                 else
-                    learning_rate=0.01
+                    for nodes in "${nodes_APTS[@]}"
+                    do
+                        learning_rate=0.001
+                        submit_job "$optimizer" "$batch_size" "$dataset" "$trial_number" "$learning_rate" "$nodes"
+                    done
                 fi
-            else
-                if [ "$dataset" == "mnist" ]
-                then
-                    learning_rate=0.001
-                else
-                    learning_rate=0.001
-                fi
-            fi
-
-            # Make job name depend on the parameters
-            job_name="test_${optimizer}_beta_${batch_size}_${learning_rate}_${dataset}"
-            error_file="${job_name}.err"
-            output_file="${job_name}.out"
-            
-            sbatch --nodes="$nodes" --job-name="$job_name" --output="$output_file" --error="$error_file" parallel_test.job "$optimizer" "$batch_size" "$learning_rate" "$trials" "$epochs" "$dataset"
+            done
         done
     done
 done
-
-# echo "All SGD/Adam tests submitted to cluster."
-# optimizers=("APTS")
-# nodes=(2 4 8) 
-# # Iterate over each combination of parameters
-# for optimizer in "${optimizers[@]}"
-# do
-#     for batch_size in "${batch_sizes[@]}"
-#     do   
-#         for dataset in "${datasets[@]}"
-#         do
-#             for node in "${nodes[@]}"
-#             do
-#                 # If optimizer is SGD, set learning rate to 0.1. Else, 0.001
-#                 if [ "$optimizer" == "SGD" ]
-#                 then
-#                     # If dataset is CIFAR-10, set learning rate to 0.01
-#                     if [ "$dataset" == "cifar10" ]
-#                     then
-#                         learning_rate=0.01
-#                     else
-#                         learning_rate=0.01
-#                     fi
-#                 else
-#                     if [ "$dataset" == "mnist" ]
-#                     then
-#                         learning_rate=0.001
-#                     else
-#                         learning_rate=0.001
-#                     fi
-#                 fi
-#                 # Make job name depend on the parameters
-#                 job_name="test_${optimizer}_beta6_${dataset}_${batch_size}_${learning_rate}_${epochs}_${trials}_${node}"
-#                 error_file="${job_name}.err"
-#                 output_file="${job_name}.out"
-                
-#                 sbatch --nodes="$node" --job-name="$job_name" --output="$output_file" --error="$error_file" parallel_test.job "$optimizer" "$batch_size" "$learning_rate" "$trials" "$epochs" "$dataset"
-#             done
-#         done
-#     done
-# done
-
-
-
