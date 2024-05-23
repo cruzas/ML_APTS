@@ -57,37 +57,39 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     prepare_distributed_environment(rank, master_addr, master_port, world_size)
     world_size = dist.get_world_size() if dist.is_initialized() else world_size
 
-    filename = f'{optimizer_name}_beta_{dataset}_{batch_size}_{learning_rate}_{epochs}_{trials}_{world_size}.npz'
+    filename = f'{optimizer_name}_beta6_{dataset}_{batch_size}_{learning_rate}_{epochs}_{trials}_{world_size}.npz'
     # Do experiment only if the filename doesn't already exist
     if not os.path.exists(filename):
         rank = dist.get_rank() if dist.get_backend() != 'nccl' else rank
         all_trials = {key: np.empty((trials, epochs)) for key in 
                     ['epoch_loss', 'epoch_accuracy', 'epoch_times', 'epoch_usage_times', 
                     'epoch_num_f_evals', 'epoch_num_g_evals', 'epoch_num_sf_evals', 'epoch_num_sg_evals']}
+        
+        trainset, testset = get_dataset(dataset)
         for trial in range(trials):
             torch.manual_seed(1000*trial + 1)
-            # trainset, testset = get_dataset(dataset)
-            # trainloader = DataLoader(trainset, batch_size=batch_size, shuffle=True)
-            # testloader = DataLoader(testset, batch_size=batch_size, shuffle=False)
+            trainloader = DataLoader(trainset, batch_size=batch_size, shuffle=True)
+            testloader = DataLoader(testset, batch_size=batch_size, shuffle=False)
             # Use Power_DL instead of DataLoader for the trainloader and testloader
-            trainset, _ = get_dataset(dataset)
+            # trainset, _ = get_dataset(dataset)
             # Define the device 
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')   
             print(f"Device is {device}")
-            trainloader = Power_DL(dataset=trainset, batch_size=batch_size, shuffle=True, device=device)
+            # trainloader = Power_DL(dataset=trainset, batch_size=batch_size, shuffle=True, device=device)
 
             # Instantiate the model, loss function, and optimizer
             if dataset == 'cifar10':
                 # Number of layers is the number of hidden layers, and excludes the input and output layers
-                net = ResNet(num_layers=3).to(device) # Equivalent to ResNet-18 if num_layers=2
-                for sample in trainloader:
-                    break
-                
+                net = ResNet(num_layers=6).to(device) # Equivalent to ResNet-18 if num_layers=2
+                # for sample in trainloader:
+                    # break
+                sample = next(iter(trainloader))
+
                 # Reset trainloader
                 # trainloader = DataLoader(trainset, batch_size=batch_size, shuffle=True)
-                trainset, testset = get_dataset(dataset)
-                trainloader = Power_DL(dataset=trainset, batch_size=batch_size, shuffle=True, device=device)
-                testloader = Power_DL(dataset=testset, batch_size=batch_size, shuffle=False, device=device)
+                # trainset, testset = get_dataset(dataset)
+                # trainloader = Power_DL(dataset=trainset, batch_size=batch_size, shuffle=True, device=device)
+                # testloader = Power_DL(dataset=testset, batch_size=batch_size, shuffle=False, device=device)
                 
                 sample = sample[0]
 
