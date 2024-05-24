@@ -1,14 +1,12 @@
 #!/bin/bash
 
 # Define the arrays for each parameter
-# optimizers=("SGD" "Adam" "APTS")
-optimizers=("SGD")
+optimizers=("APTS")
 batch_sizes=(200)
-epochs=1
+epochs=25
 nodes_SGD_Adam=2
 nodes_APTS=(2 4 8)
-# trial_numbers=(1 2 3)
-trial_numbers=(2)
+trial_numbers=(1 2 3)
 datasets=("cifar10")
 
 submit_job() {
