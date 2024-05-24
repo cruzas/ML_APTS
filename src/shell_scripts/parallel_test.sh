@@ -2,11 +2,11 @@
 
 # Define the arrays for each parameter
 optimizers=("APTS")
-batch_sizes=(200)
-epochs=25
-nodes_SGD_Adam=2
-nodes_APTS=(2 4 8)
-trial_numbers=(1 2 3)
+batch_sizes=(250)
+epochs=50
+nodes_SGD_Adam=(2 4 8)
+nodes_APTS=(4)
+trial_numbers=(1)
 datasets=("cifar10")
 
 submit_job() {
@@ -35,14 +35,16 @@ do
             do
                 if [ "$optimizer" == "SGD" ] || [ "$optimizer" == "Adam" ]
                 then
-                    nodes="$nodes_SGD_Adam"
-                    if [ "$optimizer" == "SGD" ] && [ "$dataset" == "cifar10" ]
-                    then
-                        learning_rate=0.01
-                    else
-                        learning_rate=0.001
-                    fi
-                    submit_job "$optimizer" "$batch_size" "$dataset" "$trial_number" "$learning_rate" "$nodes"
+                    for nodes in "${nodes_SGD_Adam[@]}"
+                    do
+                        if [ "$optimizer" == "SGD" ] && [ "$dataset" == "cifar10" ]
+                        then
+                            learning_rate=0.01
+                        else
+                            learning_rate=0.001
+                        fi
+                        submit_job "$optimizer" "$batch_size" "$dataset" "$trial_number" "$learning_rate" "$nodes"
+                    done
                 else
                     for nodes in "${nodes_APTS[@]}"
                     do
