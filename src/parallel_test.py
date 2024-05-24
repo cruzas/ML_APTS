@@ -75,18 +75,15 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             'epoch_num_sf_evals': np.zeros(epochs, dtype=np.int32),
             'epoch_num_sg_evals': np.zeros(epochs, dtype=np.int32)
         }
-
-        
+                
         trainset, testset = get_dataset(dataset)
         torch.manual_seed(1000*trial_number + 1)
         trainloader = DataLoader(trainset, batch_size=batch_size, shuffle=True)
         testloader = DataLoader(testset, batch_size=batch_size, shuffle=False)
-        # Use Power_DL instead of DataLoader for the trainloader and testloader
-        # trainset, _ = get_dataset(dataset)
+        
         # Define the device 
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')   
         print(f"Device is {device}")
-        # trainloader = Power_DL(dataset=trainset, batch_size=batch_size, shuffle=True, device=device)
 
         # Instantiate the model, loss function, and optimizer
         if dataset == 'cifar10':
@@ -94,15 +91,10 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             net = ResNet(num_layers=6).to(device) # Equivalent to ResNet-18 if num_layers=2
             for sample in trainloader:
                 break
-            # sample = next(iter(trainloader))[0]
-
+            sample = sample[0]
+                
             # Reset trainloader
             trainloader = DataLoader(trainset, batch_size=batch_size, shuffle=True)
-            # trainset, testset = get_dataset(dataset)
-            # trainloader = Power_DL(dataset=trainset, batch_size=batch_size, shuffle=True, device=device)
-            # testloader = Power_DL(dataset=testset, batch_size=batch_size, shuffle=False, device=device)
-            
-            sample = sample[0]
 
             layers = []
             tot_layers = len(net.layer_list)
@@ -129,16 +121,15 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             (CNNPart2, {}, ((64, 5, 5), (128,))),        # Adjust input and output shapes
             (CNNPart3, {}, ((128,), (10,)))              # Adjust input and output shapes
             ]
+
         rank_list = [[r] for r in range(world_size)]
         net = Weight_Parallelized_Model(layer_list, rank_list)
         criterion = nn.CrossEntropyLoss()
 
         # Check if optimizer_name in lower case is 'sgd'
         if optimizer_name.lower() == 'sgd':
-            # SGD from torch optim
             optimizer = optim.SGD(net.parameters(), lr=learning_rate, momentum=0.9, weight_decay=1e-4) # According to https://arxiv.org/pdf/1512.03385
         elif optimizer_name.lower() == 'adam':
-            # Adam from torch optim
             optimizer = optim.Adam(net.parameters(), lr=learning_rate, betas=(0.9, 0.999), weight_decay=0)
         elif optimizer_name.lower() == 'tradam':
             optimizer = TRAdam(net.parameters(), lr=learning_rate)
@@ -215,8 +206,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
                 trial_data['epoch_num_sg_evals'][epoch] = net.subdomain.num_g_evals
 
         if dist.get_rank() == net.rank_list[-1][0]:
-            # Save all trials as an npz file
-            np.savez(filename, **trial_data) 
+            np.savez(filename, **trial_data) # Save trial as an npz file
     
 if __name__ == '__main__':
     try:
