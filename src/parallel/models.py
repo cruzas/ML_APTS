@@ -69,14 +69,20 @@ class Weight_Parallelized_Subdomain(nn.Module):
         
     def forward(self, count_f=True):
         start = time.time()
-        self.model.outputs = self.model.layer(self.model.inputs)
+        for k,chunk in enumerate(self.model.inputs):
+            self.model.outputs[k] = self.model.layer(chunk)
         if count_f: self.num_f_evals += 1
         self.f_time += time.time() - start
 
     def backward(self, count_g=True):
         start = time.time()
         for param in self.model.layer.parameters():
-            param.grad = autograd.grad(self.model.outputs, param, grad_outputs=self.model.grad_output, retain_graph=True)[0]   
+            for k in range(len(self.model.outputs)):
+                if param.grad is None:
+                    param.grad = autograd.grad(self.model.outputs[k], param, grad_outputs=self.model.grad_output[k], retain_graph=True)[0]/len(self.model.outputs)
+                else:
+                    param.grad += autograd.grad(self.model.outputs[k], param, grad_outputs=self.model.grad_output[k], retain_graph=True)[0]/len(self.model.outputs)
+        # print(f'Rank {self.model.rank} | Grad norm: {torch.norm(torch.cat([param.grad.flatten() for param in self.model.parameters()], dim=0), p=2)}')
         if count_g: self.num_g_evals += 1
         self.g_time += time.time() - start
             
@@ -127,11 +133,13 @@ class Weight_Parallelized_Tensor(nn.Module):
             g3 = g1 @ g2
             g3 = g3.to(f'cpu' if self.backend == 'gloo' else f'cuda:{self.gpu_id}')
             if self.rank in self.list_of_master_nodes:
-                dist.reduce(tensor=g3, dst=self.rank_list[0][0], group=self.master_group, op=dist.ReduceOp.SUM)  # Sum the gradients on the master rank
-                if self.rank == self.rank_list[0][0]:
-                    return g3.item() # Multiply the internal models
-                else:
-                    return 0 # Return 0 for the other ranks, only the master rank will have the correct result
+                dist.all_reduce(tensor=g3, group=self.master_group, op=dist.ReduceOp.SUM)  # Sum the gradients on the master rank
+                return g3.item()
+                # dist.reduce(tensor=g3, dst=self.rank_list[0][0], group=self.master_group, op=dist.ReduceOp.SUM)  # NOTE: Backup ... Sum the gradients on the master rank
+                # if self.rank == self.rank_list[0][0]:
+                #     return g3.item() # Multiply the internal models
+                # else:
+                #     return 0 # Return 0 for the other ranks, only the master rank will have the correct result
         else:
             return Weight_Parallelized_Tensor([p*a for p in self.tensor], rank_list=self.rank_list, backend=self.backend, master_group=self.master_group, list_of_master_nodes=self.list_of_master_nodes, rank=self.rank, gpu_id=self.gpu_id)   # Multiply model by a scalar or tensor
 
@@ -202,7 +210,7 @@ class Weight_Parallelized_Model(nn.Module):
         self.gpu_device = decide_gpu_device(ws=dist.get_world_size(), backend=dist.get_backend(), gpu_id=0)
         self.inputs = []#torch.tensor(()).to(self.gpu_device)  # each rank will store here the input of the next rank or layer (so the output of the current layer)  | -> this is needed for the backward pass
         self.outputs = []#torch.tensor(()).to(self.gpu_device)  # each rank will store here the output of the previous rank or layer (so its input)                  | -> this is needed for the backward pass
-        # self.grad_output = torch.tensor(()).to(self.gpu_device) # each rank will store here the gradient of the output of the current layer (so the gradient of the loss w.r.t. the output of the current layer) | -> this is needed for the backward pass
+        self.grad_output = []#torch.tensor(()).to(self.gpu_device) # each rank will store here the gradient of the output of the current layer (so the gradient of the loss w.r.t. the output of the current layer) | -> this is needed for the backward pass
         # layer_list = [[layer_class, {}] if type(layer_class) is not list and type(layer_class) is not tuple else [layer_class[0], layer_class[1]] for layer_class in layer_list]
         for i, ((layer_class, params, (input_shape, output_shape)), ranks) in enumerate(zip(layer_list, rank_list)): # Create each layer and assign it to the specified rank (device)
             self.shapes[i] = ((input_shape, output_shape))
@@ -377,32 +385,32 @@ class Weight_Parallelized_Model(nn.Module):
             i = self.rank_list.index(self.ranks)
             if self.rank in self.rank_list[-1]: # End of the pipeline
                 if len(self.rank_list[-1])==1:
-                    grad_output = autograd.grad(loss, self.outputs[k], create_graph=True)[0]               
-                    grad_data = autograd.grad(self.outputs[k], self.inputs[k], grad_outputs=grad_output, retain_graph=True)[0] # this is needed to compute the derivative at the previous layer
+                    self.grad_output.append(autograd.grad(loss[k], self.outputs[k], create_graph=True)[0])             
+                    grad_data = autograd.grad(self.outputs[k], self.inputs[k], grad_outputs=self.grad_output[-1], retain_graph=True)[0] # this is needed to compute the derivative at the previous layer
                     distops.send(tensor=grad_data.cpu() if self.backend == 'gloo' else grad_data, dst=self.rank_list[-2][0]) # TODO make this async if possible
                     for param in self.layer.parameters():
-                        param.grad = autograd.grad(self.outputs[k], param, grad_outputs=grad_output, retain_graph=True)[0]      
+                        param.grad = autograd.grad(self.outputs[k], param, grad_outputs=self.grad_output[-1], retain_graph=True)[0]      
                 else:
                     raise NotImplementedError("Tensor parallelism is not yet implemented.")
             elif self.rank in self.rank_list[0]:
                 # TODO : remember to add a condition for the master rank to be the ONLY one waiting for the "shape_transfer"
                 shape_transfer.wait() # wait for the shape to be broadcasted
-                grad_output = torch.empty(*self.shapes[i+1][0](sample_shape), device='cpu' if self.backend == 'gloo' else self.gpu_device, requires_grad=True)
-                grad_output, _ = distops.recv(grad_output, src=self.rank_list[1][0])       
-                grad_output = grad_output.to(self.gpu_device)
+                self.grad_output.append(torch.empty(*self.shapes[i+1][0](sample_shape), device='cpu' if self.backend == 'gloo' else self.gpu_device, requires_grad=True))
+                self.grad_output[-1], _ = distops.recv(self.grad_output[-1], src=self.rank_list[1][0])       
+                self.grad_output[-1] = self.grad_output[-1].to(self.gpu_device)
                 for param in self.layer.parameters():
-                    param.grad = autograd.grad(self.outputs[k], param, grad_outputs=grad_output, retain_graph=True)[0] 
+                    param.grad = autograd.grad(self.outputs[k], param, grad_outputs=self.grad_output[-1], retain_graph=True)[0] 
             else: # middle of the pipeline
                 shape_transfer.wait() # wait for the shape to be broadcasted
-                grad_output = torch.empty(*self.shapes[i+1][0](sample_shape), device='cpu' if self.backend == 'gloo' else self.gpu_device, requires_grad=True)
-                grad_output, _ = distops.recv(grad_output, src=self.rank_list[i+1][0])       
-                grad_output = grad_output.to(self.gpu_device)
-                data_grad2 = autograd.grad(self.outputs[k], self.inputs[k], grad_outputs=grad_output, retain_graph=True)[0] # this is needed to compute the derivative at the previous layer
+                self.grad_output.append(torch.empty(*self.shapes[i+1][0](sample_shape), device='cpu' if self.backend == 'gloo' else self.gpu_device, requires_grad=True))
+                self.grad_output[-1], _ = distops.recv(self.grad_output[-1], src=self.rank_list[i+1][0])       
+                self.grad_output[-1] = self.grad_output[-1].to(self.gpu_device)
+                data_grad2 = autograd.grad(self.outputs[k], self.inputs[k], grad_outputs=self.grad_output[-1], retain_graph=True)[0] # this is needed to compute the derivative at the previous layer
                 for param in self.layer.parameters():
-                    param.grad = autograd.grad(self.outputs[k], param, grad_outputs=grad_output, retain_graph=True)[0] 
+                    param.grad = autograd.grad(self.outputs[k], param, grad_outputs=self.grad_output[-1], retain_graph=True)[0] 
                 distops.send(tensor=data_grad2.cpu() if self.backend == 'gloo' else data_grad2, dst=self.rank_list[i-1][0]) # TODO make this async if possible
                 # TODO / NOTE: maybe we can delete self.inputs to free memory. It is not used anymore after the backward pass. (even in subdomains)
         self.g_time += time.time() - start
         # here we print the norm of the gradients of the model
-        print(f'Rank {self.rank} | Grad norm: {self.grad().norm()}')
+        # print(f'Rank {self.rank} | Grad norm: {self.grad().norm()}')
         return None

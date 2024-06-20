@@ -44,6 +44,9 @@ class ParallelLoss():
         return self.criterion(x,y) if dist.get_rank() == self.rank_list[-1][0] else None    
 
 def closure(inputs, targets, criterion, model, compute_grad=True, zero_grad=True, output=False, data_chunks_amount=2, counter=True):
+    '''
+    NOTE: Losses from different chunks are averaged.
+    '''
     if model.__class__.__name__ != 'Weight_Parallelized_Model':
         raise ValueError('Model must be an instance of the "Weight_Parallelized_Model" class.')
     if isinstance(criterion, type):
@@ -58,19 +61,18 @@ def closure(inputs, targets, criterion, model, compute_grad=True, zero_grad=True
             outputs = model(inputs, count_f=counter, chunks_amount=data_chunks_amount)
         # loss = torch.zeros(1).to(model.gpu_device)
         losses = []
+        loss = torch.tensor(0.0).to(model.gpu_device)
         if model.rank == model.rank_list[-1][0]:
             for i,out in enumerate(outputs):
                 losses.append(criterion(out, targets[i].to(out.device)))
-            # loss = criterion(outputs, targets.to(outputs.device))
-            loss = torch.stack(losses).mean()
-        else:
-            loss = torch.zeros(1).to(model.gpu_device)
+            loss = sum(losses)/len(losses)
         dist.broadcast(tensor=loss.detach(), src=model.rank_list[-1][0], group=model.master_group)
         if compute_grad and torch.is_grad_enabled():
             model.backward(losses, count_g=counter, chunks_amount=data_chunks_amount)
         if output:
             if model.rank == model.rank_list[-1][0]:
-                return loss.item(), outputs.detach()
+                # Returning outputs here in case we want to compute the accuracy afterwards
+                return loss.item(), [output.detach() for output in outputs]
             else:
                 return loss.item(), None
         else:

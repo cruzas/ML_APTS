@@ -100,8 +100,10 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
                 # Vectorize x 
                 x = x.view(x.size(0), -1)
                 # One optimizer step
-                optimizer.step(closure(x, y, torch.nn.CrossEntropyLoss(), model, data_chunks_amount=2))
-                
+                tic = time.time()
+                for i in range(10):
+                    optimizer.step(closure(x, y, torch.nn.CrossEntropyLoss(), model, data_chunks_amount=10))
+                print(f"RANK {rank} - Time for one step: {time.time()-tic}")
                 # Train a subdomain model
                 # if rank in rank_list[0]:
                 # for asd in range(2):
