@@ -96,8 +96,8 @@ class TRAdam(torch.optim.Optimizer):
                 
                 tic = time.time()
                 if self.norm_type == torch.inf:
-                    # step_length = max(step_length, torch.norm(s[i], p=self.norm_type).item())
-                    step_length = 1 # upper bound for the step length to spare computation time (TODO: Check if this is actually true)
+                    step_length = max(step_length, torch.norm(s[i], p=self.norm_type).item())
+                    # step_length = 1 # upper bound for the step length to spare computation time (TODO: Check if this is actually true)
                 else:
                     step_length += torch.norm(s[i]).item()**2
                 self.timings['TRAdam_step_length'] = self.timings.get('TRAdam_step_length',0) + time.time() - tic
