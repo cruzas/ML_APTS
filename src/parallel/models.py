@@ -6,6 +6,11 @@ import torch.distributed as dist
 import torch.autograd as autograd
 import diffdist.functional as distops
 from parallel.utils import *
+# from pippy import pipeline
+
+# TODO: before send we could reduce the weight of tensor by using the half precision / float16, then we can convert it back to float32 after the recv
+
+
 
 # NOTE: TO BE DONE
 class TensorSharding(nn.Module):
@@ -123,7 +128,10 @@ class Weight_Parallelized_Tensor(nn.Module):
             g3 = g3.to(f'cpu' if self.backend == 'gloo' else f'cuda:{self.gpu_id}')
             if self.rank in self.list_of_master_nodes:
                 dist.reduce(tensor=g3, dst=self.rank_list[0][0], group=self.master_group, op=dist.ReduceOp.SUM)  # Sum the gradients on the master rank
-            return g3.item() # Multiply the internal models
+                if self.rank == self.rank_list[0][0]:
+                    return g3.item() # Multiply the internal models
+                else:
+                    return 0 # Return 0 for the other ranks, only the master rank will have the correct result
         else:
             return Weight_Parallelized_Tensor([p*a for p in self.tensor], rank_list=self.rank_list, backend=self.backend, master_group=self.master_group, list_of_master_nodes=self.list_of_master_nodes, rank=self.rank, gpu_id=self.gpu_id)   # Multiply model by a scalar or tensor
 
@@ -192,9 +200,9 @@ class Weight_Parallelized_Model(nn.Module):
         self.backend = dist.get_backend()
         self.shapes = [0]*len(layer_list)
         self.gpu_device = decide_gpu_device(ws=dist.get_world_size(), backend=dist.get_backend(), gpu_id=0)
-        self.inputs = torch.tensor(()).to(self.gpu_device)  # each rank will store here the input of the next rank or layer (so the output of the current layer)  | -> this is needed for the backward pass
-        self.outputs = torch.tensor(()).to(self.gpu_device)  # each rank will store here the output of the previous rank or layer (so its input)                  | -> this is needed for the backward pass
-        self.grad_output = torch.tensor(()).to(self.gpu_device) # each rank will store here the gradient of the output of the current layer (so the gradient of the loss w.r.t. the output of the current layer) | -> this is needed for the backward pass
+        self.inputs = []#torch.tensor(()).to(self.gpu_device)  # each rank will store here the input of the next rank or layer (so the output of the current layer)  | -> this is needed for the backward pass
+        self.outputs = []#torch.tensor(()).to(self.gpu_device)  # each rank will store here the output of the previous rank or layer (so its input)                  | -> this is needed for the backward pass
+        # self.grad_output = torch.tensor(()).to(self.gpu_device) # each rank will store here the gradient of the output of the current layer (so the gradient of the loss w.r.t. the output of the current layer) | -> this is needed for the backward pass
         # layer_list = [[layer_class, {}] if type(layer_class) is not list and type(layer_class) is not tuple else [layer_class[0], layer_class[1]] for layer_class in layer_list]
         for i, ((layer_class, params, (input_shape, output_shape)), ranks) in enumerate(zip(layer_list, rank_list)): # Create each layer and assign it to the specified rank (device)
             self.shapes[i] = ((input_shape, output_shape))
@@ -239,13 +247,12 @@ class Weight_Parallelized_Model(nn.Module):
         # This should be a setup phase
         # TODO: could be useful to have a function that computes the shapes of the tensors for each rank in the pipeline in and out of the layers in place of the manual input_shape and output_shape
         pass
-    
-    def forward(self, x, chunks_amount=1, reset_grad = False, compute_grad = True, count_f=True):
+
+    def forward(self, x, chunks_amount=2, reset_grad = False, compute_grad = True, count_f=True):
         start = time.time()
-        assert chunks_amount == 1, 'This is a temporary solution to avoid problems in the backward pass due to concatenation of the tensors'
         # Initialize the input and output tensors (needed for the backward pass)
-        self.inputs = torch.tensor(()).to(self.gpu_device) 
-        self.outputs = torch.tensor(()).to(self.gpu_device)
+        self.inputs = []#torch.tensor(()).to(self.gpu_device)
+        self.outputs = []#torch.tensor(()).to(self.gpu_device)
         # "compute_grad" is a flag to avoid storing the tensors needed to compute the gradients
         compute_grad = False if not torch.is_grad_enabled() else compute_grad
         if count_f: self.num_f_evals += 1 
@@ -257,8 +264,8 @@ class Weight_Parallelized_Model(nn.Module):
             # Initialize the chunk_shapes tensor to store the shapes of the chunks
             chunk_shapes = torch.zeros(chunks_amount, dtype=torch.int32).to(self.gpu_device)
             if self.rank in self.rank_list[0]: # If the rank is in the first layer's rank list, send the input to the next device
-                self.inputs = x if compute_grad else 0
                 chunks = x.chunk(chunks_amount)
+                self.inputs = chunks if compute_grad else []
                 chunk_shapes = torch.tensor([chunk.shape[0] for chunk in chunks], dtype=torch.int32).to(self.gpu_device)
             # Broadcast the chunk_shapes tensor to all the ranks (this allows to know the shape of the input tensor for each rank in the pipeline and prepare the recv function)
             shape_transfer = dist.broadcast(tensor=chunk_shapes, src=self.rank_list[0][0], group=self.master_group, async_op=True) # broadcasting only the batch size | async operation to avoid blocking the first layer
@@ -269,7 +276,7 @@ class Weight_Parallelized_Model(nn.Module):
                     chunk = chunks[c].to(self.gpu_device)
                     out = self.layer(chunk) # Apply the current layer
                     next_rank = self.rank_list[i + 1]
-                    self.outputs = out#torch.cat((self.outputs, out), dim=0) if compute_grad else 0
+                    self.outputs.append(out)#torch.cat((self.outputs, out), dim=0) if compute_grad else 0
                     distops.send(tensor=out.cpu() if self.backend == 'gloo' else out, dst=next_rank[0]) # send the tensor
                     # TODO: delete out to free memory?
                 elif i == len(self.rank_list)-1: # end of the pipeline (last layer)
@@ -278,16 +285,16 @@ class Weight_Parallelized_Model(nn.Module):
                     # print(f'expecting tensor of shape {temp.shape} from rank {self.rank_list[i-1][0]}')
                     temp,_ = distops.recv(tensor=temp, src=self.rank_list[i-1][0])
                     temp = temp.to(self.gpu_device)
-                    self.inputs = temp#torch.cat((self.inputs, temp), dim=0) if compute_grad else 0
-                    self.outputs = self.layer(temp)#torch.cat((self.outputs, self.layer[0](temp)), dim=0)
+                    self.inputs.append(temp) #torch.cat((self.inputs, temp), dim=0) if compute_grad else 0
+                    self.outputs.append(self.layer(temp))#self.outputs = self.layer(temp)#torch.cat((self.outputs, self.layer[0](temp)), dim=0)
                 else: # middle of the pipeline (between the first and the last layer)
                     shape_transfer.wait() # wait for the shape to be broadcasted
                     temp = torch.empty(*self.shapes[i][0](chunk_shapes[c]), device='cpu' if self.backend == 'gloo' else self.gpu_device, requires_grad=True)
                     temp,_ = distops.recv(tensor=temp, src=self.rank_list[i-1][0])
                     temp = temp.to(self.gpu_device)
-                    self.inputs = temp #torch.cat((self.inputs, temp), dim=0) if compute_grad else 0 # TODO: test concatenation in the future
+                    self.inputs.append(temp) #torch.cat((self.inputs, temp), dim=0) if compute_grad else 0 # TODO: test concatenation in the future
                     out = self.layer(temp)
-                    self.outputs = out#torch.cat((self.outputs, out), dim=0) if compute_grad else 0
+                    self.outputs.append(out)#self.outputs = out#torch.cat((self.outputs, out), dim=0) if compute_grad else 0
                     next_rank = self.rank_list[i + 1]
                     distops.send(tensor=out.cpu() if self.backend == 'gloo' else out, dst=next_rank[0]) # send the tensor
 
@@ -297,44 +304,105 @@ class Weight_Parallelized_Model(nn.Module):
         else:
             self.f_time += time.time() - start
             return True
+    
+    # def forward(self, x, chunks_amount=1, reset_grad = False, compute_grad = True, count_f=True):
+    #     start = time.time()
+    #     assert chunks_amount == 1, 'This is a temporary solution to avoid problems in the backward pass due to concatenation of the tensors'
+    #     # Initialize the input and output tensors (needed for the backward pass)
+    #     self.inputs = torch.tensor(()).to(self.gpu_device) 
+    #     self.outputs = torch.tensor(()).to(self.gpu_device)
+    #     # "compute_grad" is a flag to avoid storing the tensors needed to compute the gradients
+    #     compute_grad = False if not torch.is_grad_enabled() else compute_grad
+    #     if count_f: self.num_f_evals += 1 
+    #     with torch.set_grad_enabled(compute_grad):
+    #         # Reset the gradients of the model before starting to accumulate them again
+    #         if reset_grad:
+    #             self.zero_grad()
+                
+    #         # Initialize the chunk_shapes tensor to store the shapes of the chunks
+    #         chunk_shapes = torch.zeros(chunks_amount, dtype=torch.int32).to(self.gpu_device)
+    #         if self.rank in self.rank_list[0]: # If the rank is in the first layer's rank list, send the input to the next device
+    #             self.inputs = x if compute_grad else 0
+    #             chunks = x.chunk(chunks_amount)
+    #             chunk_shapes = torch.tensor([chunk.shape[0] for chunk in chunks], dtype=torch.int32).to(self.gpu_device)
+    #         # Broadcast the chunk_shapes tensor to all the ranks (this allows to know the shape of the input tensor for each rank in the pipeline and prepare the recv function)
+    #         shape_transfer = dist.broadcast(tensor=chunk_shapes, src=self.rank_list[0][0], group=self.master_group, async_op=True) # broadcasting only the batch size | async operation to avoid blocking the first layer
+    #         # Start the pipeline
+    #         for c in range(chunks_amount):
+    #             i = self.rank_list.index(self.ranks)
+    #             if i == 0: # begin of the pipeline (first layer)
+    #                 chunk = chunks[c].to(self.gpu_device)
+    #                 out = self.layer(chunk) # Apply the current layer
+    #                 next_rank = self.rank_list[i + 1]
+    #                 self.outputs = out#torch.cat((self.outputs, out), dim=0) if compute_grad else 0
+    #                 distops.send(tensor=out.cpu() if self.backend == 'gloo' else out, dst=next_rank[0]) # send the tensor
+    #                 # TODO: delete out to free memory?
+    #             elif i == len(self.rank_list)-1: # end of the pipeline (last layer)
+    #                 shape_transfer.wait() # wait for the shape to be broadcasted
+    #                 temp = torch.empty(*self.shapes[i][0](chunk_shapes[c]), device='cpu' if self.backend == 'gloo' else self.gpu_device, requires_grad=True)
+    #                 # print(f'expecting tensor of shape {temp.shape} from rank {self.rank_list[i-1][0]}')
+    #                 temp,_ = distops.recv(tensor=temp, src=self.rank_list[i-1][0])
+    #                 temp = temp.to(self.gpu_device)
+    #                 self.inputs = temp#torch.cat((self.inputs, temp), dim=0) if compute_grad else 0
+    #                 self.outputs = self.layer(temp)#torch.cat((self.outputs, self.layer[0](temp)), dim=0)
+    #             else: # middle of the pipeline (between the first and the last layer)
+    #                 shape_transfer.wait() # wait for the shape to be broadcasted
+    #                 temp = torch.empty(*self.shapes[i][0](chunk_shapes[c]), device='cpu' if self.backend == 'gloo' else self.gpu_device, requires_grad=True)
+    #                 temp,_ = distops.recv(tensor=temp, src=self.rank_list[i-1][0])
+    #                 temp = temp.to(self.gpu_device)
+    #                 self.inputs = temp #torch.cat((self.inputs, temp), dim=0) if compute_grad else 0 # TODO: test concatenation in the future
+    #                 out = self.layer(temp)
+    #                 self.outputs = out#torch.cat((self.outputs, out), dim=0) if compute_grad else 0
+    #                 next_rank = self.rank_list[i + 1]
+    #                 distops.send(tensor=out.cpu() if self.backend == 'gloo' else out, dst=next_rank[0]) # send the tensor
 
-    def backward(self, loss, count_g=True):
+    #     if self.rank in self.rank_list[-1]: # If the rank is in the last layer's rank list, return the output
+    #         self.f_time += time.time() - start
+    #         return self.outputs
+    #     else:
+    #         self.f_time += time.time() - start
+    #         return True
+
+    def backward(self, loss, count_g=True, chunks_amount=2):
         start = time.time()
         # We used "diffdist" library: https://github.com/ag14774/diffdist/blob/master/diffdist/testing.py
-        if self.rank in self.list_of_master_nodes:
-            sample_shape = torch.zeros(1, dtype=torch.int32).to(self.gpu_device)
-            if self.rank in self.rank_list[0]: # If the rank is in the first layer's rank list, send the input to the next device
-                sample_shape = torch.tensor([self.outputs.shape[0]], dtype=torch.int32).to(self.gpu_device)
-            # Broadcast the chunk_shapes tensor to all the ranks (this allows to know the shape of the input tensor for each rank in the pipeline and prepare the recv function)
-            shape_transfer = dist.broadcast(tensor=sample_shape, src=self.rank_list[0][0], group=self.master_group, async_op=True) 
-        i = self.rank_list.index(self.ranks)
         if count_g: self.num_g_evals += 1 
-        if self.rank in self.rank_list[-1]: # End of the pipeline
-            if len(self.rank_list[-1])==1:
-                self.grad_output = autograd.grad(loss, self.outputs, create_graph=True)[0]               
-                grad_data = autograd.grad(self.outputs, self.inputs, grad_outputs=self.grad_output, retain_graph=True)[0] # this is needed to compute the derivative at the previous layer
-                distops.send(tensor=grad_data.cpu() if self.backend == 'gloo' else grad_data, dst=self.rank_list[-2][0]) # TODO make this async if possible
+        for k in range(chunks_amount): # chunked loss
+            if self.rank in self.list_of_master_nodes:
+                sample_shape = torch.zeros(1, dtype=torch.int32).to(self.gpu_device)
+                if self.rank in self.rank_list[0]: # If the rank is in the first layer's rank list, send the input to the next device
+                    sample_shape = torch.tensor([self.outputs[k].shape[0]], dtype=torch.int32).to(self.gpu_device)
+                # Broadcast the chunk_shapes tensor to all the ranks (this allows to know the shape of the input tensor for each rank in the pipeline and prepare the recv function)
+                shape_transfer = dist.broadcast(tensor=sample_shape, src=self.rank_list[0][0], group=self.master_group, async_op=True) 
+            i = self.rank_list.index(self.ranks)
+            if self.rank in self.rank_list[-1]: # End of the pipeline
+                if len(self.rank_list[-1])==1:
+                    grad_output = autograd.grad(loss, self.outputs[k], create_graph=True)[0]               
+                    grad_data = autograd.grad(self.outputs[k], self.inputs[k], grad_outputs=grad_output, retain_graph=True)[0] # this is needed to compute the derivative at the previous layer
+                    distops.send(tensor=grad_data.cpu() if self.backend == 'gloo' else grad_data, dst=self.rank_list[-2][0]) # TODO make this async if possible
+                    for param in self.layer.parameters():
+                        param.grad = autograd.grad(self.outputs[k], param, grad_outputs=grad_output, retain_graph=True)[0]      
+                else:
+                    raise NotImplementedError("Tensor parallelism is not yet implemented.")
+            elif self.rank in self.rank_list[0]:
+                # TODO : remember to add a condition for the master rank to be the ONLY one waiting for the "shape_transfer"
+                shape_transfer.wait() # wait for the shape to be broadcasted
+                grad_output = torch.empty(*self.shapes[i+1][0](sample_shape), device='cpu' if self.backend == 'gloo' else self.gpu_device, requires_grad=True)
+                grad_output, _ = distops.recv(grad_output, src=self.rank_list[1][0])       
+                grad_output = grad_output.to(self.gpu_device)
                 for param in self.layer.parameters():
-                    param.grad = autograd.grad(self.outputs, param, grad_outputs=self.grad_output, retain_graph=True)[0]      
-            else:
-                raise NotImplementedError("Tensor parallelism is not yet implemented.")
-        elif self.rank in self.rank_list[0]:
-            # TODO : remember to add a condition for the master rank to be the ONLY one waiting for the "shape_transfer"
-            shape_transfer.wait() # wait for the shape to be broadcasted
-            self.grad_output = torch.empty(*self.shapes[i+1][0](sample_shape), device='cpu' if self.backend == 'gloo' else self.gpu_device, requires_grad=True)
-            self.grad_output, _ = distops.recv(self.grad_output, src=self.rank_list[1][0])       
-            self.grad_output = self.grad_output.to(self.gpu_device)
-            for param in self.layer.parameters():
-                param.grad = autograd.grad(self.outputs, param, grad_outputs=self.grad_output, retain_graph=True)[0] 
-        else: # middle of the pipeline
-            shape_transfer.wait() # wait for the shape to be broadcasted
-            self.grad_output = torch.empty(*self.shapes[i+1][0](sample_shape), device='cpu' if self.backend == 'gloo' else self.gpu_device, requires_grad=True)
-            self.grad_output, _ = distops.recv(self.grad_output, src=self.rank_list[i+1][0])       
-            self.grad_output = self.grad_output.to(self.gpu_device)
-            data_grad2 = autograd.grad(self.outputs, self.inputs, grad_outputs=self.grad_output, retain_graph=True)[0] # this is needed to compute the derivative at the previous layer
-            for param in self.layer.parameters():
-                param.grad = autograd.grad(self.outputs, param, grad_outputs=self.grad_output, retain_graph=True)[0] 
-            distops.send(tensor=data_grad2.cpu() if self.backend == 'gloo' else data_grad2, dst=self.rank_list[i-1][0]) # TODO make this async if possible
-            # TODO / NOTE: maybe we can delete self.inputs to free memory. It is not used anymore after the backward pass. (even in subdomains)
+                    param.grad = autograd.grad(self.outputs[k], param, grad_outputs=grad_output, retain_graph=True)[0] 
+            else: # middle of the pipeline
+                shape_transfer.wait() # wait for the shape to be broadcasted
+                grad_output = torch.empty(*self.shapes[i+1][0](sample_shape), device='cpu' if self.backend == 'gloo' else self.gpu_device, requires_grad=True)
+                grad_output, _ = distops.recv(grad_output, src=self.rank_list[i+1][0])       
+                grad_output = grad_output.to(self.gpu_device)
+                data_grad2 = autograd.grad(self.outputs[k], self.inputs[k], grad_outputs=grad_output, retain_graph=True)[0] # this is needed to compute the derivative at the previous layer
+                for param in self.layer.parameters():
+                    param.grad = autograd.grad(self.outputs[k], param, grad_outputs=grad_output, retain_graph=True)[0] 
+                distops.send(tensor=data_grad2.cpu() if self.backend == 'gloo' else data_grad2, dst=self.rank_list[i-1][0]) # TODO make this async if possible
+                # TODO / NOTE: maybe we can delete self.inputs to free memory. It is not used anymore after the backward pass. (even in subdomains)
         self.g_time += time.time() - start
+        # here we print the norm of the gradients of the model
+        print(f'Rank {self.rank} | Grad norm: {self.grad().norm()}')
         return None
