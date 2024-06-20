@@ -43,34 +43,36 @@ class ParallelLoss():
             print('ciao')
         return self.criterion(x,y) if dist.get_rank() == self.rank_list[-1][0] else None    
 
-def closure(inputs, targets, criterion, model, compute_grad=True, zero_grad=True, output=False, counter=True):
+def closure(inputs, targets, criterion, model, compute_grad=True, zero_grad=True, output=False, data_chunks_amount=2, counter=True):
+    if model.__class__.__name__ != 'Weight_Parallelized_Model':
+        raise ValueError('Model must be an instance of the "Weight_Parallelized_Model" class.')
     if isinstance(criterion, type):
         raise ValueError('Criterion must be an instance of a class.')
+    if model.rank == model.rank_list[-1][0]:
+        targets = targets.chunk(data_chunks_amount)
     # Compute loss
-    def closure2(compute_grad=compute_grad, zero_grad=zero_grad, output=output, counter=counter):
+    def closure2(compute_grad=compute_grad, zero_grad=zero_grad, output=output, data_chunks_amount=data_chunks_amount, counter=counter):
         if zero_grad:
             model.zero_grad()
         with torch.set_grad_enabled(compute_grad):
-            if model.__class__.__name__ == 'Weight_Parallelized_Model':
-                outputs = model(inputs, count_f=counter)
-            else:
-                outputs = model(inputs)
-        if outputs is not None:
+            outputs = model(inputs, count_f=counter, chunks_amount=data_chunks_amount)
+        # loss = torch.zeros(1).to(model.gpu_device)
+        losses = []
+        if model.rank == model.rank_list[-1][0]:
+            for i,out in enumerate(outputs):
+                losses.append(criterion(out, targets[i].to(out.device)))
+            # loss = criterion(outputs, targets.to(outputs.device))
+            loss = torch.stack(losses).mean()
+        else:
             loss = torch.zeros(1).to(model.gpu_device)
+        dist.broadcast(tensor=loss.detach(), src=model.rank_list[-1][0], group=model.master_group)
+        if compute_grad and torch.is_grad_enabled():
+            model.backward(losses, count_g=counter, chunks_amount=data_chunks_amount)
+        if output:
             if model.rank == model.rank_list[-1][0]:
-                loss = criterion(outputs, targets.to(outputs.device))
-            dist.broadcast(tensor=loss.detach(), src=model.rank_list[-1][0], group=model.master_group)
-            if compute_grad and torch.is_grad_enabled():
-                # Compute gradient
-                if model.__class__.__name__ == 'Weight_Parallelized_Model':
-                    model.backward(loss, count_g=counter)
-                else:
-                    loss.backward()
-            if output:
-                if model.rank == model.rank_list[-1][0]:
-                    return loss.item(), outputs.detach()
-                else:
-                    return loss.item(), None
+                return loss.item(), outputs.detach()
             else:
-                return loss.item()
+                return loss.item(), None
+        else:
+            return loss.item()
     return closure2 

@@ -262,8 +262,8 @@ def create_dataloaders(dataset="mnist", data_dir=os.path.abspath("./data"), mb_s
     mb_size2 = min(len(test_set), int(mb_size))
 
     if parameter_decomposition:
-        train_loader = Power_DL(dataset=train_set, shuffle=True, device=device, minibatch_size=mb_size, overlapping_samples=overlap_ratio)
-        test_loader = Power_DL(dataset=test_set, shuffle=False, device=device, minibatch_size=mb_size2)
+        train_loader = Power_DL(dataset=train_set, shuffle=True, device=device, batch_size=mb_size, overlapping_samples=overlap_ratio)
+        test_loader = Power_DL(dataset=test_set, shuffle=False, device=device, batch_size=mb_size2)
     else:
         world_size = world_size = dist.get_world_size() if dist.is_initialized() else 1
         overlapping_samples = int(overlap_ratio * mb_size)

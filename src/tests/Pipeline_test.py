@@ -14,6 +14,8 @@ from parallel.utils import *
 from parallel.dataloaders import ParallelizedDataLoader
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
+# TODO: before send we could reduce the weight of tensor by using the half precision / float16, then we can convert it back to float32 after the recv
+
 
 def main(rank=None, master_addr=None, master_port=None, world_size=None):
     prepare_distributed_environment(rank, master_addr, master_port, world_size)
@@ -98,7 +100,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
                 # Vectorize x 
                 x = x.view(x.size(0), -1)
                 # One optimizer step
-                optimizer.step(closure(x, y, torch.nn.CrossEntropyLoss(), model))
+                optimizer.step(closure(x, y, torch.nn.CrossEntropyLoss(), model, data_chunks_amount=2))
                 
                 # Train a subdomain model
                 # if rank in rank_list[0]:
@@ -200,7 +202,7 @@ if __name__ == '__main__':
             exit(0)
 
         master_addr = 'localhost'
-        master_port = '12345'  
+        master_port = '12345'   
         world_size = 2
         mp.spawn(main, args=(master_addr, master_port, world_size), nprocs=world_size, join=True)
 
