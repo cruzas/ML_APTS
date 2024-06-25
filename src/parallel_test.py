@@ -28,16 +28,16 @@ def parse_args():
     parser.add_argument('--lr', type=float, default=0.001, help='Learning rate')
     parser.add_argument('--trials', type=int, default=10, help='Number of trials')
     parser.add_argument('--epochs', type=int, default=10, help='Number of epochs')
-    parser.add_argument('--dataset', type=str, default='cifar10', help='Dataset name')
+    parser.add_argument('--dataset', type=str, default='MNIST', help='Dataset name')
     parser.add_argument('--trial_number', type=int, default=0, help='Trial number')
     return parser.parse_args()
 
 def get_dataset(dataset):
-    if dataset == 'cifar10':
+    if dataset.lower() == 'cifar10':
         transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
         return torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform), \
                torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform)
-    elif dataset == 'mnist':
+    elif dataset.lower() == 'mnist':
         # Transform for MNIST
         transform = transforms.Compose([
             transforms.RandomRotation(10),
@@ -86,7 +86,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         print(f"Device is {device}")
 
         # Instantiate the model, loss function, and optimizer
-        if dataset == 'cifar10':
+        if dataset.lower() == 'cifar10':
             # Number of layers is the number of hidden layers, and excludes the input and output layers
             net = ResNet(num_layers=6).to(device) # Equivalent to ResNet-18 if num_layers=2
             for sample in trainloader:
@@ -113,17 +113,26 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
                 input_shape = lambda samples, sample=sample: torch.cat([torch.tensor([samples], dtype=torch.int32), torch.tensor(sample.shape)[1:]])
                 sample = l(sample)
                 output_shape = lambda samples, sample=sample: torch.cat([torch.tensor([samples], dtype=torch.int32), torch.tensor(sample.shape[1:])])
-                layer_list[i] = ([lambda l=l: l, {}, (input_shape, output_shape)])
+                # layer_list[i] = ([lambda l=l: l, {}, (input_shape, output_shape)])
+                layer_list[i] = ([lambda l=l: l, {}])
 
-        elif dataset == 'mnist':
+        elif dataset.lower() == 'mnist':
+            # layer_list = [
+            # (CNNPart1, {}, ((1, 28, 28), (64, 5, 5))),  # Adjust input and output shapes according to the actual sizes
+            # (CNNPart2, {}, ((64, 5, 5), (128,))),        # Adjust input and output shapes
+            # (CNNPart3, {}, ((128,), (10,)))              # Adjust input and output shapes
+            # ]
+            for sample in trainloader:
+                break
+            sample = sample[0]
+            trainloader = DataLoader(trainset, batch_size=batch_size, shuffle=True)
             layer_list = [
-            (CNNPart1, {}, ((1, 28, 28), (64, 5, 5))),  # Adjust input and output shapes according to the actual sizes
-            (CNNPart2, {}, ((64, 5, 5), (128,))),        # Adjust input and output shapes
-            (CNNPart3, {}, ((128,), (10,)))              # Adjust input and output shapes
+            (CNNPart1, {}),  # Adjust input and output shapes according to the actual sizes
+            (CNNPart2, {}),        # Adjust input and output shapes
+            (CNNPart3, {})              # Adjust input and output shapes
             ]
-
         rank_list = [[r] for r in range(world_size)]
-        net = Weight_Parallelized_Model(layer_list, rank_list)
+        net = Weight_Parallelized_Model(layer_list, rank_list, sample=sample)
         criterion = nn.CrossEntropyLoss()
 
         # Check if optimizer_name in lower case is 'sgd'
@@ -138,7 +147,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             subdomain_optimizer_defaults = {'lr': 1e99}
             global_optimizer = TR
             global_optimizer_defaults = {'lr': learning_rate, 'max_iter': 3}    
-            optimizer = APTS(model=net, lr=learning_rate, dogleg=False, subdomain_optimizer=subdomain_optimizer, subdomain_optimizer_defaults=subdomain_optimizer_defaults, criterion=criterion, global_optimizer=global_optimizer, global_optimizer_defaults=global_optimizer_defaults)
+            optimizer = APTS(model=net, lr=learning_rate, dogleg=True, subdomain_optimizer=subdomain_optimizer, subdomain_optimizer_defaults=subdomain_optimizer_defaults, criterion=criterion, global_optimizer=global_optimizer, global_optimizer_defaults=global_optimizer_defaults)
         else:
             raise ValueError(f'Optimizer {optimizer_name} not supported')
         
@@ -172,9 +181,10 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
                 for data in testloader:
                     images, labels = data
                     images, labels = images.to(device), labels.to(device)
-                    closuree = closure(images, labels, criterion, net, compute_grad=False, zero_grad=True, output=True, counter=False)       
+                    closuree = closure(images, labels, criterion, net, compute_grad=False, zero_grad=True, return_output=True, counter=False)       
                     _, test_outputs = closuree()
                     if dist.get_rank() == net.rank_list[-1][0]:
+                        test_outputs = torch.cat(test_outputs)
                         _, predicted = torch.max(test_outputs.data, 1)
                         total += labels.size(0)
                         correct += (predicted == labels.to(predicted.device)).sum().item()
@@ -196,6 +206,8 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
                 scheduler.step()
 
             trial_data['epoch_accuracy'][epoch] = test()
+            print(f"Epoch {epoch}, loss {trial_data['epoch_loss'][epoch]}, accuracy {trial_data['epoch_accuracy'][epoch]}")
+
             if dist.get_rank() == net.rank_list[-1][0]:
                 print(f'Epoch {epoch} loss: {trial_data["epoch_loss"][epoch]} accuracy: {trial_data["epoch_accuracy"][epoch]}')
 
@@ -205,8 +217,8 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
                 trial_data['epoch_num_sf_evals'][epoch] = net.subdomain.num_f_evals
                 trial_data['epoch_num_sg_evals'][epoch] = net.subdomain.num_g_evals
 
-        if dist.get_rank() == net.rank_list[-1][0]:
-            np.savez(filename, **trial_data) # Save trial as an npz file
+        # if dist.get_rank() == net.rank_list[-1][0]:
+        #     np.savez(filename, **trial_data) # Save trial as an npz file
     
 if __name__ == '__main__':
     try:

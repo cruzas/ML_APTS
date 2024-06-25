@@ -111,7 +111,7 @@ class TRAdam(torch.optim.Optimizer):
 
         
 class APTS(torch.optim.Optimizer):
-    def __init__(self, model, criterion, subdomain_optimizer, subdomain_optimizer_defaults, global_optimizer, global_optimizer_defaults, lr=0.01, max_subdomain_iter=5, dogleg=False):
+    def __init__(self, model, criterion, subdomain_optimizer, subdomain_optimizer_defaults, global_optimizer, global_optimizer_defaults, lr=0.01, max_subdomain_iter=0, dogleg=False):
         '''
         We use infinity norm for the gradient norm.
         '''
@@ -177,17 +177,19 @@ class APTS(torch.optim.Optimizer):
             
     def subdomain_steps(self):
         # Set up the learning rate
-        self.subdomain_optimizer.param_groups[0]['lr'] = self.lr/self.max_subdomain_iter
-        # Do subdomain steps
-        for _ in range(self.max_subdomain_iter):
-            self.subdomain_optimizer.zero_grad()
-            self.model.subdomain.forward()
-            self.model.subdomain.backward()
-            self.subdomain_optimizer.step()
-        # Check if TRAdam is used as the local optimizer
-        # if 'tradam' in str(self.subdomain_optimizer).lower():
-        #     self.subdomain_optimizer.reset_momentum()
-        self.update_param_group()
+        if self.max_subdomain_iter > 0:
+            self.subdomain_optimizer.param_groups[0]['lr'] = self.lr/self.max_subdomain_iter#*0.5
+            # Do subdomain steps
+            for i in range(self.max_subdomain_iter):
+                self.subdomain_optimizer.step()
+                self.subdomain_optimizer.zero_grad()
+                if i != self.max_subdomain_iter - 1:
+                    self.model.subdomain.forward()
+                    self.model.subdomain.backward()
+            # Check if TRAdam is used as the local optimizer
+            # if 'tradam' in str(self.subdomain_optimizer).lower():
+            #     self.subdomain_optimizer.reset_momentum()
+            self.update_param_group()
 
     def zero_timers(self):
         self.timings = {key: 0 for key in self.timings.keys()}
@@ -220,9 +222,9 @@ class APTS(torch.optim.Optimizer):
             self.timings['step_comp'] += time.time() - tic
             tic = time.time()
             if self.dogleg:
-                while new_loss > initial_loss and c>=5: 
+                while new_loss > initial_loss and c<5: 
                     c += 1
-                    # Decrease lr to decrease size of step...
+                    # Decrease lr to decrease size of step ...
                     lr = lr/2
                     # ... while moving towards the steepest descent direction (-g)
                     w = min(w + 0.2, 1)
@@ -236,6 +238,7 @@ class APTS(torch.optim.Optimizer):
                     new_loss = closure(compute_grad=False, zero_grad=True)
                     # Empty cache to avoid memory problems
                     torch.cuda.empty_cache()
+                # print(c)
             else:
                 # Update the model with the new params
                 for i,p in enumerate(self.model.parameters()):
@@ -285,8 +288,7 @@ class TR(torch.optim.Optimizer):
         new_loss = torch.inf; c = 0
 
         while old_loss - new_loss < 0 and c < self.max_iter:
-            stop = True if abs(self.lr - self.min_lr)/self.min_lr < 1e-6 else False
-            # TODO: Adaptive reduction factor -> if large difference in losses maybe divide by 4
+            stop = True if abs(self.lr - self.min_lr)/self.min_lr < 1e-6 else False # TODO: Adaptive reduction factor -> if large difference in losses maybe divide by 4
             for i,param in enumerate(self.model.parameters()):
                 param.data -= grad.tensor[i].data
             new_loss = closure(compute_grad=False)
