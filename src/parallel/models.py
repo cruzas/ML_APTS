@@ -10,6 +10,41 @@ from parallel.utils import *
 
 # TODO: before send we could reduce the weight of tensor by using the half precision / float16, then we can convert it back to float32 after the recv
 
+class Parallelized_Model(nn.Module):
+    '''
+    Data parallel and weight parallel model.
+    '''
+    def __init__(self, layer_list, sample, num_replicas=1):
+        super(Parallelized_Model, self).__init__()
+
+        self.num_replicas = num_replicas
+        self.world_size = dist.get_world_size()
+        if num_replicas*len(layer_list) != self.world_size:
+            raise ValueError(f"The number of replicas times the number of layers ({num_replicas*len(layer_list)}) must be equal to the world size ({self.world_size}).")
+        self.rank = dist.get_rank()
+        
+        # Model copy rank list
+        self.layer_list = layer_list
+        self.model_ranks = [[r+k*len(self.layer_list) for r in range(len(self.layer_list))] for k in range(num_replicas)] 
+        for ranks in self.model_ranks:
+            if self.rank in ranks:
+                # TODO: Change gpu_id to be more generic for tensor sharding later on...
+                self.model = Weight_Parallelized_Model(layer_list=layer_list, rank_list=ranks, sample=sample, gpu_id=0)
+
+        # Create a process group for each layer. This group contains all the ranks that are responsible for the layer across all replicas.
+        for layer_idx in range(len(self.layer_list)):
+            # Collect ranks that are responsible for this layer across all replicas
+            ranks = [r + layer_idx for r in range(0, self.world_size, len(self.layer_list))]
+            # Create a new group containing these ranks
+            if self.rank in ranks:
+                self.layer_copies_group = dist.new_group(ranks)
+    
+    def forward(self, x, chunks_amount=2, reset_grad = False, compute_grad = True, count_f=True):
+        return self.model.forward(x, chunks_amount=chunks_amount, reset_grad=reset_grad, compute_grad=compute_grad, count_f=count_f)
+    
+    def backward(self, loss, count_g=True, chunks_amount=2):
+        self.model.backward(loss=None)
+    
 
 
 # NOTE: TO BE DONE
@@ -162,30 +197,6 @@ def decide_gpu_device(ws, backend, gpu_id):
             return f'cuda:{dist.get_rank()}'
     else:
         return f'cuda:{gpu_id}'
-
-
-class Parallelized_Model(nn.Module):
-    '''
-    Data parallel and weight parallel model.
-    '''
-    def __init__(self, gpu_list, layer_list, rank_list):
-        super(Parallelized_Model, self).__init__()
-        # check that the gpu_list has available GPUs
-        self.gpu_list = gpu_list
-        gpu_available = torch.cuda.device_count()
-        if all([gpu < gpu_available for gpu in gpu_list]):
-            raise ValueError("GPUs available less than those in gpu_list")
-        
-        self.all_ranks = [r for rank in rank_list for r in rank]
-        self.rank = dist.get_rank()
-        rank_list = [[rank] if type(rank) is not list and type(rank) is not tuple else rank for rank in rank_list]
-        self.rank_list = rank_list
-        self.list_of_master_nodes = [self.rank_list[i][0] for i in range(len(self.rank_list))]
-        self.master_group = dist.new_group(ranks=self.list_of_master_nodes)
-        self.backend = dist.get_backend()
-
-    
-
 
 # Global model class
 class Weight_Parallelized_Model(nn.Module):
