@@ -1,8 +1,62 @@
 from torch.utils.data import DataLoader
-from torch.utils.data import DataLoader
 import torch
+import torch.distributed as dist
 from time import time
 from concurrent.futures import ProcessPoolExecutor
+from torch.utils.data.distributed import DistributedSampler
+from typing import Optional
+from torch.utils.data import Dataset
+
+class MockDataset(Dataset):
+    def __init__(self):
+        super().__init__()
+        self.length = 1
+
+    def __len__(self):
+        return self.length
+
+    def __getitem__(self, idx: int):
+        # Return a dummy data sample, e.g., a zero tensor or None
+        return torch.tensor([0])  # Adjust this depending on your actual data structure
+
+class GeneralizedDistributedSampler(DistributedSampler):
+    def __init__(self, rank_list, dataset: Dataset, num_replicas: Optional[int] = None,
+                 rank: Optional[int] = None, shuffle: bool = True,
+                 seed: int = 0, drop_last: bool = False, **kwargs): 
+        '''
+        Variables for the DistributedSampler: 
+        dataset, num_replicas, rank, shuffle, seed, drop_last
+        '''
+        if not dist.is_available():
+            raise RuntimeError("Requires distributed package to be available")
+        current_rank = dist.get_rank() if rank is None else rank
+        self.is_active_rank = current_rank in rank_list
+        if num_replicas is None:
+            kwargs.update({'num_replicas':len(rank_list)})
+        else:
+            if len(rank_list) != num_replicas:
+                raise ValueError("World size must be equal to the number of ranks.")
+        kwargs.update({'shuffle':shuffle})
+        kwargs.update({'seed':seed})
+        kwargs.update({'drop_last':drop_last})
+        self.rank_list = rank_list
+        if self.is_active_rank:
+            kwargs.update({'dataset':dataset})
+            kwargs.update({'rank':rank_list.index(current_rank)})
+            self.sampler = DistributedSampler(**kwargs)
+        else:
+            ws = dist.get_world_size()
+            unused_ranks = [r for r in range(ws) if r not in rank_list]
+            kwargs.update({'dataset': MockDataset(), 'rank': unused_ranks.index(current_rank), 'num_replicas': len(unused_ranks)})
+            self.sampler = DistributedSampler(**kwargs)
+
+    def __getattr__(self, attr):
+        if attr == 'epoch':
+            self.sampler.set_epoch(self.sampler.epoch + 1)
+        if not self.is_active_rank:
+            return getattr(self.sampler, attr)
+        return getattr(self.sampler, attr)
+
 
 
 class ParallelizedDataLoader(DataLoader):

@@ -3,7 +3,9 @@ import torch
 import torch.nn as nn
 import torch.distributed as dist
 import torch.multiprocessing as mp
-# add the path to the sys.path
+from torch.nn.parallel import DistributedDataParallel as DDP
+
+# Add the path to the sys.path
 import sys
 # Make the following work on Windows and MacOS
 sys.path.append(os.path.join(os.getcwd(), "src"))
@@ -14,11 +16,14 @@ from parallel.utils import *
 from parallel.dataloaders import ParallelizedDataLoader
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
+from parallel.dataloaders import GeneralizedDistributedSampler
 # TODO: before send we could reduce the weight of tensor by using the half precision / float16, then we can convert it back to float32 after the recv
-
+from data_loaders.OverlappingDistributedSampler import *
 
 def main(rank=None, master_addr=None, master_port=None, world_size=None):
     prepare_distributed_environment(rank, master_addr, master_port, world_size)
+    torch.manual_seed(1956)
     print(f"World size: {dist.get_world_size()}")
     rank = dist.get_rank() if dist.get_backend() == 'nccl' else rank
 
@@ -26,23 +31,31 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         transforms.ToTensor(),
         transforms.Lambda(lambda x: torch.flatten(x))
     ])
-
+    # print(f"random vector {torch.randn(1, 2)}")
     train_dataset = datasets.MNIST(root='./data', train=True, download=True, transform=transform)
-    test_dataset = datasets.MNIST(root='./data', train=False, download=True, transform=transform)
+    # test_dataset = datasets.MNIST(root='./data', train=False, download=True, transform=transform)
     
     # here we print the memory consumption of train_dataset and test_dataset
     print(f"Memory consumption of some float: {sys.getsizeof(float(1.0))}")
     print(f"Memory consumption of train_dataset: {sys.getsizeof(train_dataset)}")
 
     rank_list = [[0], [1]]
-    train_loader = DataLoader(train_dataset, batch_size=6000, shuffle=True, num_workers=2, pin_memory=True)
-    test_loader = DataLoader(test_dataset, batch_size=6000, shuffle=True, num_workers=2, pin_memory=True)
-    # train_loader = ParallelizedDataLoader(dataset=train_dataset, device_list=[0,1], rank_list=rank_list, batch_size=30000, shuffle=True, num_workers=2, pin_memory=True)
-    # test_loader = ParallelizedDataLoader(dataset=test_dataset, device_list=[0,1], rank_list=rank_list, batch_size=10000, shuffle=False)
 
-    # if rank == 0:
-    #     for i, (x, y) in enumerate(train_loader):
-    #         print(f"Sample {i}: {x}, {y}")
+    training_sampler_parallel = GeneralizedDistributedSampler([0,1], train_dataset, shuffle=True, drop_last=True)
+
+    # train_loader = DataLoader(train_dataset, batch_size=6000, shuffle=False, sampler=training_sampler_parallel,num_workers=2, pin_memory=True)
+    # train_sampler = OverlappingDistributedSampler(train_dataset, num_replicas=2, shuffle=True, overlapping_samples=0)
+    train_loader = DataLoader(train_dataset, batch_size=60000, shuffle=False, sampler=training_sampler_parallel,num_workers=0, pin_memory=True)
+
+    # test_loader = DataLoader(test_dataset, batch_size=6000, shuffle=True, num_workers=2, pin_memory=True)
+    for i in range(2):
+        # train_loader.sampler.set_epoch(i)
+        for x, y in train_loader:
+            if rank == 2:
+                print('ciao')
+            print(f"rank {dist.get_rank()} X: {torch.norm(x.flatten().double())}, Y: {torch.norm(y.flatten().double())}")
+            print(f"rank {dist.get_rank()} X.shape: {x.shape}, Y: {y.shape}")
+
 
     print(f'Rank {rank} is ready.')
     criterion = torch.nn.CrossEntropyLoss()
@@ -57,42 +70,47 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             (NN2, {'in_features': 256, 'out_features': 128},  (lambda samples: torch.tensor([samples,256], dtype=torch.int32), lambda samples: torch.tensor([samples,128], dtype=torch.int32))),
             (NN3, {'in_features': 128, 'out_features': 64},   (lambda samples: torch.tensor([samples,128], dtype=torch.int32), lambda samples: torch.tensor([samples,10], dtype=torch.int32)))
         ]
-        # rank_list = [[0,1], [2,3], [4,5,6]]
         rank_list = [[0], [1], [2]]
-        # rank_list = [[0], [1], [2]]
     elif dist.get_world_size() == 2 or dist.get_world_size() == 4:
         layer_list = [
             (NN1, {'in_features': 784, 'out_features': 256}, (lambda samples: torch.tensor([samples,784], dtype=torch.int32), lambda samples: torch.tensor([samples,256], dtype=torch.int32))), # samples <- is the sample amount of the input tensor
             (NN3, {'in_features': 256, 'out_features': 64},  (lambda samples: torch.tensor([samples,256], dtype=torch.int32), lambda samples: torch.tensor([samples,10], dtype=torch.int32))),
         ]
         rank_list = [[0], [1]]
-        # layer_list = [
-        #     (NN2, {'in_features': 100, 'out_features': 100},  (lambda samples: torch.tensor([samples,200], dtype=torch.int32), lambda samples: torch.tensor([samples,50 ], dtype=torch.int32))),
-        # ]
-        # # rank_list = [[0,1]]
-        # rank_list = [[0],[1]]
 
     list_of_all_ranks = [r for rank in rank_list for r in rank]
     if rank in list_of_all_ranks:
         group = dist.new_group(ranks=list_of_all_ranks)
         torch.manual_seed(3456)
-        model = Weight_Parallelized_Model(layer_list, rank_list)
-        # optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
-        
-        # optimizer1 = TR(model, criterion)
-        # optimizer2 = torch.optim.Adam(model.subdomain.parameters(), lr=0.0001)
-        optimizer = APTS(model, criterion, torch.optim.SGD, {}, TR, {'lr':0.01, 'max_lr':1.0, 'min_lr':1e-3, 'nu_1':0.25, 'nu_2':0.75})
-        # optimizer = torch.optim.SGD(model.subdomain.parameters(), lr=0.01)
-
-        # Data loading TODO: load data only on master master rank
+        layer_list = [
+            (NN1, {'in_features': 784, 'out_features': 256}), # samples <- is the sample amount of the input tensor
+            (NN3, {'in_features': 256, 'out_features': 64}),
+        ]
+        # x = torch.randn(2, 784)
         train_loader, test_loader = create_dataloaders(
             dataset="MNIST",
             data_dir=os.path.abspath("./data"),
-            mb_size=60000,
+            mb_size=30000, # 60000
             overlap_ratio=0,
             parameter_decomposition=True,
             device="cuda:0"
         )
+        for i, (x, y) in enumerate(train_loader):
+            break
+        x = x.view(x.size(0), -1)
+        model = Weight_Parallelized_Model(layer_list, rank_list, sample=x)
+        # optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
+        
+        # optimizer1 = TR(model, criterion)
+        # optimizer2 = torch.optim.Adam(model.subdomain.parameters(), lr=0.0001)
+        lr = 0.001                                           #torch.optim.SGD     TRAdam
+        optimizer = APTS(model, criterion, subdomain_optimizer=TRAdam, global_optimizer=TR, subdomain_optimizer_defaults={'lr':lr},
+                         global_optimizer_defaults={'lr':lr, 'max_lr':1.0, 'min_lr':1e-5, 'nu_1':0.25, 'nu_2':0.75}, 
+                          max_subdomain_iter=3, dogleg=True, lr=lr)
+        # self, model, criterion, subdomain_optimizer, subdomain_optimizer_defaults, global_optimizer, global_optimizer_defaults, lr=0.01, max_subdomain_iter=0
+        # optimizer = torch.optim.SGD(model.subdomain.parameters(), lr=0.01)
+
+        # Data loading TODO: load data only on master master rank
         device = decide_gpu_device(ws=dist.get_world_size(), backend=dist.get_backend(), gpu_id=0)
 
         for epoch in range(1000):
@@ -100,30 +118,19 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
                 # Vectorize x 
                 x = x.view(x.size(0), -1)
                 # One optimizer step
-                tic = time.time()
-                for i in range(10):
-                    optimizer.step(closure(x, y, torch.nn.CrossEntropyLoss(), model, data_chunks_amount=10))
-                print(f"RANK {rank} - Time for one step: {time.time()-tic}")
-                # Train a subdomain model
-                # if rank in rank_list[0]:
-                # for asd in range(2):
-                #     model.subdomain.zero_grad()
-                #     out = model.subdomain.forward()
-                #     # loss = criterion(out, y.to(device))
-                #     # print(f'Epoch {epoch} subdomain loss {loss}')
-                #     model.subdomain.backward()
-                #     optimizer2.step()
+                loss = optimizer.step(closure(x, y, torch.nn.CrossEntropyLoss(), model, data_chunks_amount=1))
 
             # Compute the test accuracy
+            accuracy = []
             for j, (x_test, y_test) in enumerate(test_loader): # NOTE: NO MINIBACHES IN THE TEST SET
                 x_test = x_test.view(x_test.size(0), -1)
                 output_test = model(x_test.to(device), chunks_amount=1, reset_grad = True, compute_grad = False)
                 if rank == rank_list[-1][0]:
+                    output_test = output_test[0]
                     # Compute the accuracy NOT THE LOSS
-                    accuracy = (output_test.argmax(dim=1) == y_test.to(device)).float().mean()
-                    print(f'Epoch {epoch} test accuracy {accuracy*100}')
-
-                # dist.barrier(group=group)
+                    accuracy.append((output_test.argmax(dim=1) == y_test.to(device)).float().mean()) 
+            if rank == rank_list[-1][0]:
+                print(f'Epoch {epoch}, loss {loss}, test accuracy {sum(accuracy)/len(accuracy)*100}')
 
         # torch.manual_seed(0)
         # x=torch.randn(10, 100)
@@ -190,11 +197,6 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
 
 if __name__ == '__main__':
     torch.manual_seed(1)
-
-    # world_size = torch.cuda.device_count()  
-    # master_addr = 'localhost'
-    # master_port = '12345'
-    # mp.spawn(main, args=(master_addr, master_port, world_size), nprocs=world_size, join=True)
     if 1==2:
         main()
     else:
@@ -205,6 +207,6 @@ if __name__ == '__main__':
 
         master_addr = 'localhost'
         master_port = '12345'   
-        world_size = 2
+        world_size = 3
         mp.spawn(main, args=(master_addr, master_port, world_size), nprocs=world_size, join=True)
 
