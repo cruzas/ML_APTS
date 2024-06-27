@@ -20,7 +20,6 @@ class MockDataset(Dataset):
 
 class GeneralizedDistributedDataLoader(DataLoader):
     def __init__(self, first_layer_ranks, dataset, batch_size, shuffle, num_workers=0, pin_memory=False, drop_last=False, seed=0,**kwargs):
-        # Call super init
         rank = dist.get_rank()
         self.is_active_rank = rank in first_layer_ranks
         if len(dataset) % batch_size == 0:
@@ -32,7 +31,7 @@ class GeneralizedDistributedDataLoader(DataLoader):
                 amount_of_batches = len(dataset) // (batch_size*len(first_layer_ranks)) + 1
 
         if not self.is_active_rank:
-            # Make a mock dataset
+            # Make a mock dataset with the same amount of batches as the original dataset (this is needed to keep iterations consistent across all ranks)
             ws = dist.get_world_size()
             unused_ranks = [r for r in range(ws) if r not in first_layer_ranks]
             dataset = MockDataset(amount_of_batches)
@@ -56,7 +55,9 @@ class GeneralizedDistributedSampler(DistributedSampler):
         if num_replicas is not None and (len(first_layer_ranks) != num_replicas):
             raise ValueError("num_replicas should be equal to the number of first_layer_ranks.")
         rank = first_layer_ranks.index(rank)
-        super(GeneralizedDistributedSampler, self).__init__(dataset=dataset, num_replicas=len(first_layer_ranks), rank=rank, shuffle=shuffle, seed=seed, drop_last=drop_last, **kwargs)
+        kwargs.update({'dataset': dataset, 'num_replicas': len(first_layer_ranks), 'rank': rank, 'shuffle': shuffle, 'seed': seed, 'drop_last': drop_last})
+        super(GeneralizedDistributedSampler, self).__init__(**kwargs)
+        # super(GeneralizedDistributedSampler, self).__init__(dataset=dataset, num_replicas=len(first_layer_ranks), rank=rank, shuffle=shuffle, seed=seed, drop_last=drop_last, **kwargs)
 
 class ParallelizedDataLoader(DataLoader):
     '''

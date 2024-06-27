@@ -41,11 +41,13 @@ def closure(inputs, targets, criterion, model, compute_grad=True, zero_grad=True
     '''
     NOTE: Losses from different chunks are averaged.
     '''
-    if model.__class__.__name__ != 'Weight_Parallelized_Model':
+    if model.__class__.__name__ != 'Weight_Parallelized_Model' and model.__class__.__name__ != 'Parallelized_Model':
         raise ValueError('Model must be an instance of the "Weight_Parallelized_Model" class.')
     if isinstance(criterion, type):
         raise ValueError('Criterion must be an instance of a class.')
-    if model.rank == model.rank_list[-1][0]:
+    if model.__class__.__name__ != 'Parallelized_Model':
+        model = model.model
+    if model.rank == model.rank_list[-1]:
         targets = targets.chunk(data_chunks_amount)
     # Compute loss
     def closure2(compute_grad=compute_grad, zero_grad=zero_grad, data_chunks_amount=data_chunks_amount, counter=counter):
@@ -56,15 +58,15 @@ def closure(inputs, targets, criterion, model, compute_grad=True, zero_grad=True
         # loss = torch.zeros(1).to(model.gpu_device)
         losses = []
         loss = torch.tensor(0.0).to(model.gpu_device)
-        if model.rank == model.rank_list[-1][0]:
+        if model.rank == model.rank_list[-1]:
             for i,out in enumerate(outputs):
                 losses.append(criterion(out, targets[i].to(out.device)))
             loss = sum(losses)/len(losses)
-        dist.broadcast(tensor=loss.detach(), src=model.rank_list[-1][0], group=model.master_group)
+        dist.broadcast(tensor=loss.detach(), src=model.rank_list[-1], group=model.master_group)
         if compute_grad and torch.is_grad_enabled():
             model.backward(losses, count_g=counter, chunks_amount=data_chunks_amount)
         if return_output:
-            if model.rank == model.rank_list[-1][0]:
+            if model.rank == model.rank_list[-1]:
                 # Returning outputs here in case we want to compute the accuracy afterwards
                 return loss.item(), [output for output in outputs]
             else:
