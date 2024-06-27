@@ -45,7 +45,7 @@ def closure(inputs, targets, criterion, model, compute_grad=True, zero_grad=True
         raise ValueError('Model must be an instance of the "Weight_Parallelized_Model" class.')
     if isinstance(criterion, type):
         raise ValueError('Criterion must be an instance of a class.')
-    if model.__class__.__name__ != 'Parallelized_Model':
+    if model.__class__.__name__ == 'Parallelized_Model':
         model = model.model
     if model.rank == model.rank_list[-1]:
         targets = targets.chunk(data_chunks_amount)

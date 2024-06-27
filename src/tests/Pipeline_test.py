@@ -51,51 +51,63 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     NN3 = lambda in_features,out_features: nn.Sequential(nn.Linear(in_features,out_features), nn.ReLU(), nn.Linear(64, 10), nn.ReLU())
    
     # if dist.get_world_size() == 3:
-    #     layer_list = [
-    #         (NN1, {'in_features': 784, 'out_features': 256}, (lambda samples: torch.tensor([samples,784], dtype=torch.int32), lambda samples: torch.tensor([samples,256], dtype=torch.int32))), # samples <- is the sample amount of the input tensor
-    #         (NN2, {'in_features': 256, 'out_features': 128},  (lambda samples: torch.tensor([samples,256], dtype=torch.int32), lambda samples: torch.tensor([samples,128], dtype=torch.int32))),
-    #         (NN3, {'in_features': 128, 'out_features': 64},   (lambda samples: torch.tensor([samples,128], dtype=torch.int32), lambda samples: torch.tensor([samples,10], dtype=torch.int32)))
-    #     ]
+    # layer_list = [
+    #     (NN1, {'in_features': 784, 'out_features': 256}, (lambda samples: torch.tensor([samples,784], dtype=torch.int32), lambda samples: torch.tensor([samples,256], dtype=torch.int32))), # samples <- is the sample amount of the input tensor
+    #     (NN2, {'in_features': 256, 'out_features': 128},  (lambda samples: torch.tensor([samples,256], dtype=torch.int32), lambda samples: torch.tensor([samples,128], dtype=torch.int32))),
+    #     (NN3, {'in_features': 128, 'out_features': 64},   (lambda samples: torch.tensor([samples,128], dtype=torch.int32), lambda samples: torch.tensor([samples,10], dtype=torch.int32)))
+    # ]
+
+    layer_list = [
+        (NN1, {'in_features': 784, 'out_features': 256}),
+        (NN2, {'in_features': 256, 'out_features': 128}),
+        (NN3, {'in_features': 128, 'out_features': 64})
+    ]
+
     #     # rank_list = [[0], [1], [2]]
     #     rank_list = [[0, 1], [1, 2]]
     # elif dist.get_world_size() == 2 or dist.get_world_size() == 4:
-    layer_list = [
-        (NN1, {'in_features': 784, 'out_features': 256}, (lambda samples: torch.tensor([samples,784], dtype=torch.int32), lambda samples: torch.tensor([samples,256], dtype=torch.int32))), # samples <- is the sample amount of the input tensor
-        (NN3, {'in_features': 256, 'out_features': 64},  (lambda samples: torch.tensor([samples,256], dtype=torch.int32), lambda samples: torch.tensor([samples,10], dtype=torch.int32))),
-    ]
-    # rank_list = [[0], [1]]
-    layer_list = [
-        (NN1, {'in_features': 784, 'out_features': 256}), # samples <- is the sample amount of the input tensor
-        (NN3, {'in_features': 256, 'out_features': 64}),
-    ]
+    # layer_list = [
+    #     (NN1, {'in_features': 784, 'out_features': 256}, (lambda samples: torch.tensor([samples,784], dtype=torch.int32), lambda samples: torch.tensor([samples,256], dtype=torch.int32))), # samples <- is the sample amount of the input tensor
+    #     (NN3, {'in_features': 256, 'out_features': 64},  (lambda samples: torch.tensor([samples,256], dtype=torch.int32), lambda samples: torch.tensor([samples,10], dtype=torch.int32))),
+    # ]
+    # # rank_list = [[0], [1]]
+    # layer_list = [
+    #     (NN1, {'in_features': 784, 'out_features': 256}), # samples <- is the sample amount of the input tensor
+    #     (NN3, {'in_features': 256, 'out_features': 64}),
+    # ]
+
+    num_replicas = 2
     
-    train_loader = GeneralizedDistributedDataLoader(first_layer_ranks=[0,2], dataset=train_dataset, batch_size=13000, shuffle=False, num_workers=0, pin_memory=True, drop_last=True)
-    test_loader = GeneralizedDistributedDataLoader(first_layer_ranks=[0,2], dataset=test_dataset, batch_size=50000, shuffle=False, num_workers=0, pin_memory=True)
+    train_loader = GeneralizedDistributedDataLoader(layer_list=layer_list, num_replicas=num_replicas, dataset=train_dataset, batch_size=10000, shuffle=False, num_workers=0, pin_memory=True, drop_last=True)
+    test_loader = GeneralizedDistributedDataLoader(layer_list=layer_list, num_replicas=num_replicas, dataset=test_dataset, batch_size=50000, shuffle=False, num_workers=0, pin_memory=True)
 
     # WE ARE HERE <------------------
     #  - set the amount of model copies as "amount of subdomains in data TIMES replicas per model" -> apts will take care of synchronizing the models accordingly
      
     # model = Weight_Parallelized_Model(layer_list, rank_list, sample=x)
     x = torch.randn(1, 784)
-    sync_operation(filename=get_filename(__file__), line_number=get_linenumber())
-    model = Parallelized_Model(layer_list=layer_list, sample=x, num_replicas=2)
+    # sync_operation(filename=get_filename(__file__), line_number=get_linenumber())
+    # model = Parallelized_Model(layer_list=layer_list, sample=x, num_replicas=num_replicas)
 
     # optimizer1 = TR(model, criterion)
     # optimizer2 = torch.optim.Adam(model.subdomain.parameters(), lr=0.0001)
     # optimizer3 = torch.optim.SGD(model.subdomain.parameters(), lr=0.01)
     lr = 0.001                         # torch.optim.SGD TRAdam
-    sync_operation(filename=get_filename(__file__), line_number=get_linenumber())
-    optimizer = APTS(model, criterion, subdomain_optimizer=TRAdam, global_optimizer=TR, subdomain_optimizer_defaults={'lr':lr},
-                        global_optimizer_defaults={'lr':lr, 'max_lr':1.0, 'min_lr':1e-5, 'nu_1':0.25, 'nu_2':0.75}, 
-                        max_subdomain_iter=3, dogleg=True, lr=lr)
+    # sync_operation(filename=get_filename(__file__), line_number=get_linenumber())
+    # optimizer = APTS(model, criterion, subdomain_optimizer=TRAdam, global_optimizer=TR, subdomain_optimizer_defaults={'lr':lr},
+    #                     global_optimizer_defaults={'lr':lr, 'max_lr':1.0, 'min_lr':1e-5, 'nu_1':0.25, 'nu_2':0.75}, 
+    #                     max_subdomain_iter=3, dogleg=True, lr=lr)
     
-    dist.barrier()
+    sync_operation(filename=get_filename(__file__), line_number=get_linenumber())
     for epoch in range(1000):
         for i, (x, y) in enumerate(train_loader):
-            a = model(x, chunks_amount=1, reset_grad=True, compute_grad=True)
-            print(f'Rank {rank}, epoch {epoch}, iteration {i}, output {a}')
-            loss = optimizer.step(closure(x, y, torch.nn.CrossEntropyLoss(), model, data_chunks_amount=1))
-        print(f'Epoch {epoch}, loss {loss}')
+            print(f'Rank {rank}, norm x {torch.norm(x.flatten().double())}, norm y {torch.norm(y.flatten().double())}')
+            # a = model(x, chunks_amount=1, reset_grad=True, compute_grad=True)
+            # print(f'Rank {rank}, epoch {epoch}, iteration {i}, output {a}')
+            # loss = optimizer.step(closure(x, y, torch.nn.CrossEntropyLoss(), model, data_chunks_amount=1))
+        dist.barrier()
+        print(f'Rank {rank}, epoch {epoch} is done.')
+        # print(f'Epoch {epoch}, loss {loss}')
 
         # Compute the test accuracy
         # accuracy = []
@@ -120,6 +132,6 @@ if __name__ == '__main__':
 
         master_addr = 'localhost'
         master_port = '12345'   
-        world_size = 4
+        world_size = 6
         mp.spawn(main, args=(master_addr, master_port, world_size), nprocs=world_size, join=True)
 
