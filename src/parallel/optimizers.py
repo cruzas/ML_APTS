@@ -196,6 +196,7 @@ class APTS(torch.optim.Optimizer):
         self.subdomain_optimizer.zero_timers()
 
     def step(self, closure):
+        # TODO: Seed for dropout layers
         # Compute loss
         tic = time.time()
         initial_loss = closure(compute_grad=True, zero_grad=True)

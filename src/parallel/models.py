@@ -23,11 +23,13 @@ def get_filename(file_path):
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger()
 def sync_operation(filename=None,line_number=None):
+    pass
     # global counter
     # counter += 1
-    logger.info(f"Rank {dist.get_rank()} starting sync operation. Python script: {filename} | Line number: {line_number}")
-    dist.barrier()
-    logger.info(f"Rank {dist.get_rank()} finished sync operation. Python script: {filename} | Line number: {line_number}")
+    # logger.info(f"Rank {dist.get_rank()} starting sync operation. Python script: {filename} | Line number: {line_number}")
+    # dist.barrier()
+    # # torch.cuda.synchronize()
+    # logger.info(f"Rank {dist.get_rank()} finished sync operation. Python script: {filename} | Line number: {line_number}")
     
 # from pippy import pipeline
 
@@ -64,7 +66,7 @@ class Parallelized_Model(nn.Module):
             ranks = [r + layer_idx for r in range(0, self.world_size, len(self.layer_list))]
             # Create a new group containing these ranks
             if self.rank in ranks:
-                self.layer_copies_group = dist.new_group(ranks)
+                self.layer_copies_group = dist.new_group(ranks, use_local_synchronization=True)
     
     def forward(self, x, chunks_amount=2, reset_grad = False, compute_grad = True, count_f=True):
         sync_operation(filename=get_filename(__file__), line_number=get_linenumber())
@@ -104,8 +106,11 @@ class Weight_Parallelized_Model(nn.Module):
 
         super(Weight_Parallelized_Model, self).__init__()
         self.rank = dist.get_rank()
+        # if self.rank in [0,1]:
+        #     print('asd')
         self.rank_list = rank_list
-        self.master_group = dist.new_group(ranks=self.rank_list)
+        self.master_group = dist.new_group(ranks=self.rank_list, use_local_synchronization=True)
+        print(f'rank {self.rank}')
         self.gpu_id = gpu_id
         self.backend = dist.get_backend()
         self.gpu_device = decide_gpu_device(ws=dist.get_world_size(), backend=dist.get_backend(), gpu_id=0)
