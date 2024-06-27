@@ -73,23 +73,27 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     test_loader = GeneralizedDistributedDataLoader(first_layer_ranks=[0,2], dataset=test_dataset, batch_size=50000, shuffle=False, num_workers=0, pin_memory=True)
 
     # WE ARE HERE <------------------
+    #  - set the amount of model copies as "amount of subdomains in data TIMES replicas per model" -> apts will take care of synchronizing the models accordingly
+     
     # model = Weight_Parallelized_Model(layer_list, rank_list, sample=x)
+    x = torch.randn(1, 784)
+    sync_operation(filename=get_filename(__file__), line_number=get_linenumber())
     model = Parallelized_Model(layer_list=layer_list, sample=x, num_replicas=2)
 
     # optimizer1 = TR(model, criterion)
     # optimizer2 = torch.optim.Adam(model.subdomain.parameters(), lr=0.0001)
     # optimizer3 = torch.optim.SGD(model.subdomain.parameters(), lr=0.01)
     lr = 0.001                         # torch.optim.SGD TRAdam
+    sync_operation(filename=get_filename(__file__), line_number=get_linenumber())
     optimizer = APTS(model, criterion, subdomain_optimizer=TRAdam, global_optimizer=TR, subdomain_optimizer_defaults={'lr':lr},
                         global_optimizer_defaults={'lr':lr, 'max_lr':1.0, 'min_lr':1e-5, 'nu_1':0.25, 'nu_2':0.75}, 
                         max_subdomain_iter=3, dogleg=True, lr=lr)
     
-
-    # Data loading TODO: load data only on master master rank
-    device = decide_gpu_device(ws=dist.get_world_size(), backend=dist.get_backend(), gpu_id=0)
-
+    dist.barrier()
     for epoch in range(1000):
         for i, (x, y) in enumerate(train_loader):
+            a = model(x, chunks_amount=1, reset_grad=True, compute_grad=True)
+            print(f'Rank {rank}, epoch {epoch}, iteration {i}, output {a}')
             loss = optimizer.step(closure(x, y, torch.nn.CrossEntropyLoss(), model, data_chunks_amount=1))
         print(f'Epoch {epoch}, loss {loss}')
 
