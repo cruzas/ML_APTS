@@ -66,6 +66,9 @@ class MyModel2(nn.Module):
             print(f"(FWD) Going through pipe group {i}")
             x = getattr(self, f'pipe{i}')(x)
             output_needed = getattr(self, f'pipe{i}').outputs[0]
+            # getattr(self, f'pipe{i-1}').outputs.append(output_needed)
+            if len(getattr(self, f'pipe{i-1}').outputs) > len(getattr(self, f'pipe{i-1}').layer):
+                getattr(self, f'pipe{i-1}').outputs.pop(-1)
             getattr(self, f'pipe{i-1}').outputs.append(output_needed)
         return x
     

@@ -1,4 +1,5 @@
 import os
+import copy
 import torch
 import torch.nn as nn
 import torch.distributed as dist
@@ -47,6 +48,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     criterion = torch.nn.CrossEntropyLoss()
     
     NN1 = lambda in_features,out_features: nn.Sequential(nn.Flatten(start_dim=1),nn.Linear(in_features,out_features), nn.ReLU(), nn.Linear(256, 256), nn.ReLU())
+    # NN1 = lambda in_features,out_features: nn.Sequential(torch.flatten, nn.Linear(in_features,out_features), nn.ReLU(), nn.Linear(256, 256), nn.ReLU())
     NN2 = lambda in_features,out_features: nn.Sequential(nn.Linear(in_features,out_features), nn.ReLU(), nn.Linear(128, 128), nn.ReLU())
     NN3 = lambda in_features,out_features: nn.Sequential(nn.Linear(in_features,out_features), nn.ReLU(), nn.Linear(64, 10), nn.ReLU())
    
@@ -97,9 +99,9 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
 
     # share parameters from model with seq_model
     if rank == 0:
-        seq_model = nn.Sequential(*[layer[0](**layer[1]) for layer in layer_list])
-
-    if rank == 0:
+        torch.manual_seed(0)
+        layers = [layer[0](**layer[1]) for layer in layer_list]
+        seq_model = nn.Sequential(*layers)
         # receive the parameters from the other ranks
         for l_idx in [1,2]:
             for seq_layer in seq_model[l_idx].parameters():
@@ -125,14 +127,16 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     output = model(random_input, chunks_amount=1, reset_grad=True, compute_grad=True)
     
     if rank == 0:
-        seq_model_2 = Sequential_Model(layer_list).to('cuda:0')
+        torch.manual_seed(0)
+        seq_model_2 = Sequential_Model(copy.deepcopy(layers)).to('cuda:0') # NOTE: It is important to do a copy.deepcopy here! Otherwise, the two models will be linked directly.
         # synchronize the parameters
-        for l_idx in [0,1,2]:
-            for seq_layer, seq_layer_2 in zip(seq_model[l_idx].parameters(), seq_model_2.layers[l_idx].parameters()):
-                seq_layer_2.data = seq_layer.data
-        seq_output = seq_model(random_input)
-        seq_output_2 = seq_model_2(random_input)
-        print(f'Rank {rank}, output norm {torch.norm(seq_output.flatten().double())} - output norm 2 {torch.norm(seq_output_2.flatten().double())}')
+        # for l_idx in [0,1,2]:
+        #     for seq_layer, seq_layer_2 in zip(seq_model[l_idx].parameters(), seq_model_2.layers[l_idx].parameters()):
+        #         seq_layer_2.data = seq_layer.data
+
+        # seq_output = seq_model(random_input)
+        # seq_output_2 = seq_model_2(random_input)
+        # print(f'Rank {rank}, output norm {torch.norm(seq_output.flatten().double())} - output norm 2 {torch.norm(seq_output_2.flatten().double())}')
 
     if rank == 2:
         print(f'Rank {rank}, parallel output norm {torch.norm(output[0].flatten().double())}')
@@ -160,8 +164,9 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             # print(l)
             if rank == 0:
                 # Gather sequential model norm
-                seq_optimizer.zero_grad()
+                # seq_optimizer.zero_grad()
                 out = seq_model(x.to('cuda:0'))
+
                 seq_loss = criterion(out, y.to('cuda:0'))
                 print(f"(SEQ) loss {seq_loss}")
 
@@ -172,15 +177,17 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
                 seq_optimizer_2.zero_grad()
                 out_2 = seq_model_2(x.to('cuda:0'))
                 seq_loss_2 = criterion(out_2, y.to('cuda:0'))
+
+                print(f"Epoch {epoch} - Rank {rank} - Iteration {i} - Out and out2 difference {torch.norm(out.flatten().double()-out_2.flatten().double())}")
                 print(f"(SEQ2) loss {seq_loss_2}")
                 seq_model_2.backward(seq_loss_2)
                 seq_optimizer_2.step()
-                
+
                 for j in range(len(layer_list)):
                     seq_grad = torch.cat([layer.grad.flatten() for layer in seq_model[j].parameters()])
-                    # seq_grad_2 = torch.cat([layer.grad.flatten() for layer in seq_model_2.layers[j].parameters()])
+                    seq_grad_2 = torch.cat([layer.grad.flatten() for layer in getattr(seq_model_2, f'pipe{j}').parameters()])
                     print(f'(SEQ) grad norm {j} -> {torch.norm(seq_grad)}')
-                    # print(f'(SEQ2) grad norm {j} -> {torch.norm(seq_grad_2)}')
+                    print(f'(SEQ2) grad norm {j} -> {torch.norm(seq_grad_2)}')
 
             loss = optimizer.step(closure(x, y, torch.nn.CrossEntropyLoss(), model, data_chunks_amount=1))
 

@@ -33,50 +33,65 @@ def sync_operation(filename=None,line_number=None):
     
 # TODO: before send we could reduce the weight of tensor by using the half precision / float16, then we can convert it back to float32 after the recv
 class Sequential_Model(nn.Module):
-    def __init__(self, layer_list):
+    def __init__(self, pipe_list):
         super(Sequential_Model, self).__init__()
-        # self.layers = nn.Sequential([layer for layer in layer_list])
-        self.layer_list = layer_list
-        self.layers = nn.Sequential(*[layer[0](**layer[1]) for layer in layer_list])
-        self.inputs = [0]*len(self.layers)
-        self.outputs = [0]*len(self.layers)
-
+        self.num_pipes = len(pipe_list)
+        for i, pipe in enumerate(pipe_list):
+            setattr(self, f'pipe{i}', SubModel(pipe))
+    
     def forward(self, x):
-        for i,layer in enumerate(self.layers):
-            self.inputs[i] = [0]*len(list(self.layers[i]))
-            self.outputs[i] = [0]*len(list(self.layers[i]))
-            for j,layer in enumerate(list(self.layers[i])):
-                self.inputs[i][j] = x
-                x = self.layers[i][j](x)
-                self.outputs[i][j] = x            
+        for i in range(0, self.num_pipes):
+            print(f"(FWD) Going through pipe group {i}")
+            x = getattr(self, f'pipe{i}')(x)
+            if i > 0:
+                output_needed = getattr(self, f'pipe{i}').outputs[0]
+                if len(getattr(self, f'pipe{i-1}').outputs) > len(getattr(self, f'pipe{i-1}').layer):
+                    print("Removing the last element of the outputs list")
+                    getattr(self, f'pipe{i-1}').outputs.pop(-1)
+                getattr(self, f'pipe{i-1}').outputs.append(output_needed)
+        return x
+    
+    def backward(self, loss):
+        for i in range(self.num_pipes-1, -1, -1):
+            print(f"(BWD) Going through pipe group {i}")
+            if i == self.num_pipes-1:
+                grad_output = getattr(self, f'pipe{i}').backward(loss=loss)
+            else:
+                grad_output = getattr(self, f'pipe{i}').backward(grad_output=grad_output)
+
+class SubModel(nn.Sequential):
+    def __init__(self, layer):
+        if not isinstance(layer, nn.Sequential):
+            raise ValueError('layer must be a nn.Sequential')
+        for l in layer:
+            if isinstance(l, nn.Sequential):
+                raise ValueError('layer must not have nested nn.Sequential')
+        super(SubModel, self).__init__(layer)
+        self.layer = layer
+        self.outputs = [0]*len(list(layer))
+    
+    def forward(self, x, compute_grad=True):
+        for i, sublayer in enumerate(self.layer): # Problem enumerate self just yields length 1
+            x = sublayer(x)
+            if compute_grad:
+                self.outputs[i] = x
         return x
 
-    def backward(self, loss):
-        grad_output = None
-        for i in reversed(range(len(self.layer_list))):
-            for j, layer in reversed(list(enumerate(self.layers[i]))):
-                if 'sequential' in layer.__class__.__name__.lower():
-                    raise ValueError('Sequential layers cannot contain other sequential layers in the current implementation.')
-                if len(list(layer.parameters())) != 0:
-                    if grad_output is None:
-                        grad_output = autograd.grad(loss, self.outputs[i][j], retain_graph=True)[0]
-                    else:
-                        grad_output = autograd.grad(self.outputs[i][j+1], self.outputs[i][j], grad_outputs=grad_output, retain_graph=True)[0]
-                
-                    for param in layer.parameters():
-                        if param.requires_grad:
-                            param.grad = autograd.grad(self.outputs[i][j], param, grad_outputs=grad_output, retain_graph=True)[0]
-                                    
-            # layer = self.layers[i]
-            # if i == len(self.layer_list) - 1:
-            #     grad_output = autograd.grad(loss, self.outputs[i], retain_graph=True)[0]
-            # else:
-            #     grad_output = autograd.grad(self.outputs[i+1], self.outputs[i], grad_outputs=grad_output, retain_graph=True)[0]
-        
-            # for param in layer.parameters():
-            #     if param.requires_grad:
-            #         param.grad = autograd.grad(self.outputs[i], param, grad_outputs=grad_output, retain_graph=True)[0]
-        
+    def zero_grad(self, set_to_none: bool = True) -> None:
+        return super().zero_grad(set_to_none)
+    
+    def backward(self, grad_output=None, loss=None):
+        if loss is not None:
+            grad_output = autograd.grad(loss, self.outputs[-1], retain_graph=True)[0]
+            for param in self[-1].parameters():
+                param.grad = autograd.grad(self.outputs[-1], param, grad_outputs=grad_output, retain_graph=True)[0]
+        for i in range(len(self.outputs)-2, -1, -1): # I modified this to -1 instead of -2
+            if self.outputs[i].grad_fn is not None: # NOTE: nn.Flatten() for instance has no grad_fn if it's the first layer in a pipe
+                grad_output = autograd.grad(self.outputs[i+1], self.outputs[i], grad_outputs=grad_output, retain_graph=True)[0]
+                for param in self.layer[i].parameters():
+                    param.grad = autograd.grad(self.outputs[i], param, grad_outputs=grad_output, retain_graph=True)[0] # Allow unused means param might not be used in the computation graph        
+        return grad_output
+
 class Parallelized_Model(nn.Module):
     '''
     Data parallel and weight parallel model.
@@ -132,38 +147,6 @@ class Parallelized_Model(nn.Module):
                 pass
             else:
                 raise ValueError(f"Method {method} is not supported.")
-
-class SubModel(nn.Sequential):
-    def __init__(self, layer):
-        if not isinstance(layer, nn.Sequential):
-            raise ValueError('layer must be a nn.Sequential')
-        for l in layer:
-            if isinstance(l, nn.Sequential):
-                raise ValueError('layer must not have nested nn.Sequential')
-        super(SubModel, self).__init__(layer)
-        self.layer = layer
-        self.outputs = [0]*len(list(layer))
-    
-    def forward(self, x, compute_grad=True):
-        for i, sublayer in enumerate(self.layer): # Problem enumerate self just yields length 1
-            x = sublayer(x)
-            if compute_grad:
-                self.outputs[i] = x
-        return x
-
-    def zero_grad(self, set_to_none: bool = True) -> None:
-        return super().zero_grad(set_to_none)
-    
-    def backward(self, grad_output=None, loss=None):
-        if loss is not None:
-            grad_output = autograd.grad(loss, self.outputs[-1], retain_graph=True)[0]
-            for param in self[-1].parameters():
-                param.grad = autograd.grad(self.outputs[-1], param, grad_outputs=grad_output, retain_graph=True)[0]
-        for i in range(len(self.outputs)-2, -1, -1): # I modified this to -1 instead of -2
-            grad_output = autograd.grad(self.outputs[i+1], self.outputs[i], grad_outputs=grad_output, retain_graph=True)[0]
-            for param in self.layer[i].parameters():
-                param.grad = autograd.grad(self.outputs[i], param, grad_outputs=grad_output, retain_graph=True)[0] # Allow unused means param might not be used in the computation graph        
-        return grad_output
     
 # Global model class
 class Weight_Parallelized_Model(nn.Module):
