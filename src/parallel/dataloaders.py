@@ -54,7 +54,7 @@ class GeneralizedDistributedDataLoader(DataLoader):
                 amount_of_batches = len(dataset) // (batch_size*num_replicas) + 1
 
         if rank not in first_layer_ranks+last_layer_ranks: # rank in the middle does not require any real data
-            if rank == 4:
+            if rank == 4: # TODO: CHANGE THIS TO A MORE GENERAL CASE
                 print(f'amount batches {amount_of_batches}')
             # Make a mock dataset with the same amount of batches as the original dataset (this is needed to keep iterations consistent across all ranks)
             dataset = MockDataset(dataset, amount_of_batches, first=None)    

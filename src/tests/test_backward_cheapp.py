@@ -4,31 +4,6 @@ import torch.optim as optim
 import torch.autograd as autograd
 import copy
 
-# model = nn.Sequential(
-#             torch.nn.Linear(10, 10),
-#             torch.nn.ReLU(),
-#             torch.nn.Linear(10, 5)
-#         )
-
-# model = fairscale.nn.Pipe(model, balance=[2, 1])
-
-
-# class MyModel(nn.Module):
-#     def __init__(self):
-#         super(MyModel, self).__init__()
-#         self.layer1 = nn.Linear(10, 10, bias=False)
-#         self.layer2 = nn.Linear(10, 10, bias=False)
-#         self.layer3 = nn.Linear(10, 10, bias=False)
-#         self.layer4 = nn.Linear(10, 10, bias=False)
-
-#     def forward(self, x):
-#         self.x1 = self.layer1(x)
-#         self.x2 = self.layer2(self.x1)
-#         self.x3 = self.layer3(self.x2)
-#         self.x4 = self.layer4(self.x3)
-#         return self.x4
-
-
 class MyModel(nn.Module):
     def __init__(self):
         super(MyModel, self).__init__()
@@ -45,21 +20,7 @@ class MyModel(nn.Module):
         self.x3 = self.layer3(self.x2)
         self.x4 = self.layer4(self.x3)
         return self.x4
-
-class SubModel(nn.Module):
-    def __init__(self, model):
-        super(SubModel, self).__init__()
-        self.model = model
-        self.layer3 = model.layer3
-        self.x4
-
-    def forward(self, x2, x4):
-        self.x3 = self.layer3(x2)
         
-
-        return x4
-    
-    
 def train():
     # Create model and move it to GPU
     torch.manual_seed(0)
