@@ -37,7 +37,7 @@ class Sequential_Model(nn.Module):
         super(Sequential_Model, self).__init__()
         self.num_pipes = len(pipe_list)
         for i, pipe in enumerate(pipe_list):
-            setattr(self, f'pipe{i}', SubModel(pipe))
+            setattr(self, f'pipe{i}', Stage(pipe))
     
     def forward(self, x):
         for i in range(0, self.num_pipes):
@@ -59,24 +59,57 @@ class Sequential_Model(nn.Module):
             else:
                 grad_output = getattr(self, f'pipe{i}').backward(grad_output=grad_output)
 
-class SubModel(nn.Sequential):
+class Parallel_Sequential_Model(nn.Module):
+    def __init__(self, stages):
+        super(Parallel_Sequential_Model, self).__init__()
+        self.num_stages = len(stages)
+        for i, stage in enumerate(stages):
+            setattr(self, f'stage{i}', Stage(stage))
+    
+    def forward(self, x):
+        for i in range(0, self.num_stages):
+            print(f"(FWD) Going through stage group {i}")
+            x = getattr(self, f'stage{i}')(x)
+            if i > 0:
+                output_needed = getattr(self, f'stage{i}').outputs[0]
+                if len(getattr(self, f'stage{i-1}').outputs) > len(getattr(self, f'stage{i-1}').layer):
+                    print("Removing the last element of the outputs list")
+                    getattr(self, f'stage{i-1}').outputs.pop(-1)
+                getattr(self, f'stage{i-1}').outputs.append(output_needed)
+        return x
+    
+    def backward(self, loss):
+        for i in range(self.num_stages-1, -1, -1):
+            print(f"(BWD) Going through stage group {i}")
+            if i == self.num_stages-1:
+                grad_output = getattr(self, f'stage{i}').backward(loss=loss)
+            else:
+                grad_output = getattr(self, f'stage{i}').backward(grad_output=grad_output)
+                
+                
+class Stage(nn.Sequential):
     def __init__(self, layer):
         if not isinstance(layer, nn.Sequential):
             raise ValueError('layer must be a nn.Sequential')
         for l in layer:
             if isinstance(l, nn.Sequential):
                 raise ValueError('layer must not have nested nn.Sequential')
-        super(SubModel, self).__init__(layer)
+        super(Stage, self).__init__(layer)
         self.layer = layer
         self.outputs = [0]*len(list(layer))
     
     def forward(self, x, compute_grad=True):
+
         for i, sublayer in enumerate(self.layer): # Problem enumerate self just yields length 1
             x = sublayer(x)
             if compute_grad:
                 self.outputs[i] = x
         return x
-
+    def append_output(self, output):
+        if len(self.outputs) > len(self.layer):
+            self.outputs.pop(-1)
+        self.outputs.append(output)
+        
     def zero_grad(self, set_to_none: bool = True) -> None:
         return super().zero_grad(set_to_none)
     
@@ -87,19 +120,28 @@ class SubModel(nn.Sequential):
                 param.grad = autograd.grad(self.outputs[-1], param, grad_outputs=grad_output, retain_graph=True)[0]
         for i in range(len(self.outputs)-2, -1, -1): # I modified this to -1 instead of -2
             if self.outputs[i].grad_fn is not None: # NOTE: nn.Flatten() for instance has no grad_fn if it's the first layer in a pipe
-                grad_output = autograd.grad(self.outputs[i+1], self.outputs[i], grad_outputs=grad_output, retain_graph=True)[0]
+                try:
+                    grad_output = autograd.grad(self.outputs[i+1], self.outputs[i], grad_outputs=grad_output, retain_graph=True)[0]
+                except Exception as e:
+                    print(f"Error 1: {e}")
+                    print(f"self.outputs[{i+1}]: {self.outputs[i+1].shape}, self.outputs[{i}]: {self.outputs[i].shape}, grad_output: {grad_output.shape}")
                 for param in self.layer[i].parameters():
-                    param.grad = autograd.grad(self.outputs[i], param, grad_outputs=grad_output, retain_graph=True)[0] # Allow unused means param might not be used in the computation graph        
+                    try:
+                        param.grad = autograd.grad(self.outputs[i], param, grad_outputs=grad_output, retain_graph=True)[0] # Allow unused means param might not be used in the computation graph        
+                    except Exception as e:
+                        print(f"Error 2: {e}")
+                        print(f"self.outputs[{i}]: {self.outputs[i].shape}, param: {param.shape}, grad_output: {grad_output.shape}")
         return grad_output
 
 class Parallelized_Model(nn.Module):
     '''
     Data parallel and weight parallel model.
     '''
-    def __init__(self, layer_list, sample, num_replicas=1):
+    def __init__(self, layer_list, sample, num_replicas=1, criterion=None, approximated_gradient=False):
         super(Parallelized_Model, self).__init__()
 
         self.num_replicas = num_replicas
+        self.criterion = criterion
         self.world_size = dist.get_world_size()
         if num_replicas*len(layer_list) != self.world_size:
             raise ValueError(f"The number of replicas times the number of layers ({num_replicas}*{len(layer_list)}={num_replicas*len(layer_list)}) must be equal to the world size ({self.world_size}).")
@@ -112,7 +154,7 @@ class Parallelized_Model(nn.Module):
             if self.rank in ranks:
                 # TODO: Change gpu_id to be more generic for tensor sharding later on...
                 sync_operation(filename=get_filename(__file__), line_number=get_linenumber())
-                self.model = Weight_Parallelized_Model(layer_list=layer_list, rank_list=ranks, sample=sample, gpu_id=0)
+                self.model = Weight_Parallelized_Model(layer_list=layer_list, rank_list=ranks, sample=sample, gpu_id=0, criterion=criterion, approximated_gradient=approximated_gradient)
                 sync_operation(filename=get_filename(__file__), line_number=get_linenumber())
                 self.subdomain = self.model.subdomain
                 # self.layer = self.model.layer
@@ -150,7 +192,7 @@ class Parallelized_Model(nn.Module):
     
 # Global model class
 class Weight_Parallelized_Model(nn.Module):
-    def __init__(self, layer_list, rank_list, sample, gpu_id=0):
+    def __init__(self, layer_list, rank_list, sample, approximated_gradient=False, gpu_id=0, criterion=None):
         '''
         - input_shape: Shape of the input tensor. This is used to generate a dummy tensor for the first layer and compute the output shape of every layer to adapt the send/recv in the pipeline.
         
@@ -163,10 +205,12 @@ class Weight_Parallelized_Model(nn.Module):
 
         super(Weight_Parallelized_Model, self).__init__()
         self.rank = dist.get_rank()
+        self.criterion = criterion
         # if self.rank in [0,1]:
         #     print('asd')
         self.rank_list = rank_list
         self.master_group = dist.new_group(ranks=self.rank_list, use_local_synchronization=True)
+        self.approximated_gradient = approximated_gradient
         # print(f'rank {self.rank}')
         self.gpu_id = gpu_id
         self.backend = dist.get_backend()
@@ -174,62 +218,31 @@ class Weight_Parallelized_Model(nn.Module):
         self.inputs = []#torch.tensor(()).to(self.gpu_device)  # each rank will store here the input of the next rank or layer (so the output of the current layer)  | -> this is needed for the backward pass
         self.outputs = []#torch.tensor(()).to(self.gpu_device)  # each rank will store here the output of the previous rank or layer (so its input)                  | -> this is needed for the backward pass
         self.grad_output = []#torch.tensor(()).to(self.gpu_device) # each rank will store here the gradient of the output of the current layer (so the gradient of the loss w.r.t. the output of the current layer) | -> this is needed for the backward pass
-        self.shapes = []*len(rank_list)
+        
+        # These two are build during forward/backward passes in the initialization phase
+        # self.shapes 
+        # self.shapes_backward
         
         (layer_class, params) = layer_list[rank_list.index(self.rank)]
-        self.layer = SubModel(layer_class(**params).to(self.gpu_device)) # Initialize the layer with provided parameters
-        
-        # Forward pass to defined the shapes of the tensors
-        def send_shape(shape: list, dst: int):
-            for s in shape:
-                dist.send(tensor=torch.tensor(s, dtype=torch.int32).to('cpu' if self.backend == 'gloo' else self.gpu_device), dst=dst)
-            dist.send(tensor=torch.tensor(-1, dtype=torch.int32).to('cpu' if self.backend == 'gloo' else self.gpu_device), dst=dst)
-                
-        def receive_shape(src: int):
-            shape = []; temp = 0
-            while True:
-                temp = torch.tensor((0), dtype=torch.int32).to('cpu' if self.backend == 'gloo' else self.gpu_device)
-                dist.recv(tensor=temp, src=src)
-                if temp == -1:
-                    break
-                shape.append(temp.item())
-            return shape
-        sync_operation(filename=get_filename(__file__), line_number=get_linenumber())
-        if self.rank == rank_list[0]: # If the rank is in the first layer's rank list, send the input to the next device
-            shape = sample.shape
-            input_shape = lambda x: [x]+list(sample.shape)[1:]
-            out = self.layer(sample.to(self.gpu_device), compute_grad=False)
-            output_shape = lambda x: [x]+list(out.shape)[1:]
-            # print(f'0 - Rank {self.rank} | Shape: {output_shape(sample.shape[0])} about to be sent')
-            send_shape(output_shape(sample.shape[0]), dst=rank_list[1])
-            # print(f'1 - Rank {self.rank} | Shape: {output_shape(sample.shape[0])} sent')
-        elif self.rank == rank_list[-1]: # If the rank is in the last layer's rank list, receive the input from the previous device
-            # print(f'2 - Rank {self.rank} | Shape about to be received')
-            shape = receive_shape(rank_list[rank_list.index(self.rank-1)])
-            # print(f'3 - Rank {self.rank} | Shape: {shape} received')
-            input_shape = lambda x: [x]+list(shape)[1:]
-            # random vector to simulate the output of the previous layer with shape input_shape(1)
-            input = torch.randn(*input_shape(1)).to(self.gpu_device)
-            out = self.layer(input.to(self.gpu_device), compute_grad=False)
-            output_shape = lambda x: [x]+list(out.shape)[1:]
+        if self.approximated_gradient:
+            self.layer = layer_class(**params).to(self.gpu_device) # Initialize the layer with provided parameters
         else:
-            shape = receive_shape(rank_list[rank_list.index(self.rank-1)])
-            # print(f'3 - Rank {self.rank} | Shape: {shape} received')
-            input_shape = lambda x: [x]+list(shape)[1:]
-            input = torch.randn(*input_shape(1)).to(self.gpu_device)
-            out = self.layer(input.to(self.gpu_device), compute_grad=False)
-            output_shape = lambda x: [x]+list(out.shape)[1:]
-            send_shape(output_shape(1), dst=rank_list[rank_list.index(self.rank+1)])
-            # print(f'4 - Rank {self.rank} | Shape: {output_shape(1)} sent')
-        sync_operation(filename=get_filename(__file__), line_number=get_linenumber())
-        self.shapes = [input_shape, output_shape]
-        # print(f'Rank {self.rank} | input_shape: x,{list(shape)[1:]}, output_shape: x,{list(out.shape)[1:]}')
-        self.subdomain = Weight_Parallelized_Subdomain(self) # Initialize the subdomain model
+            self.layer = Stage(layer_class(**params).to(self.gpu_device)) # Initialize the layer with provided parameters
             
         self.num_f_evals = 0 # Number of forward evaluations
         self.num_g_evals = 0 # Number of gradient evaluations
         self.f_time = 0 # Forward pass time
         self.g_time = 0 # Gradient computation time
+        
+        loss = None
+        out = self.forward(torch.randn(*sample.shape).to(self.gpu_device), chunks_amount=1, reset_grad=True, compute_grad=True, count_f=False, send_shapes=True)
+        if self.rank == rank_list[-1]:
+            loss = criterion(out[0], torch.randn(*out[0].shape).to(self.gpu_device))
+        self.backward([loss], count_g=False, chunks_amount=1, send_shapes=True)
+        self.zero_grad()
+
+        # ZERO GRAD
+        self.subdomain = Weight_Parallelized_Subdomain(self) # Initialize the subdomain model
 
     def zero_counters(self):
         self.num_f_evals = 0
@@ -264,7 +277,7 @@ class Weight_Parallelized_Model(nn.Module):
         pass
 
     # TODO: Keep the wrongly computed derivative (since it is cheap and still works :D) and make a new approach out of it
-    def forward(self, x, chunks_amount=2, reset_grad = False, compute_grad = True, count_f=True):
+    def forward(self, x, chunks_amount=2, reset_grad = False, compute_grad = True, count_f=True, send_shapes=False):
         start = time.time()
         # Initialize the input and output tensors (needed for the backward pass)
         self.inputs = [None]*chunks_amount
@@ -293,29 +306,50 @@ class Weight_Parallelized_Model(nn.Module):
                 i = self.rank_list.index(self.rank)
                 if i == 0: # begin of the pipeline (first layer)
                     chunk = chunks[c].to(self.gpu_device)
-                    out = self.layer(chunk, compute_grad=compute_grad) # Apply the current layer
+                    out = self.layer(chunk, compute_grad=compute_grad) if not self.approximated_gradient else self.layer.forward(chunk)
                     next_rank = self.rank_list[i + 1]
                     self.outputs[c] = out if compute_grad else torch.randn(out.shape[0], device=self.gpu_device) # this is a placeholder which is needed to make the backward function work
+                    if send_shapes:
+                        input_shape = lambda x: [x]+list(chunks[c].shape)[1:]
+                        output_shape = lambda x: [x]+list(out.shape)[1:]
+                        self.shapes = [input_shape, output_shape]
+                        send_shape(out.shape, dst=next_rank, device='cpu' if self.backend == 'gloo' else self.gpu_device)
                     distops.send(tensor=out.cpu() if self.backend == 'gloo' else out, dst=next_rank) # send the tensor
                     # TODO: delete out to free memory? Remember to avoid storing outputs in case "compute_grad" is False
                 elif i == len(self.rank_list)-1: # end of the pipeline (last layer)
                     shape_transfer.wait() # wait for the shape to be broadcasted
-                    temp = torch.empty(*self.shapes[0](chunk_shapes[c]), device='cpu' if self.backend == 'gloo' else self.gpu_device, requires_grad=True)
+                    if send_shapes:
+                        shapes = receive_shape(src=self.rank_list[i-1], device='cpu' if self.backend == 'gloo' else self.gpu_device)
+                        temp = torch.empty(*shapes, device='cpu' if self.backend == 'gloo' else self.gpu_device, requires_grad=True)
+                    else:
+                        temp = torch.empty(*self.shapes[0](chunk_shapes[c]), device='cpu' if self.backend == 'gloo' else self.gpu_device, requires_grad=True)
                     temp,_ = distops.recv(tensor=temp, src=self.rank_list[i-1])
                     temp = temp.to(self.gpu_device)
                     self.inputs[c] = temp if compute_grad else None
-                    out = self.layer(temp, compute_grad=compute_grad)
+                    out = self.layer(temp, compute_grad=compute_grad) if not self.approximated_gradient else self.layer.forward(temp)
                     self.outputs[c] = out if compute_grad else torch.randn(out.shape[0], device=self.gpu_device) # this is a placeholder which is needed to make the backward function 
-                    # print('Super ASD')
+                    if send_shapes:
+                        input_shape = lambda x: [x]+list(temp.shape)[1:]
+                        output_shape = lambda x: [x]+list(out.shape)[1:]
+                        self.shapes = [input_shape, output_shape]
                 else: # middle of the pipeline (between the first and the last layer)
                     shape_transfer.wait() # wait for the shape to be broadcasted
-                    temp = torch.empty(*self.shapes[0](chunk_shapes[c]), device='cpu' if self.backend == 'gloo' else self.gpu_device, requires_grad=True)
+                    if send_shapes:
+                        shapes = receive_shape(src=self.rank_list[i-1], device='cpu' if self.backend == 'gloo' else self.gpu_device)
+                        temp = torch.empty(*shapes, device='cpu' if self.backend == 'gloo' else self.gpu_device, requires_grad=True)
+                    else:
+                        temp = torch.empty(*self.shapes[0](chunk_shapes[c]), device='cpu' if self.backend == 'gloo' else self.gpu_device, requires_grad=True)
                     temp,_ = distops.recv(tensor=temp, src=self.rank_list[i-1])
                     temp = temp.to(self.gpu_device)
-                    out = self.layer(temp, compute_grad=compute_grad)
+                    out = self.layer(temp, compute_grad=compute_grad) if not self.approximated_gradient else self.layer.forward(temp)
                     self.inputs[c] = temp if compute_grad else None
                     self.outputs[c] = out if compute_grad else torch.randn(out.shape[0], device=self.gpu_device) # this is a placeholder which is needed to make the backward function 
                     next_rank = self.rank_list[i + 1]
+                    if send_shapes:
+                        input_shape = lambda x: [x]+list(temp.shape)[1:]
+                        output_shape = lambda x: [x]+list(out.shape)[1:]
+                        self.shapes = [input_shape, output_shape]
+                        send_shape(out.shape, dst=next_rank, device='cpu' if self.backend == 'gloo' else self.gpu_device)
                     distops.send(tensor=out.cpu() if self.backend == 'gloo' else out, dst=next_rank) # send the tensor
         # print(f'Rank {self.rank} | Forward pass time: {time.time()-start}')
         sync_operation(filename=get_filename(__file__), line_number=get_linenumber())
@@ -326,7 +360,7 @@ class Weight_Parallelized_Model(nn.Module):
             self.f_time += time.time() - start
             return True
 
-    def backward(self, loss, count_g=True, chunks_amount=2):
+    def backward(self, loss, count_g=True, chunks_amount=2, send_shapes=False):
         self.grad_output = [None]*chunks_amount
         # We used "diffdist" library: https://github.com/ag14774/diffdist/blob/master/diffdist/testing.py
         start = time.time()
@@ -334,47 +368,82 @@ class Weight_Parallelized_Model(nn.Module):
         for k in range(chunks_amount): # chunked loss
             # sample_shape = torch.zeros(1, dtype=torch.int32).to(self.gpu_device)
             # if self.rank == self.rank_list[0]: # If the rank is in the first layer's rank list, send the input to the next device
-            sample_shape = torch.tensor([self.outputs[k].shape[0]], dtype=torch.int32).to(self.gpu_device)
-            # Broadcast the chunk_shapes tensor to all the ranks (this allows to know the shape of the input tensor for each rank in the pipeline and prepare the recv function)
-            # shape_transfer = dist.broadcast(tensor=sample_shape, src=self.rank_list[0], group=self.master_group, async_op=True) 
+            sample_shape = self.outputs[k].shape[0]
             i = self.rank_list.index(self.rank)
             if self.rank == self.rank_list[-1]: # End of the pipeline
-                self.grad_output[k] = autograd.grad(loss[k], self.outputs[k], create_graph=True)[0]     # TODO: Update so that it takes into account sequential models
-                grad_data = autograd.grad(self.outputs[k], self.inputs[k], grad_outputs=self.grad_output[k], retain_graph=True)[0] # this is needed to compute the derivative at the previous layer
-                distops.send(tensor=grad_data.cpu() if self.backend == 'gloo' else grad_data, dst=self.rank_list[-2]) # TODO make this async if possible
-                for param in self.layer.parameters():
-                    if param.grad is None:
-                        param.grad = autograd.grad(self.outputs[k], param, grad_outputs=self.grad_output[k], retain_graph=True)[0]/chunks_amount
-                    else:
-                        param.grad += autograd.grad(self.outputs[k], param, grad_outputs=self.grad_output[k], retain_graph=True)[0]/chunks_amount
+                if self.approximated_gradient:
+                    self.grad_output[k] = autograd.grad(loss[k], self.outputs[k], create_graph=True)[0]     # TODO: Update so that it takes into account sequential models
+                    grad_data = autograd.grad(self.outputs[k], self.inputs[k], grad_outputs=self.grad_output[k], retain_graph=True)[0] # this is needed to compute the derivative at the previous layer
+                    distops.send(tensor=grad_data.cpu() if self.backend == 'gloo' else grad_data, dst=self.rank_list[-2]) # TODO make this async if possible
+                    for param in self.layer.parameters():
+                        if param.grad is None:
+                            param.grad = autograd.grad(self.outputs[k], param, grad_outputs=self.grad_output[k], retain_graph=True)[0]/chunks_amount
+                        else:
+                            param.grad += autograd.grad(self.outputs[k], param, grad_outputs=self.grad_output[k], retain_graph=True)[0]/chunks_amount
+                else:
+                    self.grad_output[k] = self.layer.backward(loss=loss[k])
+                    if send_shapes:
+                        print(f'(BACKWARD) Rank {self.rank} | Shape: {self.grad_output[k].shape} about to be sent')
+                        send_shape(self.grad_output[k].shape, dst=self.rank_list[-2], device='cpu' if self.backend == 'gloo' else self.gpu_device)
+                        send_shape(self.layer.outputs[0].shape, dst=self.rank_list[-2], device='cpu' if self.backend == 'gloo' else self.gpu_device)
+                    distops.send(tensor=self.grad_output[k].cpu() if self.backend == 'gloo' else self.grad_output[k], dst=self.rank_list[-2]) # TODO make this async if possible
+                    distops.send(tensor=self.layer.outputs[0].cpu() if self.backend == 'gloo' else self.layer.outputs[0], dst=self.rank_list[-2])
 
             elif self.rank == self.rank_list[0]:
-                # TODO : remember to add a condition for the master rank to be the ONLY one waiting for the "shape_transfer"
-                # shape_transfer.wait() # wait for the shape to be broadcasted
-                self.grad_output[k] = torch.empty(*self.shapes[1](sample_shape), device='cpu' if self.backend == 'gloo' else self.gpu_device, requires_grad=True)
-                self.grad_output[k], _ = distops.recv(self.grad_output[k], src=self.rank_list[1])       
-                self.grad_output[k] = self.grad_output[k].to(self.gpu_device)
-                for param in self.layer.parameters():
-                    if param.grad is None:
-                        param.grad = autograd.grad(self.outputs[k], param, grad_outputs=self.grad_output[k], retain_graph=True)[0]/chunks_amount
-                    else:
-                        param.grad += autograd.grad(self.outputs[k], param, grad_outputs=self.grad_output[k], retain_graph=True)[0]/chunks_amount
-                    # print(f'Grad norm: {torch.norm(param.grad.flatten(), p=2)}')
-                # print('asd')
+                if self.approximated_gradient:
+                    self.grad_output[k] = torch.empty(*self.shapes[1](sample_shape), device='cpu' if self.backend == 'gloo' else self.gpu_device, requires_grad=True)
+                    self.grad_output[k], _ = distops.recv(self.grad_output[k], src=self.rank_list[1])       
+                    self.grad_output[k] = self.grad_output[k].to(self.gpu_device)
+                    for param in self.layer.parameters():
+                        if param.grad is None:
+                            param.grad = autograd.grad(self.outputs[k], param, grad_outputs=self.grad_output[k], retain_graph=True)[0]/chunks_amount
+                        else:
+                            param.grad += autograd.grad(self.outputs[k], param, grad_outputs=self.grad_output[k], retain_graph=True)[0]/chunks_amount
+                else:
+                    if send_shapes:
+                        print(f'(BACKWARD) Rank {self.rank} | Shape about to be received')
+                        shape1 = receive_shape(src=self.rank_list[1], device='cpu' if self.backend == 'gloo' else self.gpu_device)
+                        shape2 = receive_shape(src=self.rank_list[1], device='cpu' if self.backend == 'gloo' else self.gpu_device)
+                        self.shapes_backward = [lambda x: [x]+list(shape1)[1:],lambda x: [x]+list(shape2)[1:]]
+                        print(f'(BACKWARD) Rank {self.rank} | Shape: {self.shapes_backward[0](sample_shape)} received')
+                    self.grad_output[k], _ = distops.recv(torch.empty(*self.shapes_backward[0](sample_shape), device='cpu' if self.backend == 'gloo' else self.gpu_device, requires_grad=True), src=self.rank_list[1])   
+                    temp = torch.empty(*self.shapes_backward[1](sample_shape), device='cpu' if self.backend == 'gloo' else self.gpu_device, requires_grad=True)
+                    temp, _ = distops.recv(tensor=temp, src=self.rank_list[1])
+                    self.layer.append_output(temp)
+                    self.grad_output[k] = self.layer.backward(grad_output=self.grad_output[k]) # TO BE FIXED
             else: # middle of the pipeline
-                # shape_transfer.wait() # wait for the shape to be broadcasted
-                self.grad_output[k] = torch.empty(*self.shapes[1](sample_shape), device='cpu' if self.backend == 'gloo' else self.gpu_device, requires_grad=True)
-                self.grad_output[k], _ = distops.recv(self.grad_output[k], src=self.rank_list[i+1])       
-                self.grad_output[k] = self.grad_output[k].to(self.gpu_device)
-                data_grad2 = autograd.grad(self.outputs[k], self.inputs[k], grad_outputs=self.grad_output[k], retain_graph=True)[0] # this is needed to compute the derivative at the previous layer
-                distops.send(tensor=data_grad2.cpu() if self.backend == 'gloo' else data_grad2, dst=self.rank_list[i-1]) # TODO make this async if possible
-                for param in self.layer.parameters():
-                    if param.grad is None:
-                        param.grad = autograd.grad(self.outputs[k], param, grad_outputs=self.grad_output[k], retain_graph=True)[0]/chunks_amount
-                    else:
-                        param.grad += autograd.grad(self.outputs[k], param, grad_outputs=self.grad_output[k], retain_graph=True)[0]/chunks_amount
-                # distops.send(tensor=data_grad2.cpu() if self.backend == 'gloo' else data_grad2, dst=self.rank_list[i-1]) # TODO make this async if possible
-                # TODO / NOTE: maybe we can delete self.inputs to free memory. It is not used anymore after the backward pass. (even in subdomains)
+                if self.approximated_gradient:
+                    self.grad_output[k] = torch.empty(*self.shapes[1](sample_shape), device='cpu' if self.backend == 'gloo' else self.gpu_device, requires_grad=True)
+                    self.grad_output[k], _ = distops.recv(self.grad_output[k], src=self.rank_list[i+1])       
+                    self.grad_output[k] = self.grad_output[k].to(self.gpu_device)
+                    data_grad2 = autograd.grad(self.outputs[k], self.inputs[k], grad_outputs=self.grad_output[k], retain_graph=True)[0] # this is needed to compute the derivative at the previous layer
+                    distops.send(tensor=data_grad2.cpu() if self.backend == 'gloo' else data_grad2, dst=self.rank_list[i-1]) # TODO make this async if possible
+                    for param in self.layer.parameters():
+                        if param.grad is None:
+                            param.grad = autograd.grad(self.outputs[k], param, grad_outputs=self.grad_output[k], retain_graph=True)[0]/chunks_amount
+                        else:
+                            param.grad += autograd.grad(self.outputs[k], param, grad_outputs=self.grad_output[k], retain_graph=True)[0]/chunks_amount
+                    # distops.send(tensor=data_grad2.cpu() if self.backend == 'gloo' else data_grad2, dst=self.rank_list[i-1]) # TODO make this async if possible
+                    # TODO / NOTE: maybe we can delete self.inputs to free memory. It is not used anymore after the backward pass. (even in subdomains)
+                else:
+                    if send_shapes:
+                        print(f'(BACKWARD) Rank {self.rank} about to be received')
+                        shape1 = receive_shape(src=self.rank_list[i+1], device='cpu' if self.backend == 'gloo' else self.gpu_device)
+                        shape2 = receive_shape(src=self.rank_list[i+1], device='cpu' if self.backend == 'gloo' else self.gpu_device)
+                        self.shapes_backward = [lambda x: [x]+list(shape1)[1:],lambda x: [x]+list(shape2)[1:]]
+                        print(f'(BACKWARD) Rank {self.rank} | Shape: {self.shapes_backward[0](sample_shape)} received')
+                    self.grad_output[k] = torch.empty(*self.shapes_backward[0](sample_shape), device='cpu' if self.backend == 'gloo' else self.gpu_device, requires_grad=True)
+                    temp = torch.empty(*self.shapes_backward[1](sample_shape), device='cpu' if self.backend == 'gloo' else self.gpu_device, requires_grad=True)
+                    self.grad_output[k], _ = distops.recv(tensor=self.grad_output[k], src=self.rank_list[i+1])
+                    temp, _ = distops.recv(tensor=temp, src=self.rank_list[i+1])
+                    self.layer.append_output(temp)
+                    self.grad_output[k] = self.layer.backward(grad_output=self.grad_output[k])
+                    if send_shapes:
+                        print(f'(BACKWARD) Rank {self.rank} | Shape: {self.grad_output[k].shape} about to be sent')
+                        send_shape(self.grad_output[k].shape, dst=self.rank_list[i-1], device='cpu' if self.backend == 'gloo' else self.gpu_device)
+                        send_shape(self.layer.outputs[0].shape, dst=self.rank_list[i-1], device='cpu' if self.backend == 'gloo' else self.gpu_device)
+                    distops.send(tensor=self.grad_output[k].cpu() if self.backend == 'gloo' else self.grad_output[k], dst=self.rank_list[i-1]) # TODO make this async if possible
+                    distops.send(tensor=self.layer.outputs[0].cpu() if self.backend == 'gloo' else self.layer.outputs[0], dst=self.rank_list[i-1])
         self.g_time += time.time() - start
         return None
     

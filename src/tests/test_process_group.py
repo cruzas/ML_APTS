@@ -24,6 +24,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         
     if rank in [2,3]:
         # set the process group and rename the ranks to 0 and 1
+        pass
 
 
 if __name__ == '__main__':

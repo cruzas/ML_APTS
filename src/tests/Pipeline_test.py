@@ -48,10 +48,11 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     criterion = torch.nn.CrossEntropyLoss()
     
     NN1 = lambda in_features,out_features: nn.Sequential(nn.Flatten(start_dim=1),nn.Linear(in_features,out_features), nn.ReLU(), nn.Linear(256, 256), nn.ReLU())
-    # NN1 = lambda in_features,out_features: nn.Sequential(torch.flatten, nn.Linear(in_features,out_features), nn.ReLU(), nn.Linear(256, 256), nn.ReLU())
     NN2 = lambda in_features,out_features: nn.Sequential(nn.Linear(in_features,out_features), nn.ReLU(), nn.Linear(128, 128), nn.ReLU())
     NN3 = lambda in_features,out_features: nn.Sequential(nn.Linear(in_features,out_features), nn.ReLU(), nn.Linear(64, 10), nn.ReLU())
-   
+    # NN1 = lambda in_features,out_features: nn.Sequential(nn.Flatten(start_dim=1),nn.Linear(784, 256))
+    # NN2 = lambda in_features,out_features: nn.Sequential(nn.Linear(256,128), nn.ReLU())
+    # NN3 = lambda in_features,out_features: nn.Sequential(nn.Linear(128,10), nn.ReLU())
     # if dist.get_world_size() == 3:
     # layer_list = [
     #     (NN1, {'in_features': 784, 'out_features': 256}, (lambda samples: torch.tensor([samples,784], dtype=torch.int32), lambda samples: torch.tensor([samples,256], dtype=torch.int32))), # samples <- is the sample amount of the input tensor
@@ -95,7 +96,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     x = torch.randn(2, 1, 784, device='cuda:0') # NOTE: The first dimension is the batch size, the second is the channel size, the third is the image size
     # x = torch.randn(1, 784) # NOTE: The first dimension is the batch size, the second is the channel size, the third is the image size
     # sync_operation(filename=get_filename(__file__), line_number=get_linenumber())
-    model = Parallelized_Model(layer_list=layer_list, sample=x, num_replicas=num_replicas)
+    model = Parallelized_Model(layer_list=layer_list, sample=x, num_replicas=num_replicas, criterion=criterion, approximated_gradient=True)
 
     # share parameters from model with seq_model
     if rank == 0:
@@ -128,7 +129,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     
     if rank == 0:
         torch.manual_seed(0)
-        seq_model_2 = Sequential_Model(copy.deepcopy(layers)).to('cuda:0') # NOTE: It is important to do a copy.deepcopy here! Otherwise, the two models will be linked directly.
+        seq_model_2 = Parallel_Sequential_Model(copy.deepcopy(layers)).to('cuda:0') # NOTE: It is important to do a copy.deepcopy here! Otherwise, the two models will be linked directly.
         # synchronize the parameters
         # for l_idx in [0,1,2]:
         #     for seq_layer, seq_layer_2 in zip(seq_model[l_idx].parameters(), seq_model_2.layers[l_idx].parameters()):
@@ -143,7 +144,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     
     # optimizer1 = TR(model, criterion)
     # optimizer2 = torch.optim.Adam(model.subdomain.parameters(), lr=0.0001)
-    optimizer = torch.optim.SGD(model.subdomain.parameters(), lr=10)
+    optimizer = torch.optim.SGD(model.subdomain.parameters(), lr=1)
     if rank == 0:
         seq_optimizer = torch.optim.SGD(seq_model.parameters(), lr=10)
         seq_optimizer_2 = torch.optim.SGD(seq_model_2.parameters(), lr=10)
@@ -154,7 +155,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     #                     max_subdomain_iter=3, dogleg=True, lr=lr)
     
     sync_operation(filename=get_filename(__file__), line_number=get_linenumber())
-    for epoch in range(1):
+    for epoch in range(4):
         for i, (x, y) in enumerate(train_loader):
             # print(f'Rank {rank}, norm x {torch.norm(x.flatten().double())}, norm y {torch.norm(y.flatten().double())}')
             # a = model(x, chunks_amount=1, reset_grad=True, compute_grad=True)
@@ -164,12 +165,10 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             # print(l)
             if rank == 0:
                 # Gather sequential model norm
-                # seq_optimizer.zero_grad()
+                seq_optimizer.zero_grad()
                 out = seq_model(x.to('cuda:0'))
 
                 seq_loss = criterion(out, y.to('cuda:0'))
-                print(f"(SEQ) loss {seq_loss}")
-
                 seq_loss.backward()
                 seq_optimizer.step()
 
@@ -178,24 +177,23 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
                 out_2 = seq_model_2(x.to('cuda:0'))
                 seq_loss_2 = criterion(out_2, y.to('cuda:0'))
 
-                print(f"Epoch {epoch} - Rank {rank} - Iteration {i} - Out and out2 difference {torch.norm(out.flatten().double()-out_2.flatten().double())}")
-                print(f"(SEQ2) loss {seq_loss_2}")
+                print(f"Epoch {epoch} - Iteration {i} - Out and out2 difference {torch.norm(out.flatten().double()-out_2.flatten().double())} - Loss difference {seq_loss-seq_loss_2}")
                 seq_model_2.backward(seq_loss_2)
                 seq_optimizer_2.step()
+    if rank == 0:
+        for j in range(len(layer_list)):
+            seq_grad = torch.cat([layer.grad.flatten() for layer in seq_model[j].parameters()])
+            seq_grad_2 = torch.cat([layer.grad.flatten() for layer in getattr(seq_model_2, f'stage{j}').parameters()])
+            print(f'(SEQ) grad norm {j} -> {torch.norm(seq_grad)}')
+            print(f'(SEQ2) grad norm {j} -> {torch.norm(seq_grad_2)}')
 
-                for j in range(len(layer_list)):
-                    seq_grad = torch.cat([layer.grad.flatten() for layer in seq_model[j].parameters()])
-                    seq_grad_2 = torch.cat([layer.grad.flatten() for layer in getattr(seq_model_2, f'pipe{j}').parameters()])
-                    print(f'(SEQ) grad norm {j} -> {torch.norm(seq_grad)}')
-                    print(f'(SEQ2) grad norm {j} -> {torch.norm(seq_grad_2)}')
+            # loss = optimizer.step(closure(x, y, torch.nn.CrossEntropyLoss(), model, data_chunks_amount=1))
 
-            loss = optimizer.step(closure(x, y, torch.nn.CrossEntropyLoss(), model, data_chunks_amount=1))
-
-            print(f'(PAR) grad norm {rank} -> {model.model.subdomain_grad_norm()}')
+            # print(f'(PAR) grad norm {rank} -> {model.model.subdomain_grad_norm()}')
             # print(f"Parallel grad norm {model.model.grad_norm()}")
 
-            if rank == 0:
-                print(f'Rank {rank}, epoch {epoch}, iteration {i}, loss {loss}, seq_loss {seq_loss}')
+            # if rank == 0:
+            #     print(f'Rank {rank}, epoch {epoch}, iteration {i}, loss {loss}, seq_loss {seq_loss}')
 
             # print(loss)
         dist.barrier()
