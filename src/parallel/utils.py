@@ -37,6 +37,22 @@ class ParallelLoss():
             print('ciao')
         return self.criterion(x,y) if dist.get_rank() == self.rank_list[-1][0] else None    
 
+# Forward pass to defined the shapes of the tensors
+def send_shape(shape: list, dst: int, device: torch.device):
+    for s in shape:
+        dist.send(tensor=torch.tensor(s, dtype=torch.int32).to(device), dst=dst)
+    dist.send(tensor=torch.tensor(-1, dtype=torch.int32).to(device), dst=dst)
+        
+def receive_shape(src: int, device: torch.device):
+    shape = []; temp = 0
+    while True:
+        temp = torch.tensor((0), dtype=torch.int32).to(device)
+        dist.recv(tensor=temp, src=src)
+        if temp == -1:
+            break
+        shape.append(temp.item())
+    return shape
+
 def closure(inputs, targets, criterion, model, compute_grad=True, zero_grad=True, return_output=False,data_chunks_amount=2, counter=True):
     '''
     NOTE: Losses from different chunks are averaged.
