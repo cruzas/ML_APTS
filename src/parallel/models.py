@@ -60,27 +60,47 @@ class Sequential_Model(nn.Module):
                 grad_output = getattr(self, f'pipe{i}').backward(grad_output=grad_output)
 
 class Parallel_Sequential_Model(nn.Module):
-    def __init__(self, stages):
+    def __init__(self, stages, rank_list):
         super(Parallel_Sequential_Model, self).__init__()
+        if len(stages) != dist.get_world_size():
+            raise ValueError(f"The number of stages ({len(stages)}) must be equal to the world size ({dist.get_world_size()}).")
         self.num_stages = len(stages)
-        for i, stage in enumerate(stages):
-            setattr(self, f'stage{i}', Stage(stage))
+        self.rank = dist.get_rank()
+        self.stage = Stage(stages[self.rank])
+        self.rank_list = rank_list
+        self.backend = dist.get_backend()
+        self.tensor_device = decide_tensor_device(ws=dist.get_world_size(), backend=dist.get_backend(), gpu_id=0)
+        self.send_recv_device = 'cpu' if self.backend == 'gloo' else self.tensor_device
+        self.master_group = dist.new_group(ranks=self.rank_list, use_local_synchronization=True)
     
-    def forward(self, x):
-        for i in range(0, self.num_stages):
-            print(f"(FWD) Going through stage group {i}")
-            x = getattr(self, f'stage{i}')(x)
-            if i > 0:
-                output_needed = getattr(self, f'stage{i}').outputs[0]
-                if len(getattr(self, f'stage{i-1}').outputs) > len(getattr(self, f'stage{i-1}').layer):
-                    print("Removing the last element of the outputs list")
-                    getattr(self, f'stage{i-1}').outputs.pop(-1)
-                getattr(self, f'stage{i-1}').outputs.append(output_needed)
-        return x
+    def forward(self, x, chunks_amount=1, reset_grad=False, compute_grad=True, send_shapes=False):
+        rank_index = self.rank_list.index(self.rank)
+        if self.rank == self.rank_list[0]: # First stage in pipeline
+            x = self.stage(x)
+            send_shape(x.shape, dst=self.rank_list[1], device=self.send_recv_device)
+            distops.send(tensor=x, dst=self.rank_list[1])
+        elif self.rank == self.rank_list[-1]: # Last stage in pipeline
+            shape = receive_shape(src=self.rank_list[-2], device=self.send_recv_device)
+            x = torch.empty(*shape, device=self.send_recv_device)
+            x,_ = distops.recv(tensor=x, src=self.rank_list[-2])
+            x = self.stage(x)
+            return [x]
+        else: # Middle stages in pipeline
+            shape = receive_shape(src=self.rank_list[rank_index-1], device=self.send_recv_device)
+            x = torch.empty(*shape, device=self.send_recv_device)
+            x,_ = distops.recv(tensor=x, src=self.rank_list[rank_index-1])
+            x = self.stage(x)
+            send_shape(x.shape, dst=self.rank_list[rank_index+1], device=self.send_recv_device)
+            distops.send(tensor=x, dst=self.rank_list[rank_index+1])
     
     def backward(self, loss):
+        for i in range(1, self.num_stages):
+            output_needed = getattr(self, f'stage{i}').outputs[0]
+            if len(getattr(self, f'stage{i-1}').outputs) > len(getattr(self, f'stage{i-1}').layer):
+                getattr(self, f'stage{i-1}').outputs.pop(-1)
+            getattr(self, f'stage{i-1}').outputs.append(output_needed)
+        
         for i in range(self.num_stages-1, -1, -1):
-            print(f"(BWD) Going through stage group {i}")
             if i == self.num_stages-1:
                 grad_output = getattr(self, f'stage{i}').backward(loss=loss)
             else:
@@ -99,7 +119,6 @@ class Stage(nn.Sequential):
         self.outputs = [0]*len(list(layer))
     
     def forward(self, x, compute_grad=True):
-
         for i, sublayer in enumerate(self.layer): # Problem enumerate self just yields length 1
             x = sublayer(x)
             if compute_grad:
@@ -167,12 +186,12 @@ class Parallelized_Model(nn.Module):
             if self.rank in ranks:
                 self.layer_copies_group = dist.new_group(ranks, use_local_synchronization=True)
     
-    def forward(self, x, chunks_amount=2, reset_grad = False, compute_grad = True, count_f=True):
+    def forward(self, x, chunks_amount=2, reset_grad = False, compute_grad = True):
         sync_operation(filename=get_filename(__file__), line_number=get_linenumber())
-        return self.model.forward(x, chunks_amount=chunks_amount, reset_grad=reset_grad, compute_grad=compute_grad, count_f=count_f)
+        return self.model.forward(x, chunks_amount=chunks_amount, reset_grad=reset_grad, compute_grad=compute_grad)
     
-    def backward(self, loss, count_g=True, chunks_amount=2, sync=True):
-        self.model.backward(loss=loss, count_g=count_g, chunks_amount=chunks_amount)
+    def backward(self, loss, chunks_amount=2, sync=True):
+        self.model.backward(loss=loss, chunks_amount=chunks_amount)
         # update the weights across the replicas
         if sync:
             # average all gradients across the replicas
@@ -214,7 +233,7 @@ class Weight_Parallelized_Model(nn.Module):
         # print(f'rank {self.rank}')
         self.gpu_id = gpu_id
         self.backend = dist.get_backend()
-        self.gpu_device = decide_gpu_device(ws=dist.get_world_size(), backend=dist.get_backend(), gpu_id=0)
+        self.gpu_device = decide_tensor_device(ws=dist.get_world_size(), backend=dist.get_backend(), gpu_id=0)
         self.inputs = []#torch.tensor(()).to(self.gpu_device)  # each rank will store here the input of the next rank or layer (so the output of the current layer)  | -> this is needed for the backward pass
         self.outputs = []#torch.tensor(()).to(self.gpu_device)  # each rank will store here the output of the previous rank or layer (so its input)                  | -> this is needed for the backward pass
         self.grad_output = []#torch.tensor(()).to(self.gpu_device) # each rank will store here the gradient of the output of the current layer (so the gradient of the loss w.r.t. the output of the current layer) | -> this is needed for the backward pass
@@ -235,10 +254,10 @@ class Weight_Parallelized_Model(nn.Module):
         self.g_time = 0 # Gradient computation time
         
         loss = None
-        out = self.forward(torch.randn(*sample.shape).to(self.gpu_device), chunks_amount=1, reset_grad=True, compute_grad=True, count_f=False, send_shapes=True)
+        out = self.forward(torch.randn(*sample.shape).to(self.gpu_device), chunks_amount=1, reset_grad=True, compute_grad=True, send_shapes=True)
         if self.rank == rank_list[-1]:
             loss = criterion(out[0], torch.randn(*out[0].shape).to(self.gpu_device))
-        self.backward([loss], count_g=False, chunks_amount=1, send_shapes=True)
+        self.backward([loss], chunks_amount=1, send_shapes=True)
         self.zero_grad()
 
         # ZERO GRAD
@@ -277,14 +296,14 @@ class Weight_Parallelized_Model(nn.Module):
         pass
 
     # TODO: Keep the wrongly computed derivative (since it is cheap and still works :D) and make a new approach out of it
-    def forward(self, x, chunks_amount=2, reset_grad = False, compute_grad = True, count_f=True, send_shapes=False):
+    def forward(self, x, chunks_amount=2, reset_grad = False, compute_grad = True, send_shapes=False):
         start = time.time()
         # Initialize the input and output tensors (needed for the backward pass)
         self.inputs = [None]*chunks_amount
         self.outputs = [None]*chunks_amount
         # "compute_grad" is a flag to avoid storing the tensors needed to compute the gradients
         compute_grad = False if not torch.is_grad_enabled() else compute_grad
-        if count_f: self.num_f_evals += 1 
+        self.num_f_evals += 1 
         with torch.set_grad_enabled(compute_grad):
             # Reset the gradients of the model before starting to accumulate them again
             if reset_grad:
@@ -360,11 +379,11 @@ class Weight_Parallelized_Model(nn.Module):
             self.f_time += time.time() - start
             return True
 
-    def backward(self, loss, count_g=True, chunks_amount=2, send_shapes=False):
+    def backward(self, loss, chunks_amount=2, send_shapes=False):
         self.grad_output = [None]*chunks_amount
         # We used "diffdist" library: https://github.com/ag14774/diffdist/blob/master/diffdist/testing.py
         start = time.time()
-        if count_g: self.num_g_evals += 1 
+        self.num_g_evals += 1 
         for k in range(chunks_amount): # chunked loss
             # sample_shape = torch.zeros(1, dtype=torch.int32).to(self.gpu_device)
             # if self.rank == self.rank_list[0]: # If the rank is in the first layer's rank list, send the input to the next device
@@ -460,14 +479,14 @@ class Weight_Parallelized_Subdomain(nn.Module):
         self.f_time = 0
         self.g_time = 0
         
-    def forward(self, count_f=True):
+    def forward(self):
         start = time.time()
         for k,chunk in enumerate(self.model.inputs):
             self.model.outputs[k] = self.model.layer(chunk)
-        if count_f: self.num_f_evals += 1
+        self.num_f_evals += 1
         self.f_time += time.time() - start
 
-    def backward(self, count_g=True):
+    def backward(self):
         start = time.time()
         for k in range(len(self.model.outputs)):
             for param in self.model.layer.parameters():
@@ -478,7 +497,7 @@ class Weight_Parallelized_Subdomain(nn.Module):
                 # print the norm of the gradient
                 # print(f'Rank {self.model.rank} | Grad norm: {torch.norm(param.grad.flatten(), p=2)}')
         # print(f'Rank {self.model.rank} | Grad norm: {torch.norm(torch.cat([param.grad.flatten() for param in self.model.parameters()], dim=0), p=2)}')
-        if count_g: self.num_g_evals += 1
+        self.num_g_evals += 1
         self.g_time += time.time() - start
             
     def grad(self):
@@ -539,14 +558,17 @@ class Weight_Parallelized_Tensor(nn.Module):
         if isinstance(a, Weight_Parallelized_Tensor):
             return Weight_Parallelized_Tensor([p-q for p,q in zip(self.tensor, a.tensor)], backend=self.backend, master_group=self.master_group, rank=self.rank)
 
-def decide_gpu_device(ws, backend, gpu_id):
-    if backend == 'gloo':
-        if torch.cuda.device_count() < ws:
-            return f'cuda:{gpu_id}'
+def decide_tensor_device(ws, backend, gpu_id):
+    if torch.cuda.is_available():
+        if backend == 'gloo':
+            if torch.cuda.device_count() < ws:
+                return f'cuda:{gpu_id}'
+            else:
+                return f'cuda:{dist.get_rank()}'
         else:
-            return f'cuda:{dist.get_rank()}'
+            return f'cuda:{gpu_id}'
     else:
-        return f'cuda:{gpu_id}'
+        return 'cpu'
 
 
 # NOTE: TO BE DONE
