@@ -53,12 +53,12 @@ def receive_shape(src: int, device: torch.device):
         shape.append(temp.item())
     return shape
 
-def closure(inputs, targets, criterion, model, compute_grad=True, zero_grad=True, return_output=False,data_chunks_amount=2, counter=True):
+def closure(inputs, targets, criterion, model, compute_grad=True, zero_grad=True, return_output=False,data_chunks_amount=2):
     '''
     NOTE: Losses from different chunks are averaged.
     '''
-    if model.__class__.__name__ != 'Weight_Parallelized_Model' and model.__class__.__name__ != 'Parallelized_Model':
-        raise ValueError('Model must be an instance of the "Weight_Parallelized_Model" class.')
+    if model.__class__.__name__ != 'Weight_Parallelized_Model' and model.__class__.__name__ != 'Parallelized_Model' and model.__class__.__name__ != 'Parallel_Sequential_Model':
+        raise ValueError('Model must be an instance of the "Weight_Parallelized_Model" class or Parallelized_Model or Parallel_Sequential_Model.')
     if isinstance(criterion, type):
         raise ValueError('Criterion must be an instance of a class.')
     if model.__class__.__name__ == 'Parallelized_Model':
@@ -66,21 +66,21 @@ def closure(inputs, targets, criterion, model, compute_grad=True, zero_grad=True
     if model.rank == model.rank_list[-1]:
         targets = targets.chunk(data_chunks_amount)
     # Compute loss
-    def closure2(compute_grad=compute_grad, zero_grad=zero_grad, data_chunks_amount=data_chunks_amount, counter=counter):
+    def closure2(compute_grad=compute_grad, zero_grad=zero_grad, data_chunks_amount=data_chunks_amount):
         if zero_grad:
             model.zero_grad()
         with torch.set_grad_enabled(compute_grad):
-            outputs = model(inputs, count_f=counter, chunks_amount=data_chunks_amount)
+            outputs = model(inputs, chunks_amount=data_chunks_amount)
         # loss = torch.zeros(1).to(model.gpu_device)
         losses = []
-        loss = torch.tensor(0.0).to(model.gpu_device)
+        loss = torch.tensor(0.0).to(model.tensor_device)
         if model.rank == model.rank_list[-1]:
             for i,out in enumerate(outputs):
                 losses.append(criterion(out, targets[i].to(out.device)))
             loss = sum(losses)/len(losses)
         dist.broadcast(tensor=loss.detach(), src=model.rank_list[-1], group=model.master_group)
         if compute_grad and torch.is_grad_enabled():
-            model.backward(losses, count_g=counter, chunks_amount=data_chunks_amount)
+            model.backward(losses, chunks_amount=data_chunks_amount)
         if return_output:
             if model.rank == model.rank_list[-1]:
                 # Returning outputs here in case we want to compute the accuracy afterwards
