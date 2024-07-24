@@ -37,119 +37,173 @@ class Sequential_Model(nn.Module):
         super(Sequential_Model, self).__init__()
         self.num_pipes = len(pipe_list)
         for i, pipe in enumerate(pipe_list):
-            setattr(self, f'pipe{i}', Stage(pipe))
+            setattr(self, f'pipe{i}', Stage(stage=pipe, extra_stage=pipe_list[i+1][0] if i+1 < len(pipe_list) else None))
     
+    def grad_norm(self):
+        g = [0]*self.num_pipes
+        for i in range(self.num_pipes):
+            g[i] = torch.norm(torch.cat([param.grad.flatten() for param in getattr(self, f'pipe{i}').parameters()]))
+        return g
+
     def forward(self, x):
         for i in range(0, self.num_pipes):
-            print(f"(FWD) Going through pipe group {i}")
             x = getattr(self, f'pipe{i}')(x)
             if i > 0:
                 output_needed = getattr(self, f'pipe{i}').outputs[0]
-                if len(getattr(self, f'pipe{i-1}').outputs) > len(getattr(self, f'pipe{i-1}').layer):
-                    print("Removing the last element of the outputs list")
+                if len(getattr(self, f'pipe{i-1}').outputs) > len(getattr(self, f'pipe{i-1}').stage):
                     getattr(self, f'pipe{i-1}').outputs.pop(-1)
                 getattr(self, f'pipe{i-1}').outputs.append(output_needed)
+                # print(f'(SEQUENTIAL) Index {i} appended to {i-1} with shape {output_needed.shape}')
         return x
     
     def backward(self, loss):
         for i in range(self.num_pipes-1, -1, -1):
-            print(f"(BWD) Going through pipe group {i}")
+            # print(f"(BWD) Going through pipe group {i}")
             if i == self.num_pipes-1:
                 grad_output = getattr(self, f'pipe{i}').backward(loss=loss)
             else:
+                # print(f"(SEQUENTIAL) Stage {i} grad_output norm {torch.norm(grad_output.flatten())}")
                 grad_output = getattr(self, f'pipe{i}').backward(grad_output=grad_output)
 
 class Parallel_Sequential_Model(nn.Module):
-    def __init__(self, stages, rank_list):
+    def __init__(self, stages, rank_list, sample, target, criterion):
         super(Parallel_Sequential_Model, self).__init__()
         if len(stages) != dist.get_world_size():
             raise ValueError(f"The number of stages ({len(stages)}) must be equal to the world size ({dist.get_world_size()}).")
-        self.num_stages = len(stages)
         self.rank = dist.get_rank()
-        self.stage = Stage(stages[self.rank])
-        self.rank_list = rank_list
+        rank_index = rank_list.index(self.rank)
         self.backend = dist.get_backend()
         self.tensor_device = decide_tensor_device(ws=dist.get_world_size(), backend=dist.get_backend(), gpu_id=0)
         self.send_recv_device = 'cpu' if self.backend == 'gloo' else self.tensor_device
+        self.stage = Stage(stage=stages[rank_index], extra_stage=stages[rank_index+1][0] if rank_index+1 < len(stages) else None, device = self.tensor_device)
+        self.rank_list = rank_list
         self.master_group = dist.new_group(ranks=self.rank_list, use_local_synchronization=True)
+        # Setup phase to compute the shapes of the tensors in the pipeline
+        self.setup_phase = True
+        x = self.forward(sample, chunks_amount=1, reset_grad=True, compute_grad=True)
+        loss = nn.MSELoss()(x[0], target) if self.rank == self.rank_list[-1] else None
+        self.backward([loss])
+        self.setup_phase = False
+        self.zero_grad()
+        # End of setup phase
     
-    def forward(self, x, chunks_amount=1, reset_grad=False, compute_grad=True, send_shapes=False):
+    def grad_norm(self):
+        return torch.norm(torch.cat([param.grad.flatten() for param in self.stage.parameters()]))
+        
+    def zero_grad(self):
+        self.stage.zero_grad()
+    
+    def forward(self, x, chunks_amount=1, reset_grad=False, compute_grad=True):
+        if reset_grad:
+            self.zero_grad()
+        chunk_size = torch.tensor(0, dtype=torch.int32, device=self.send_recv_device)
+        if self.rank == self.rank_list[0]:
+            chunk_size = torch.tensor(x.shape[0], dtype=torch.int32, device=self.send_recv_device)
+        shared_shape = dist.broadcast(chunk_size, src=self.rank_list[0], group=self.master_group, async_op=True)
+        
         rank_index = self.rank_list.index(self.rank)
         if self.rank == self.rank_list[0]: # First stage in pipeline
-            x = self.stage(x)
-            send_shape(x.shape, dst=self.rank_list[1], device=self.send_recv_device)
-            distops.send(tensor=x, dst=self.rank_list[1])
+            x = self.stage(x, compute_grad=compute_grad)
+            if self.setup_phase:
+                send_shape(x.shape, dst=self.rank_list[1], device=self.send_recv_device) 
+            distops.send(tensor=x.to(self.send_recv_device), dst=self.rank_list[1])
         elif self.rank == self.rank_list[-1]: # Last stage in pipeline
-            shape = receive_shape(src=self.rank_list[-2], device=self.send_recv_device)
-            x = torch.empty(*shape, device=self.send_recv_device)
+            shared_shape.wait()
+            if self.setup_phase:
+                shape = receive_shape(src=self.rank_list[-2], device=self.send_recv_device)
+                self.shape = lambda x: [x]+shape[1:]
+            x = torch.empty(*self.shape(chunk_size), device=self.send_recv_device)
             x,_ = distops.recv(tensor=x, src=self.rank_list[-2])
-            x = self.stage(x)
+            x = self.stage(x, compute_grad=compute_grad)
             return [x]
         else: # Middle stages in pipeline
-            shape = receive_shape(src=self.rank_list[rank_index-1], device=self.send_recv_device)
-            x = torch.empty(*shape, device=self.send_recv_device)
+            shared_shape.wait()
+            if self.setup_phase:
+                shape = receive_shape(src=self.rank_list[rank_index-1], device=self.send_recv_device)
+                self.shape = lambda x: [x]+shape[1:]
+            x = torch.empty(*self.shape(chunk_size), device=self.send_recv_device)
             x,_ = distops.recv(tensor=x, src=self.rank_list[rank_index-1])
-            x = self.stage(x)
-            send_shape(x.shape, dst=self.rank_list[rank_index+1], device=self.send_recv_device)
-            distops.send(tensor=x, dst=self.rank_list[rank_index+1])
+            x = self.stage(x, compute_grad=compute_grad)
+            if self.setup_phase:
+                send_shape(x.shape, dst=self.rank_list[rank_index+1], device=self.send_recv_device)
+            distops.send(tensor=x.to(self.send_recv_device), dst=self.rank_list[rank_index+1])
+        return [0]*chunks_amount
     
-    def backward(self, loss):
-        for i in range(1, self.num_stages):
-            output_needed = getattr(self, f'stage{i}').outputs[0]
-            if len(getattr(self, f'stage{i-1}').outputs) > len(getattr(self, f'stage{i-1}').layer):
-                getattr(self, f'stage{i-1}').outputs.pop(-1)
-            getattr(self, f'stage{i-1}').outputs.append(output_needed)
-        
-        for i in range(self.num_stages-1, -1, -1):
-            if i == self.num_stages-1:
-                grad_output = getattr(self, f'stage{i}').backward(loss=loss)
+    def backward(self, losses, chunks_amount=1):
+        assert len(losses) == 1
+        for loss in losses:
+            chunk_size = self.stage.outputs[0].shape[0]
+            rank_index = self.rank_list.index(self.rank)
+            if rank_index == self.rank_list[-1]:
+                grad_output = self.stage.backward(loss=loss)
+                # print(f'(PARALLEL) Stage {dist.get_rank()} RECEIVED grad_output norm {torch.norm(grad_output.flatten())}')
+                if self.setup_phase:
+                    send_shape(grad_output.shape, dst=self.rank_list[rank_index-1], device=self.send_recv_device)
+                distops.send(tensor=grad_output.to(self.send_recv_device), dst=self.rank_list[rank_index-1])
+            elif rank_index != self.rank_list[0]: # Middle stages in pipeline
+                if self.setup_phase:
+                    shape = receive_shape(src=self.rank_list[rank_index+1], device=self.send_recv_device)
+                    self.shape_grad_output = lambda x: [x]+shape[1:]
+                grad_output,_ = distops.recv(torch.empty(*self.shape_grad_output(chunk_size), device=self.send_recv_device), src=self.rank_list[rank_index+1])
+                grad_output = self.stage.backward(grad_output=grad_output)
+                # print(f'(PARALLEL) Stage {dist.get_rank()} RECEIVED grad_output norm {torch.norm(grad_output.flatten())}')
+                if self.setup_phase:
+                    send_shape(grad_output.shape, dst=self.rank_list[rank_index-1], device=self.send_recv_device)
+                distops.send(tensor=grad_output.to(self.send_recv_device), dst=self.rank_list[rank_index-1])
             else:
-                grad_output = getattr(self, f'stage{i}').backward(grad_output=grad_output)
-                
+                if self.setup_phase:
+                    shape = receive_shape(src=self.rank_list[rank_index+1], device=self.send_recv_device)
+                    self.shape_grad_output = lambda x: [x]+shape[1:]
+                grad_output,_ = distops.recv(torch.empty(*self.shape_grad_output(chunk_size), device=self.send_recv_device), src=self.rank_list[rank_index+1])
+                # print(f'(PARALLEL) Stage {dist.get_rank()} RECEIVED grad_output norm {torch.norm(grad_output.flatten())}')
+                self.stage.backward(grad_output=grad_output)
                 
 class Stage(nn.Sequential):
-    def __init__(self, layer):
-        if not isinstance(layer, nn.Sequential):
+    def __init__(self, stage, extra_stage, device = 'cuda:0' if torch.cuda.is_available() else 'cpu'):
+        if not isinstance(stage, nn.Sequential):
             raise ValueError('layer must be a nn.Sequential')
-        for l in layer:
+        for l in stage:
             if isinstance(l, nn.Sequential):
                 raise ValueError('layer must not have nested nn.Sequential')
-        super(Stage, self).__init__(layer)
-        self.layer = layer
-        self.outputs = [0]*len(list(layer))
-    
+        super(Stage, self).__init__(stage)
+        self.stage = stage.to(device)
+        self.extra_stage = extra_stage.to(device) if extra_stage is not None else None
+        self.outputs = [0]*len(list(stage))
+        self.device = device
+
+    # Override parameters() function
+    def parameters(self):
+        return [param for param in self.stage.parameters()]
+
     def forward(self, x, compute_grad=True):
-        for i, sublayer in enumerate(self.layer): # Problem enumerate self just yields length 1
-            x = sublayer(x)
+        for i, substage in enumerate(self.stage): # Problem enumerate self just yields length 1
+            x = substage(x.to(self.device))
             if compute_grad:
                 self.outputs[i] = x
+        if self.extra_stage is not None:
+            self.append_output(self.extra_stage(x))
         return x
+    
     def append_output(self, output):
-        if len(self.outputs) > len(self.layer):
+        if len(self.outputs) > len(self.stage):
             self.outputs.pop(-1)
-        self.outputs.append(output)
+        self.outputs.append(output.to(self.device))
         
     def zero_grad(self, set_to_none: bool = True) -> None:
         return super().zero_grad(set_to_none)
     
     def backward(self, grad_output=None, loss=None):
+        grad_output = grad_output.to(self.device) if grad_output is not None else None
+        loss = loss.to(self.device) if loss is not None else None
         if loss is not None:
             grad_output = autograd.grad(loss, self.outputs[-1], retain_graph=True)[0]
             for param in self[-1].parameters():
                 param.grad = autograd.grad(self.outputs[-1], param, grad_outputs=grad_output, retain_graph=True)[0]
         for i in range(len(self.outputs)-2, -1, -1): # I modified this to -1 instead of -2
-            if self.outputs[i].grad_fn is not None: # NOTE: nn.Flatten() for instance has no grad_fn if it's the first layer in a pipe
-                try:
-                    grad_output = autograd.grad(self.outputs[i+1], self.outputs[i], grad_outputs=grad_output, retain_graph=True)[0]
-                except Exception as e:
-                    print(f"Error 1: {e}")
-                    print(f"self.outputs[{i+1}]: {self.outputs[i+1].shape}, self.outputs[{i}]: {self.outputs[i].shape}, grad_output: {grad_output.shape}")
-                for param in self.layer[i].parameters():
-                    try:
-                        param.grad = autograd.grad(self.outputs[i], param, grad_outputs=grad_output, retain_graph=True)[0] # Allow unused means param might not be used in the computation graph        
-                    except Exception as e:
-                        print(f"Error 2: {e}")
-                        print(f"self.outputs[{i}]: {self.outputs[i].shape}, param: {param.shape}, grad_output: {grad_output.shape}")
+            if self.outputs[i].grad_fn is not None: # NOTE: nn.Flatten() for instance has no grad_fn if it's the first stage in a pipe
+                grad_output = autograd.grad(self.outputs[i+1], self.outputs[i], grad_outputs=grad_output, retain_graph=True)[0]
+                for param in self.stage[i].parameters():
+                    param.grad = autograd.grad(self.outputs[i], param, grad_outputs=grad_output, retain_graph=True)[0] # Allow unused means param might not be used in the computation graph        
         return grad_output
 
 class Parallelized_Model(nn.Module):
@@ -186,11 +240,11 @@ class Parallelized_Model(nn.Module):
             if self.rank in ranks:
                 self.layer_copies_group = dist.new_group(ranks, use_local_synchronization=True)
     
-    def forward(self, x, chunks_amount=2, reset_grad = False, compute_grad = True):
+    def forward(self, x, chunks_amount=1, reset_grad = False, compute_grad = True):
         sync_operation(filename=get_filename(__file__), line_number=get_linenumber())
         return self.model.forward(x, chunks_amount=chunks_amount, reset_grad=reset_grad, compute_grad=compute_grad)
     
-    def backward(self, loss, chunks_amount=2, sync=True):
+    def backward(self, loss, chunks_amount=1, sync=True):
         self.model.backward(loss=loss, chunks_amount=chunks_amount)
         # update the weights across the replicas
         if sync:
@@ -296,7 +350,7 @@ class Weight_Parallelized_Model(nn.Module):
         pass
 
     # TODO: Keep the wrongly computed derivative (since it is cheap and still works :D) and make a new approach out of it
-    def forward(self, x, chunks_amount=2, reset_grad = False, compute_grad = True, send_shapes=False):
+    def forward(self, x, chunks_amount=1, reset_grad = False, compute_grad = True, send_shapes=False):
         start = time.time()
         # Initialize the input and output tensors (needed for the backward pass)
         self.inputs = [None]*chunks_amount
@@ -379,7 +433,7 @@ class Weight_Parallelized_Model(nn.Module):
             self.f_time += time.time() - start
             return True
 
-    def backward(self, loss, chunks_amount=2, send_shapes=False):
+    def backward(self, loss, chunks_amount=1, send_shapes=False):
         self.grad_output = [None]*chunks_amount
         # We used "diffdist" library: https://github.com/ag14774/diffdist/blob/master/diffdist/testing.py
         start = time.time()
