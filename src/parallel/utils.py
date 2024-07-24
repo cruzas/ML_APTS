@@ -1,6 +1,6 @@
 import torch
 import torch.distributed as dist
-
+import dill
 
 
 def Parallelize(LayerList, rank_list, gpu_per_node):
@@ -37,13 +37,33 @@ class ParallelLoss():
             print('ciao')
         return self.criterion(x,y) if dist.get_rank() == self.rank_list[-1][0] else None    
 
+def send_fun(tensor, dst):
+    """Send a lambda function to a specific node."""
+    serialized_func = dill.dumps(tensor)
+    byte_tensor = torch.ByteTensor(list(serialized_func))
+    send_shape(byte_tensor, dst)
+    dist.send(byte_tensor, dst)
+
+def recv_fun(src):
+    """Receive a lambda function from a specific node."""
+    shape = receive_shape(src)
+    byte_tensor = torch.ByteTensor(shape)
+    dist.recv(byte_tensor, src)
+    serialized_func = byte_tensor.numpy().tobytes().rstrip(b'\x00')
+    func = dill.loads(serialized_func)
+    return func
+
 # Forward pass to defined the shapes of the tensors
-def send_shape(shape: list, dst: int, device: torch.device):
+def send_shape(shape: list, dst: int, device = None):
+    if device is None:
+        device = torch.device('cuda') if dist.get_backend() == 'nccl' else torch.device('cpu')
     for s in shape:
         dist.send(tensor=torch.tensor(s, dtype=torch.int32).to(device), dst=dst)
     dist.send(tensor=torch.tensor(-1, dtype=torch.int32).to(device), dst=dst)
         
-def receive_shape(src: int, device: torch.device):
+def receive_shape(src: int, device = None):
+    if device is None:
+        device = torch.device('cuda') if dist.get_backend() == 'nccl' else torch.device('cpu')
     shape = []; temp = 0
     while True:
         temp = torch.tensor((0), dtype=torch.int32).to(device)
@@ -53,7 +73,7 @@ def receive_shape(src: int, device: torch.device):
         shape.append(temp.item())
     return shape
 
-def closure(inputs, targets, criterion, model, compute_grad=True, zero_grad=True, return_output=False,data_chunks_amount=2):
+def closure(inputs, targets, criterion, model, compute_grad=True, zero_grad=True, return_output=False, data_chunks_amount=1):
     '''
     NOTE: Losses from different chunks are averaged.
     '''
@@ -72,11 +92,11 @@ def closure(inputs, targets, criterion, model, compute_grad=True, zero_grad=True
         with torch.set_grad_enabled(compute_grad):
             outputs = model(inputs, chunks_amount=data_chunks_amount)
         # loss = torch.zeros(1).to(model.gpu_device)
-        losses = []
+        losses = [0]*data_chunks_amount
         loss = torch.tensor(0.0).to(model.tensor_device)
         if model.rank == model.rank_list[-1]:
             for i,out in enumerate(outputs):
-                losses.append(criterion(out, targets[i].to(out.device)))
+                losses[i] = criterion(out, targets[i].to(out.device))
             loss = sum(losses)/len(losses)
         dist.broadcast(tensor=loss.detach(), src=model.rank_list[-1], group=model.master_group)
         if compute_grad and torch.is_grad_enabled():
