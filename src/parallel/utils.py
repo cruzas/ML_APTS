@@ -100,7 +100,7 @@ def closure(inputs, targets, criterion, model, compute_grad=True, zero_grad=True
             loss = sum(losses)/len(losses)
         dist.broadcast(tensor=loss.detach(), src=model.rank_list[-1], group=model.master_group)
         if compute_grad and torch.is_grad_enabled():
-            model.backward(losses, chunks_amount=data_chunks_amount)
+            model.backward(losses)
         if return_output:
             if model.rank == model.rank_list[-1]:
                 # Returning outputs here in case we want to compute the accuracy afterwards
