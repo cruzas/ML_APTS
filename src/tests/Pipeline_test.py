@@ -25,6 +25,7 @@ import dill
 def main(rank=None, master_addr=None, master_port=None, world_size=None):
     prepare_distributed_environment(rank, master_addr, master_port, world_size)
     torch.manual_seed(0)
+        
     rank = dist.get_rank() if dist.get_backend() == 'nccl' else rank
 
     transform = transforms.Compose([
@@ -52,30 +53,38 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     ]
 
     num_replicas = 1
+    device = 'cpu' # 'cuda:0' if torch.cuda.is_available() else 'cpu'
     
     # train_loader = GeneralizedDistributedDataLoader(stage_list=stage_list, num_replicas=num_replicas, dataset=train_dataset, batch_size=10000, shuffle=False, num_workers=0, pin_memory=True, drop_last=True)
     # test_loader = GeneralizedDistributedDataLoader(stage_list=stage_list, num_replicas=num_replicas, dataset=test_dataset, batch_size=50000, shuffle=False, num_workers=0, pin_memory=True)
-    train_loader = DataLoader(train_dataset, batch_size=6000, shuffle=False, num_workers=0, pin_memory=True)
+    train_loader = DataLoader(train_dataset, batch_size=60000, shuffle=False, num_workers=0, pin_memory=True)
     test_loader = DataLoader(test_dataset, batch_size=50000, shuffle=False, num_workers=0, pin_memory=True)
      
-    torch.manual_seed(0)
+    torch.manual_seed(150105405)
     layers = [layer[0](**layer[1]) for layer in stage_list]
-    random_input = torch.randn(10, 1, 784, device='cuda:0')
-    target = torch.randn(10, 10, device='cuda:0')
-    learning_rage = 1
+    random_input = torch.randn(10, 1, 784, device=device)
+    target = torch.randn(10, 10, device=device)
+    learning_rage = 10
     if rank == 0:
         torch.manual_seed(0)
-        seq_model = nn.Sequential(*layers)
+        seq_model = nn.Sequential(*layers).to(device)
+        param_norm = lambda seq_model: [torch.norm(torch.cat([p.flatten() for p in stage.parameters()])).item() for stage in seq_model]
+        grad_norm = lambda seq_model: [torch.norm(torch.cat([p.grad.flatten() for p in stage.parameters()])).item() for stage in seq_model]
         seq_optimizer = torch.optim.SGD(seq_model.parameters(), lr=learning_rage)
 
-        # seq_model_3 = Sequential_Model(copy.deepcopy(layers))
+        print(f'START (SEQ) param norm -> {param_norm(seq_model)}')
 
-        # print(f'(SEQ) Stage {0} param norm {torch.norm(torch.cat([p.flatten() for p in seq_model_3.pipe0.parameters()]))}')
-        # print(f'(SEQ) Stage {1} param norm {torch.norm(torch.cat([p.flatten() for p in seq_model_3.pipe1.parameters()]))}')
-        # print(f'(SEQ) Stage {2} param norm {torch.norm(torch.cat([p.flatten() for p in seq_model_3.pipe2.parameters()]))}')
+        # Add 10 to every seq_model parameter
+        # with torch.no_grad():
+        #     for p in seq_model.parameters():
+        #         p.data += 10
+
+        seq_model_3 = Sequential_Model(copy.deepcopy(layers))
+
+        print(f'START (SEQ) stages param norm [{torch.norm(torch.cat([p.flatten() for p in seq_model_3.pipe0.parameters()]))}, {torch.norm(torch.cat([p.flatten() for p in seq_model_3.pipe1.parameters()]))}, {torch.norm(torch.cat([p.flatten() for p in seq_model_3.pipe2.parameters()]))}]')
 
         # seq_model_3(random_input) # Initalization of shapes
-        # seq_optimizer3 = torch.optim.SGD(seq_model_3.parameters(), lr=learning_rage)
+        seq_optimizer3 = torch.optim.SGD(seq_model_3.parameters(), lr=learning_rage)
         # out3 = seq_model_3(random_input)
         # seq_loss_3 = nn.MSELoss()(out3.to('cuda:0'), target.to('cuda:0'))
         # print("START SEQUENTIAL BACKWARD")
@@ -84,21 +93,42 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     dist.barrier()
     
     weight_par_model = Weight_Parallelized_Model(stage_list=stage_list, extra_layers=extra_layers, rank_list=list(range(0,len(stage_list))), sample=random_input, approximated_gradient=False, gpu_id=0) 
-    par_optimizer = torch.optim.SGD(weight_par_model.parameters(), lr=learning_rage)
-    
+    weight_par_model_approx = Weight_Parallelized_Model(stage_list=stage_list, extra_layers=extra_layers, rank_list=list(range(0,len(stage_list))), sample=random_input, approximated_gradient=True, gpu_id=0) 
+
+    # # Synchronize the models
+    with torch.no_grad():
+        for i,(p1,p2) in enumerate(zip(weight_par_model.parameters(), weight_par_model_approx.parameters())):
+            p2.data = list(layers[rank].parameters())[i].data.clone().detach().to(device)
+            p1.data = list(layers[rank].parameters())[i].data.clone().detach().to(device)
+            p1.requires_grad = True
+            p2.requires_grad = True
     par=1
     if par==1:
         # torch.manual_seed(0)
-        print(f"Rank {rank} START PARALLEL BACKWARD")
+        # print(f"Rank {rank} START PARALLEL BACKWARD")
         seq_model_2 = Parallel_Sequential_Model(stages=copy.deepcopy(layers), rank_list=[0,1,2], sample=random_input) # NOTE: It is important to do a copy.deepcopy here! Otherwise, the two models will be linked directly.
-        print(f"Rank {rank} END PARALLEL BACKWARD")
+        
+        # print(f"Rank {rank} END PARALLEL BACKWARD")
         seq_optimizer_2 = torch.optim.SGD(seq_model_2.parameters(), lr=learning_rage)
-        print(f'(PARALLEL) Stage {rank} param norm {torch.norm(torch.cat([p.flatten() for p in seq_model_2.stage.parameters()]))}')
+        print(f'START (PARALLEL SEQ) Stage {rank} param norm {torch.norm(torch.cat([p.flatten() for p in seq_model_2.stage.parameters()]))}')
+        
+        # synchronize weights with the weight_par_model
+        with torch.no_grad():
+            for p1,p2 in zip(weight_par_model.parameters(), seq_model_2.stage.parameters()):
+                p2.data = p1.data.clone().detach()
+                p2.requires_grad = True
+
+    par_optimizer = torch.optim.SGD(weight_par_model.parameters(), lr=learning_rage)
+    par_optimizer_approx = torch.optim.SGD(weight_par_model_approx.parameters(), lr=learning_rage)
+    data_chunks_amount = 1
 
     sync_operation(filename=get_filename(__file__), line_number=get_linenumber())
     for epoch in range(40):
         for i, (x, y) in enumerate(train_loader):
+            x = x.to(device)
+            y = y.to(device)
             if rank == 0:
+                print('____________ NEW ITERATION ____________')
                 # Gather sequential model norm
                 seq_optimizer.zero_grad()
                 out = seq_model(x)
@@ -106,34 +136,57 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
                 seq_loss.backward()
                 seq_optimizer.step()
 
-                # seq_optimizer3.zero_grad()
-                # out3 = seq_model_3(x)
-                # seq_loss_3 = criterion(out3.to('cuda:0'), y.to('cuda:0'))
-                # seq_model_3.backward(seq_loss_3)
-                # for i, g in enumerate(seq_model_3.grad_norm()):
-                    # print(f"(SEQ) Stage {i} grad norm3 {g.item()}")
+                seq_grad = torch.cat([layer.grad.flatten() for layer in seq_model.parameters()])
+                print(f'(SEQ) param norm -> {param_norm(seq_model)}, grad norm -> {grad_norm(seq_model)}')
 
-                # seq_optimizer3.step()
+                seq_optimizer3.zero_grad()
+                out3 = seq_model_3(x)
+                seq_loss_3 = criterion(out3.to(device), y.to(device))
+                seq_model_3.backward(seq_loss_3)
+                print(f'(SEQ 1 RANK) stages param norm [{torch.norm(torch.cat([p.flatten() for p in seq_model_3.pipe0.parameters()]))}, {torch.norm(torch.cat([p.flatten() for p in seq_model_3.pipe1.parameters()]))}, {torch.norm(torch.cat([p.flatten() for p in seq_model_3.pipe2.parameters()]))}]')
+                print(f'(SEQ 1 RANK) stages grad norm [{torch.norm(torch.cat([p.grad.flatten() for p in seq_model_3.pipe0.parameters()]))}, {torch.norm(torch.cat([p.grad.flatten() for p in seq_model_3.pipe1.parameters()]))}, {torch.norm(torch.cat([p.grad.flatten() for p in seq_model_3.pipe2.parameters()]))}]')
+
+                seq_optimizer3.step()
                 # print(f'(SEQ) Rank {rank}, epoch {epoch}, iteration {i}, loss {seq_loss} - loss3 {seq_loss_3} - difference {torch.norm(seq_loss-seq_loss_3)/torch.norm(seq_loss)*100}%')
 
             if par==1:
                 seq_optimizer_2.zero_grad()
-                c = closure(x, y, torch.nn.CrossEntropyLoss(), seq_model_2, data_chunks_amount=2, compute_grad=True)
+                c = closure(x, y, torch.nn.CrossEntropyLoss(), seq_model_2, data_chunks_amount=data_chunks_amount, compute_grad=True)
                 seq_loss_2 = c()
-                # grad2 = seq_model_2.grad_norm()
+                grad2 = seq_model_2.grad_norm()
+                weights_norm = torch.norm(torch.cat([p.flatten() for p in seq_model_2.parameters()]))
                 seq_optimizer_2.step()
             
-                # print(f"(PARALLEL) Stage {dist.get_rank()} grad norm2 {grad2.item()}")
-                if rank == 0:
-                    print(f'(PARALLEL - SEQ) Rank {rank}, epoch {epoch}, iteration {i}, loss {seq_loss} - loss2 {seq_loss_2} - difference {torch.norm(seq_loss-seq_loss_2)/torch.norm(seq_loss)*100}%')
+                print(f"(PARALLEL SEQ) Stage {dist.get_rank()} weights norm {weights_norm.item()}")
+                # if rank == 0:
+                #     print(f'(PARALLEL - SEQ) Rank {rank}, epoch {epoch}, iteration {i}, loss {seq_loss} - loss2 {seq_loss_2} - difference {torch.norm(seq_loss-seq_loss_2)/torch.norm(seq_loss)*100}%')
                 
+                tic = time.time()
+                # for _ in range(10):
                 par_optimizer.zero_grad()
-                c = closure(x, y, torch.nn.CrossEntropyLoss(), weight_par_model, data_chunks_amount=2, compute_grad=True)
+                c = closure(x, y, torch.nn.CrossEntropyLoss(), weight_par_model, data_chunks_amount=data_chunks_amount, compute_grad=True)
                 par_loss = c()
                 par_optimizer.step()
-                if rank == 0:
-                    print(f'(ACTUAL PARALLEL) Rank {rank}, epoch {epoch}, iteration {i}, loss {seq_loss} - loss2 {par_loss} - difference {torch.norm(seq_loss-par_loss)/torch.norm(seq_loss)*100}%')
+                # if rank == 0:
+                #     print(f'(ACTUAL PARALLEL) Rank {rank}, epoch {epoch}, iteration {i}, loss {seq_loss} - loss2 {par_loss} - difference {torch.norm(seq_loss-par_loss)/torch.norm(seq_loss)*100}% - time {time.time()-tic}')
                     
+                tic = time.time()
+                # for _ in range(10):
+                par_optimizer_approx.zero_grad()
+                c = closure(x, y, torch.nn.CrossEntropyLoss(), weight_par_model_approx, data_chunks_amount=data_chunks_amount, compute_grad=True)
+                par_loss_approx = c()
+                par_optimizer_approx.step()
+                
+                print(f"(ACTUAL PARALLEL) stage {rank} grad norm: {torch.norm(torch.cat([p.grad.flatten() for p in weight_par_model.stage.parameters()]))}")
+                dist.barrier()
+                print(f"(APPROX PARALLEL) stage {rank} grad norm: {torch.norm(torch.cat([p.grad.flatten() for p in weight_par_model_approx.stage.parameters()]))}")
+
+                # print(f"(PARALLELS DIFF GRAD NORM) Rank {rank}, epoch {epoch}, iteration {i}, act grad norm {act_parallel_grad_norm} - approx grad norm {approx_parallel_grad_norm} - difference {abs(act_parallel_grad_norm-approx_parallel_grad_norm)/abs(act_parallel_grad_norm)*100}%")
+
+                # if rank == 0:
+                #     print(f'(APPROX PARALLEL) Rank {rank}, epoch {epoch}, iteration {i}, loss {seq_loss} - loss2 {par_loss_approx} - difference {torch.norm(seq_loss-par_loss_approx)/torch.norm(seq_loss)*100} - time {time.time()-tic}%')
+                #     print(f'(PARALLELS DIFF) Rank {rank}, epoch {epoch}, iteration {i}, par loss {par_loss} - par loss approx {par_loss_approx} - difference {abs(par_loss-par_loss_approx)/abs(par_loss)*100} - time {time.time()-tic}%')
+                
     if rank == 0:
         for j in range(len(stage_list)):
             seq_grad = torch.cat([layer.grad.flatten() for layer in seq_model[j].parameters()])
