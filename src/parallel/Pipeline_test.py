@@ -4,18 +4,17 @@ import torch
 import torch.nn as nn
 import torch.distributed as dist
 import torch.multiprocessing as mp
-import subprocess
+# import subprocess
 # add the path to the sys.path
 import sys
 # Make the following work on Windows and MacOS
 sys.path.append(os.path.join(os.getcwd(), "src"))
 from utils.utility import prepare_distributed_environment, create_dataloaders
 import torch.autograd as autograd
-import torch.distributed.rpc as rpc
+# import torch.distributed.rpc as rpc
 import diffdist.functional as distops
-from typing import Callable, Optional
+# from typing import Callable, Optional
 from torch import Tensor
-
 
 # NOTE: TO BE DONE
 class TensorSharding(nn.Module):
