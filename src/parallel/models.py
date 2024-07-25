@@ -5,7 +5,7 @@ import os
 import torch.nn as nn
 import torch.distributed as dist
 import torch.autograd as autograd
-import diffdist.functional as distops
+import diffdist.functional as dist
 from parallel.utils import *
 import logging
 from inspect import currentframe, getframeinfo
@@ -108,14 +108,14 @@ class Parallel_Sequential_Model(nn.Module):
                 x = self.stage(chunks[c], compute_grad=compute_grad)
                 if self.setup_phase:
                     send_shape(x.shape, dst=self.rank_list[1], device=self.send_recv_device) 
-                distops.send(tensor=x.to(self.send_recv_device), dst=self.rank_list[1])
+                dist.send(tensor=x.to(self.send_recv_device), dst=self.rank_list[1])
             elif self.rank == self.rank_list[-1]: # Last stage in pipeline
                 shared_shape.wait()
                 if self.setup_phase:
                     shape = receive_shape(src=self.rank_list[-2], device=self.send_recv_device)
                     self.shape = lambda x: [x]+shape[1:]
                 x = torch.empty(*self.shape(chunk_size[c]), device=self.send_recv_device)
-                x,_ = distops.recv(tensor=x, src=self.rank_list[-2])
+                dist.recv(tensor=x, src=self.rank_list[-2])
                 x = self.stage(x, compute_grad=compute_grad)
             else: # Middle stages in pipeline
                 shared_shape.wait()
@@ -123,11 +123,11 @@ class Parallel_Sequential_Model(nn.Module):
                     shape = receive_shape(src=self.rank_list[rank_index-1], device=self.send_recv_device)
                     self.shape = lambda x: [x]+shape[1:]
                 x = torch.empty(*self.shape(chunk_size[c]), device=self.send_recv_device)
-                x,_ = distops.recv(tensor=x, src=self.rank_list[rank_index-1])
+                dist.recv(tensor=x, src=self.rank_list[rank_index-1])
                 x = self.stage(x, compute_grad=compute_grad)
                 if self.setup_phase:
                     send_shape(x.shape, dst=self.rank_list[rank_index+1], device=self.send_recv_device)
-                distops.send(tensor=x.to(self.send_recv_device), dst=self.rank_list[rank_index+1])
+                dist.send(tensor=x.to(self.send_recv_device), dst=self.rank_list[rank_index+1])
         if self.rank == self.rank_list[-1]:
             return self.stage.outputs[-1]
         return [torch.randn(1, device=self.tensor_device) for _ in range(chunks_amount)]
@@ -141,22 +141,24 @@ class Parallel_Sequential_Model(nn.Module):
                 # print(f'(PARALLEL) Stage {dist.get_rank()} RECEIVED grad_output norm {torch.norm(grad_output.flatten())}')
                 if self.setup_phase:
                     send_shape(grad_output.shape, dst=self.rank_list[rank_index-1], device=self.send_recv_device)
-                distops.send(tensor=grad_output.to(self.send_recv_device), dst=self.rank_list[rank_index-1])
+                dist.send(tensor=grad_output.to(self.send_recv_device), dst=self.rank_list[rank_index-1])
             elif rank_index != self.rank_list[0]: # Middle stages in pipeline
                 if self.setup_phase:
                     shape = receive_shape(src=self.rank_list[rank_index+1], device=self.send_recv_device)
                     self.shape_grad_output = lambda x: [x]+shape[1:]
-                grad_output,_ = distops.recv(torch.empty(*self.shape_grad_output(chunk_size), device=self.send_recv_device), src=self.rank_list[rank_index+1])
+                grad_output = torch.empty(*self.shape_grad_output(chunk_size), device=self.send_recv_device)
+                dist.recv(grad_output, src=self.rank_list[rank_index+1])
                 grad_output = self.stage.backward(chunk_idx=c, grad_output=grad_output)
                 # print(f'(PARALLEL) Stage {dist.get_rank()} RECEIVED grad_output norm {torch.norm(grad_output.flatten())}')
                 if self.setup_phase:
                     send_shape(grad_output.shape, dst=self.rank_list[rank_index-1], device=self.send_recv_device)
-                distops.send(tensor=grad_output.to(self.send_recv_device), dst=self.rank_list[rank_index-1])
+                dist.send(tensor=grad_output.to(self.send_recv_device), dst=self.rank_list[rank_index-1])
             else:
                 if self.setup_phase:
                     shape = receive_shape(src=self.rank_list[rank_index+1], device=self.send_recv_device)
                     self.shape_grad_output = lambda x: [x]+shape[1:]
-                grad_output,_ = distops.recv(torch.empty(*self.shape_grad_output(chunk_size), device=self.send_recv_device), src=self.rank_list[rank_index+1])
+                grad_output = torch.empty(*self.shape_grad_output(chunk_size), device=self.send_recv_device)
+                dist.recv(grad_output, src=self.rank_list[rank_index+1])
                 # print(f'(PARALLEL) Stage {dist.get_rank()} RECEIVED grad_output norm {torch.norm(grad_output.flatten())}')
                 self.stage.backward(chunk_idx=c, grad_output=grad_output)
                 
@@ -401,7 +403,7 @@ class Weight_Parallelized_Model(nn.Module):
                         output_shape = lambda x: [x]+list(out.shape)[1:]
                         self.shapes = [input_shape, output_shape]
                         send_shape(out.shape, dst=next_rank, device='cpu' if self.backend == 'gloo' else self.tensor_device)
-                    distops.send(tensor=out.cpu() if self.backend == 'gloo' else out, dst=next_rank) # send the tensor
+                    dist.send(tensor=out.cpu() if self.backend == 'gloo' else out, dst=next_rank) # send the tensor
                     # TODO: delete out to free memory? Remember to avoid storing outputs in case "compute_grad" is False
                 elif i == len(self.rank_list)-1: # end of the pipeline (last layer)
                     shape_transfer.wait() # wait for the shape to be broadcasted
@@ -410,7 +412,7 @@ class Weight_Parallelized_Model(nn.Module):
                         temp = torch.empty(*shapes, device='cpu' if self.backend == 'gloo' else self.tensor_device, requires_grad=True)
                     else:
                         temp = torch.empty(*self.shapes[0](chunk_shapes[c]), device='cpu' if self.backend == 'gloo' else self.tensor_device, requires_grad=True)
-                    temp,_ = distops.recv(tensor=temp, src=self.rank_list[i-1])
+                    dist.recv(tensor=temp, src=self.rank_list[i-1])
                     temp = temp.to(self.tensor_device)
                     self.inputs[c] = temp if compute_grad else None
                     out = self.stage(temp, compute_grad=compute_grad) if not self.approximated_gradient else self.stage.forward(temp)
@@ -423,10 +425,10 @@ class Weight_Parallelized_Model(nn.Module):
                     shape_transfer.wait() # wait for the shape to be broadcasted
                     if self.setup_phase:
                         shapes = receive_shape(src=self.rank_list[i-1], device='cpu' if self.backend == 'gloo' else self.tensor_device)
-                        temp = torch.empty(*shapes, device='cpu' if self.backend == 'gloo' else self.tensor_device, requires_grad=True)
+                        temp = torch.empty(*shapes, device='cpu' if self.backend == 'gloo' else self.tensor_device)
                     else:
-                        temp = torch.empty(*self.shapes[0](chunk_shapes[c]), device='cpu' if self.backend == 'gloo' else self.tensor_device, requires_grad=True)
-                    temp,_ = distops.recv(tensor=temp, src=self.rank_list[i-1])
+                        temp = torch.empty(*self.shapes[0](chunk_shapes[c]), device='cpu' if self.backend == 'gloo' else self.tensor_device)
+                    dist.recv(tensor=temp, src=self.rank_list[i-1])
                     temp = temp.to(self.tensor_device)
                     out = self.stage(temp, compute_grad=compute_grad) if not self.approximated_gradient else self.stage.forward(temp)
                     self.inputs[c] = temp if compute_grad else None
@@ -437,7 +439,7 @@ class Weight_Parallelized_Model(nn.Module):
                         output_shape = lambda x: [x]+list(out.shape)[1:]
                         self.shapes = [input_shape, output_shape]
                         send_shape(out.shape, dst=next_rank, device='cpu' if self.backend == 'gloo' else self.tensor_device)
-                    distops.send(tensor=out.cpu() if self.backend == 'gloo' else out, dst=next_rank) # send the tensor
+                    dist.send(tensor=out.cpu() if self.backend == 'gloo' else out, dst=next_rank) # send the tensor
         # print(f'Rank {self.rank} | Forward pass time: {time.time()-start}')
         sync_operation(filename=get_filename(__file__), line_number=get_linenumber())
         if self.rank == self.rank_list[-1]: # If the rank is in the last layer's rank list, return the output
@@ -462,7 +464,7 @@ class Weight_Parallelized_Model(nn.Module):
                 if self.approximated_gradient:
                     self.grad_output[c] = autograd.grad(loss, self.outputs[c], create_graph=True)[0]     # TODO: Update so that it takes into account sequential models
                     grad_data = autograd.grad(self.outputs[c], self.inputs[c], grad_outputs=self.grad_output[c], retain_graph=True)[0] # this is needed to compute the derivative at the previous stage
-                    distops.send(tensor=grad_data.cpu() if self.backend == 'gloo' else grad_data, dst=self.rank_list[-2]) # TODO make this async if possible
+                    dist.send(tensor=grad_data.cpu() if self.backend == 'gloo' else grad_data, dst=self.rank_list[-2]) # TODO make this async if possible
                     for param in self.stage.parameters():
                         if param.grad is None:
                             param.grad = autograd.grad(self.outputs[c], param, grad_outputs=self.grad_output[c], retain_graph=True)[0]/chunks_amount
@@ -473,12 +475,12 @@ class Weight_Parallelized_Model(nn.Module):
                     # print(f'(PARALLEL) Stage {dist.get_rank()} RECEIVED grad_output norm {torch.norm(grad_output.flatten())}')
                     if self.setup_phase:
                         send_shape(grad_output.shape, dst=self.rank_list[rank_index-1], device=self.send_recv_device)
-                    distops.send(tensor=grad_output.to(self.send_recv_device), dst=self.rank_list[rank_index-1])
+                    dist.send(tensor=grad_output.to(self.send_recv_device), dst=self.rank_list[rank_index-1])
 
             elif self.rank == self.rank_list[0]:
                 if self.approximated_gradient:
                     self.grad_output[c] = torch.empty(*self.shapes[1](chunk_size), device='cpu' if self.backend == 'gloo' else self.tensor_device, requires_grad=True)
-                    self.grad_output[c], _ = distops.recv(self.grad_output[c], src=self.rank_list[1])       
+                    dist.recv(self.grad_output[c], src=self.rank_list[1])       
                     self.grad_output[c] = self.grad_output[c].to(self.tensor_device)
                     for param in self.stage.parameters():
                         if param.grad is None:
@@ -489,33 +491,35 @@ class Weight_Parallelized_Model(nn.Module):
                     if self.setup_phase:
                         shape = receive_shape(src=self.rank_list[rank_index+1], device=self.send_recv_device)
                         self.shape_grad_output = lambda x: [x]+shape[1:]
-                    grad_output,_ = distops.recv(torch.empty(*self.shape_grad_output(chunk_size), device=self.send_recv_device), src=self.rank_list[rank_index+1])
+                    grad_output = torch.empty(*self.shape_grad_output(chunk_size), device=self.send_recv_device)
+                    dist.recv(grad_output, src=self.rank_list[rank_index+1])
                     # print(f'(PARALLEL) Stage {dist.get_rank()} RECEIVED grad_output norm {torch.norm(grad_output.flatten())}')
                     self.stage.backward(chunk_idx=c, grad_output=grad_output)
             else: # middle of the pipeline
                 if self.approximated_gradient:
                     self.grad_output[c] = torch.empty(*self.shapes[1](chunk_size), device='cpu' if self.backend == 'gloo' else self.tensor_device, requires_grad=True)
-                    self.grad_output[c], _ = distops.recv(self.grad_output[c], src=self.rank_list[i+1])       
+                    dist.recv(self.grad_output[c], src=self.rank_list[i+1])       
                     self.grad_output[c] = self.grad_output[c].to(self.tensor_device)
                     data_grad2 = autograd.grad(self.outputs[c], self.inputs[c], grad_outputs=self.grad_output[c], retain_graph=True)[0] # this is needed to compute the derivative at the previous stage
-                    distops.send(tensor=data_grad2.cpu() if self.backend == 'gloo' else data_grad2, dst=self.rank_list[i-1]) # TODO make this async if possible
+                    dist.send(tensor=data_grad2.cpu() if self.backend == 'gloo' else data_grad2, dst=self.rank_list[i-1]) # TODO make this async if possible
                     for param in self.stage.parameters():
                         if param.grad is None:
                             param.grad = autograd.grad(self.outputs[c], param, grad_outputs=self.grad_output[c], retain_graph=True)[0]/chunks_amount
                         else:
                             param.grad += autograd.grad(self.outputs[c], param, grad_outputs=self.grad_output[c], retain_graph=True)[0]/chunks_amount
-                    # distops.send(tensor=data_grad2.cpu() if self.backend == 'gloo' else data_grad2, dst=self.rank_list[i-1]) # TODO make this async if possible
+                    # dist.send(tensor=data_grad2.cpu() if self.backend == 'gloo' else data_grad2, dst=self.rank_list[i-1]) # TODO make this async if possible
                     # TODO / NOTE: maybe we can delete self.inputs to free memory. It is not used anymore after the backward pass. (even in subdomains)
                 else:
                     if self.setup_phase:
                         shape = receive_shape(src=self.rank_list[rank_index+1], device=self.send_recv_device)
                         self.shape_grad_output = lambda x: [x]+shape[1:]
-                    grad_output,_ = distops.recv(torch.empty(*self.shape_grad_output(chunk_size), device=self.send_recv_device), src=self.rank_list[rank_index+1])
+                    grad_output = torch.empty(*self.shape_grad_output(chunk_size), device=self.send_recv_device)
+                    dist.recv(grad_output, src=self.rank_list[rank_index+1])
                     grad_output = self.stage.backward(chunk_idx=c, grad_output=grad_output)
                     # print(f'(PARALLEL) Stage {dist.get_rank()} RECEIVED grad_output norm {torch.norm(grad_output.flatten())}')
                     if self.setup_phase:
                         send_shape(grad_output.shape, dst=self.rank_list[rank_index-1], device=self.send_recv_device)
-                    distops.send(tensor=grad_output.to(self.send_recv_device), dst=self.rank_list[rank_index-1])
+                    dist.send(tensor=grad_output.to(self.send_recv_device), dst=self.rank_list[rank_index-1])
         self.g_time += time.time() - start
         return None
     
