@@ -83,7 +83,8 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         # print("END SEQUENTIAL BACKWARD")
     dist.barrier()
     
-    # weight_par_model = Weight_Parallelized_Model(stage_list=stage_list, extra_layers=extra_layers, rank_list=list(range(0,len(stage_list))), sample=random_input, approximated_gradient=False, gpu_id=0)
+    weight_par_model = Weight_Parallelized_Model(stage_list=stage_list, extra_layers=extra_layers, rank_list=list(range(0,len(stage_list))), sample=random_input, approximated_gradient=False, gpu_id=0) 
+    par_optimizer = torch.optim.SGD(weight_par_model.parameters(), lr=learning_rage)
     
     par=1
     if par==1:
@@ -114,7 +115,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
 
                 # seq_optimizer3.step()
                 # print(f'(SEQ) Rank {rank}, epoch {epoch}, iteration {i}, loss {seq_loss} - loss3 {seq_loss_3} - difference {torch.norm(seq_loss-seq_loss_3)/torch.norm(seq_loss)*100}%')
-            
+
             if par==1:
                 seq_optimizer_2.zero_grad()
                 c = closure(x, y, torch.nn.CrossEntropyLoss(), seq_model_2, data_chunks_amount=2, compute_grad=True)
@@ -124,8 +125,15 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             
                 # print(f"(PARALLEL) Stage {dist.get_rank()} grad norm2 {grad2.item()}")
                 if rank == 0:
-                    print(f'(PARALLEL) Rank {rank}, epoch {epoch}, iteration {i}, loss {seq_loss} - loss2 {seq_loss_2} - difference {torch.norm(seq_loss-seq_loss_2)/torch.norm(seq_loss)*100}%')
-
+                    print(f'(PARALLEL - SEQ) Rank {rank}, epoch {epoch}, iteration {i}, loss {seq_loss} - loss2 {seq_loss_2} - difference {torch.norm(seq_loss-seq_loss_2)/torch.norm(seq_loss)*100}%')
+                
+                par_optimizer.zero_grad()
+                c = closure(x, y, torch.nn.CrossEntropyLoss(), weight_par_model, data_chunks_amount=2, compute_grad=True)
+                par_loss = c()
+                par_optimizer.step()
+                if rank == 0:
+                    print(f'(ACTUAL PARALLEL) Rank {rank}, epoch {epoch}, iteration {i}, loss {seq_loss} - loss2 {par_loss} - difference {torch.norm(seq_loss-par_loss)/torch.norm(seq_loss)*100}%')
+                    
     if rank == 0:
         for j in range(len(stage_list)):
             seq_grad = torch.cat([layer.grad.flatten() for layer in seq_model[j].parameters()])
