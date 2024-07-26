@@ -28,16 +28,19 @@ def sync_operation(filename=None,line_number=None):
     # # torch.cuda.synchronize()
     # logger.info(f"Rank {dist.get_rank()} finished sync operation. Python script: {filename} | Line number: {line_number}")
     
+# TODO: Currently, backend_device for many things is 'cuda:0'. This assumed the Piz Daint infrastructure, in which each had only one GPU.
+# In the future, we need to make this more generic and consider the case where each node has multiple GPUs.
 class Parallelized_Model(nn.Module):
     '''
     Data parallel and weight parallel model.
     '''
-    def __init__(self, stage_list, sample, num_replicas=1, criterion=None, approximated_gradient=False):
+    def __init__(self, stage_list, sample, num_replicas=1, device=None):
         super(Parallelized_Model, self).__init__()
 
         self.num_replicas = num_replicas
-        self.criterion = criterion
         self.world_size = dist.get_world_size()
+        # self.backend_device = 'cpu' if dist.get_backend() == 'gloo' else 'cuda:0' # TODO: remove if not used
+        self.tensor_device = decide_tensor_device(ws=dist.get_world_size(), backend=dist.get_backend(), gpu_id=0) if device is None else device
         if num_replicas*len(stage_list) != self.world_size:
             raise ValueError(f"The number of replicas times the number of layers ({num_replicas}*{len(stage_list)}={num_replicas*len(stage_list)}) must be equal to the world size ({self.world_size}).")
         self.rank = dist.get_rank()
@@ -49,7 +52,7 @@ class Parallelized_Model(nn.Module):
             if self.rank in ranks:
                 # TODO: Change gpu_id to be more generic for tensor sharding later on...
                 sync_operation(filename=get_filename(__file__), line_number=get_linenumber())
-                self.model = Weight_Parallelized_Model(stage_list=stage_list, rank_list=ranks, sample=sample, gpu_id=0, criterion=criterion, approximated_gradient=approximated_gradient)
+                self.model = Weight_Parallelized_Model(stage_list=stage_list, rank_list=ranks, sample=sample, gpu_id=0, device=device)
                 sync_operation(filename=get_filename(__file__), line_number=get_linenumber())
                 self.subdomain = self.model.subdomain
                 # self.stage = self.model.stage
