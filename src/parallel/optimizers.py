@@ -193,7 +193,8 @@ class APTS(torch.optim.Optimizer):
 
     def zero_timers(self):
         self.timings = {key: 0 for key in self.timings.keys()}
-        self.subdomain_optimizer.zero_timers()
+        if 'zero_timers' in dir(self.subdomain_optimizer):
+            self.subdomain_optimizer.zero_timers()
 
     def step(self, closure):
         # TODO: Seed for dropout layers

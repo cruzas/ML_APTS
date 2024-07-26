@@ -23,9 +23,9 @@ import numpy as np
 def parse_args():
     parser = argparse.ArgumentParser(description='Parallel test')
     # We will have optimizer name, batch size, learning rate, number of trials, number of epochs
-    parser.add_argument('--optimizer', type=str, default='APTS', help='Optimizer name')
-    parser.add_argument('--batch_size', type=int, default=200, help='Batch size')
-    parser.add_argument('--lr', type=float, default=0.001, help='Learning rate')
+    parser.add_argument('--optimizer', type=str, default='sgd', help='Optimizer name')
+    parser.add_argument('--batch_size', type=int, default=100, help='Batch size')
+    parser.add_argument('--lr', type=float, default=0.1, help='Learning rate')
     parser.add_argument('--trials', type=int, default=10, help='Number of trials')
     parser.add_argument('--epochs', type=int, default=10, help='Number of epochs')
     parser.add_argument('--dataset', type=str, default='MNIST', help='Dataset name')
@@ -91,7 +91,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             net = ResNet(num_layers=6).to(device) # Equivalent to ResNet-18 if num_layers=2
             for sample in trainloader:
                 break
-            sample = sample[0]
+            sample = x = sample[0]
                 
             # Reset trainloader
             trainloader = DataLoader(trainset, batch_size=batch_size, shuffle=True)
@@ -124,15 +124,15 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             # ]
             for sample in trainloader:
                 break
-            sample = sample[0]
+            x = sample[0]
             trainloader = DataLoader(trainset, batch_size=batch_size, shuffle=True)
             layer_list = [
-            (CNNPart1, {}),  # Adjust input and output shapes according to the actual sizes
-            (CNNPart2, {}),        # Adjust input and output shapes
-            (CNNPart3, {})              # Adjust input and output shapes
+            (FCNNPart1, {}),  # Adjust input and output shapes according to the actual sizes
+            (FCNNPart2, {}),        # Adjust input and output shapes
+            (FCNNPart3, {})              # Adjust input and output shapes
             ]
-        rank_list = [[r] for r in range(world_size)]
-        net = Weight_Parallelized_Model(layer_list, rank_list, sample=sample)
+        rank_list = [r for r in range(world_size)]
+        net = Weight_Parallelized_Model(layer_list, rank_list, sample=x)
         criterion = nn.CrossEntropyLoss()
 
         # Check if optimizer_name in lower case is 'sgd'
@@ -143,7 +143,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         elif optimizer_name.lower() == 'tradam':
             optimizer = TRAdam(net.parameters(), lr=learning_rate)
         elif optimizer_name.lower() == 'apts':
-            subdomain_optimizer = TRAdam
+            subdomain_optimizer = optim.SGD#TRAdam
             subdomain_optimizer_defaults = {'lr': 1e99}
             global_optimizer = TR
             global_optimizer_defaults = {'lr': learning_rate, 'max_iter': 3}    
@@ -154,6 +154,8 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         # Define the learning rate scheduler
         if optimizer_name.lower() == 'sgd':
             scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[150, 250], gamma=0.1)
+
+        # TODO: Save the initial accuracy and loss too
 
         # Training function
         def train(epoch):
@@ -167,7 +169,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
                 running_loss += loss if loss is not None else 0
                 count += 1
                 if i % 100 == 99: # Print every 100 epochs
-                    if dist.get_rank() == net.rank_list[-1][0] and optimizer_name.lower() == 'apts':
+                    if dist.get_rank() == net.rank_list[-1] and optimizer_name.lower() == 'apts':
                         optimizer.display_avg_timers()
             running_loss = running_loss/count
             return running_loss
@@ -181,14 +183,14 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
                 for data in testloader:
                     images, labels = data
                     images, labels = images.to(device), labels.to(device)
-                    closuree = closure(images, labels, criterion, net, compute_grad=False, zero_grad=True, return_output=True, counter=False)       
+                    closuree = closure(images, labels, criterion, net, compute_grad=False, zero_grad=True, return_output=True)       
                     _, test_outputs = closuree()
-                    if dist.get_rank() == net.rank_list[-1][0]:
+                    if dist.get_rank() == net.rank_list[-1]:
                         test_outputs = torch.cat(test_outputs)
                         _, predicted = torch.max(test_outputs.data, 1)
                         total += labels.size(0)
                         correct += (predicted == labels.to(predicted.device)).sum().item()
-            if dist.get_rank() == net.rank_list[-1][0]:
+            if dist.get_rank() == net.rank_list[-1]:
                 accuracy = 100 * correct / total
             return accuracy
 
@@ -206,9 +208,10 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
                 scheduler.step()
 
             trial_data['epoch_accuracy'][epoch] = test()
-            print(f"Epoch {epoch}, loss {trial_data['epoch_loss'][epoch]}, accuracy {trial_data['epoch_accuracy'][epoch]}")
+            if dist.get_rank() == net.rank_list[-1]:
+                print(f"Epoch {epoch}, loss {trial_data['epoch_loss'][epoch]}, accuracy {trial_data['epoch_accuracy'][epoch]}")
 
-            if dist.get_rank() == net.rank_list[-1][0]:
+            if dist.get_rank() == net.rank_list[-1]:
                 print(f'Epoch {epoch} loss: {trial_data["epoch_loss"][epoch]} accuracy: {trial_data["epoch_accuracy"][epoch]}')
 
                 trial_data['epoch_usage_times'][epoch] = net.f_time + net.g_time + net.subdomain.f_time + net.subdomain.g_time

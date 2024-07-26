@@ -115,9 +115,39 @@ class CNNPart3(nn.Module):
     def __init__(self):
         super(CNNPart3, self).__init__()
         self.fc2 = nn.Linear(128, 10)
-        self.dropout = nn.Dropout(0.5)
+        # self.dropout = nn.Dropout(0.5)
 
     def forward(self, x):
-        x = self.dropout(x)
+        # x = self.dropout(x)
         x = self.fc2(x)
+        return F.log_softmax(x, dim=1)
+    
+class FCNNPart1(nn.Module):
+    def __init__(self):
+        super(FCNNPart1, self).__init__()
+        self.fc1 = nn.Linear(784, 256)
+        self.fc2 = nn.Linear(256, 128)
+
+    def forward(self, x):
+        x = nn.Flatten()(x)
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        return x
+
+class FCNNPart2(nn.Module):
+    def __init__(self):
+        super(FCNNPart2, self).__init__()
+        self.fc3 = nn.Linear(128, 64)
+
+    def forward(self, x):
+        x = F.relu(self.fc3(x))
+        return x
+    
+class FCNNPart3(nn.Module):
+    def __init__(self):
+        super(FCNNPart3, self).__init__()
+        self.fc4 = nn.Linear(64, 10)
+
+    def forward(self, x):
+        x = self.fc4(x)
         return F.log_softmax(x, dim=1)
