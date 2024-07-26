@@ -40,34 +40,41 @@ class GeneralizedDistributedDataLoader(DataLoader):
         model 0 will be distributed across ranks [0,1,2] with first layer in rank 0 and second layer in rank 1 and so on.
         model 1 will be distributed across ranks [3,4,5] with first layer in rank 3 and second layer in rank 4 and so on.
         '''
+        if batch_size > len(dataset):
+            print(f"(WARNING) Batch size {batch_size} is greater than the dataset size {len(dataset)}. Setting batch size to dataset size.")
+            batch_size = min(batch_size, len(dataset))
         first_layer_ranks = [0+len(stage_list)*i for i in range(num_replicas)]
         last_layer_ranks = [len(stage_list)-1+len(stage_list)*i for i in range(num_replicas)]
 
         rank = dist.get_rank()
         self.is_active_rank = True
         if len(dataset) % batch_size == 0:
-            amount_of_batches = len(dataset) // (batch_size*num_replicas)
+            amount_of_batches = len(dataset) // (batch_size * num_replicas)
         else:
             if drop_last:
-                amount_of_batches = len(dataset) // (batch_size*num_replicas)
+                amount_of_batches = len(dataset) // (batch_size * num_replicas)
             else:
-                amount_of_batches = len(dataset) // (batch_size*num_replicas) + 1
-
+                amount_of_batches = len(dataset) // (batch_size * num_replicas) + 1
+        
+        # amount_of_batches_in_rank = amount_of_batches // num_replicas
+            
         if rank not in first_layer_ranks+last_layer_ranks: # rank in the middle does not require any real data
-            if rank == 4: # TODO: CHANGE THIS TO A MORE GENERAL CASE
-                print(f'amount batches {amount_of_batches}')
             # Make a mock dataset with the same amount of batches as the original dataset (this is needed to keep iterations consistent across all ranks)
+            amount_of_batches = 1 if len(dataset) == batch_size else len(dataset) // batch_size
             dataset = MockDataset(dataset, amount_of_batches, first=None)    
             super(GeneralizedDistributedDataLoader, self).__init__(dataset=dataset, batch_size=1, shuffle=False, num_workers=num_workers, pin_memory=pin_memory, drop_last=drop_last, **kwargs)    
         elif rank in first_layer_ranks:
             dataset = MockDataset(dataset, len(dataset), first=True)
             self.sampler = GeneralizedDistributedSampler(layer_ranks=first_layer_ranks, dataset=dataset, num_replicas=num_replicas, rank=rank, shuffle=shuffle, drop_last=drop_last, seed=seed, **kwargs)
-            super(GeneralizedDistributedDataLoader, self).__init__(dataset=dataset, batch_size=batch_size, shuffle=False, sampler=self.sampler, num_workers=num_workers, pin_memory=pin_memory, drop_last=drop_last, **kwargs)
+            super(GeneralizedDistributedDataLoader, self).__init__(dataset=dataset, batch_size=batch_size//num_replicas, shuffle=False, sampler=self.sampler, num_workers=num_workers, pin_memory=pin_memory, drop_last=drop_last, **kwargs)
         else:
             dataset = MockDataset(dataset, len(dataset), first=False)
             self.sampler = GeneralizedDistributedSampler(layer_ranks=last_layer_ranks, dataset=dataset, num_replicas=num_replicas, rank=rank, shuffle=shuffle, drop_last=drop_last, seed=seed, **kwargs)
-            super(GeneralizedDistributedDataLoader, self).__init__(dataset=dataset, batch_size=batch_size, shuffle=False, sampler=self.sampler, num_workers=num_workers, pin_memory=pin_memory, drop_last=drop_last, **kwargs)
-
+            super(GeneralizedDistributedDataLoader, self).__init__(dataset=dataset, batch_size=batch_size//num_replicas, shuffle=False, sampler=self.sampler, num_workers=num_workers, pin_memory=pin_memory, drop_last=drop_last, **kwargs)
+        temp = list(self)
+        print(f"rank {rank} has {len(temp)} batches of size {[f'input {t[0].shape} output {t[1].shape}' for t in temp]}")
+        
+        # print('as')
 
 
 class GeneralizedDistributedSampler(DistributedSampler):
