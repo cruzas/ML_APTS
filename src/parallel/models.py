@@ -48,15 +48,16 @@ class Parallelized_Model(nn.Module):
         # Model copy rank list
         self.stage_list = stage_list
         self.model_ranks = [[r+k*len(self.stage_list) for r in range(len(self.stage_list))] for k in range(num_replicas)] 
+        for model_rank in self.model_ranks:
+            if self.rank in model_rank:
+                self.rank_list = model_rank
+                break
         for ranks in self.model_ranks:
             if self.rank in ranks:
                 # TODO: Change gpu_id to be more generic for tensor sharding later on...
-                sync_operation(filename=get_filename(__file__), line_number=get_linenumber())
                 self.model = Weight_Parallelized_Model(stage_list=stage_list, rank_list=ranks, sample=sample, gpu_id=0, device=device)
-                sync_operation(filename=get_filename(__file__), line_number=get_linenumber())
                 self.subdomain = self.model.subdomain
-                # self.stage = self.model.stage
-
+        
         # Create a process group for each layer. This group contains all the ranks that are responsible for the layer across all replicas.
         for layer_idx in range(len(self.stage_list)):
             # Collect ranks that are responsible for this layer across all replicas
@@ -64,6 +65,7 @@ class Parallelized_Model(nn.Module):
             # Create a new group containing these ranks
             if self.rank in ranks:
                 self.layer_copies_group = dist.new_group(ranks, use_local_synchronization=True)
+        self.sync_params()
     
     def forward(self, x, chunks_amount=1, reset_grad = False, compute_grad = True):
         sync_operation(filename=get_filename(__file__), line_number=get_linenumber())

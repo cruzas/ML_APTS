@@ -29,6 +29,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     data_chunks_amount = 10
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
     torch.manual_seed(0)
+    learning_rage = 1
     # ____________________________________
         
     rank = dist.get_rank() if dist.get_backend() == 'nccl' else rank
@@ -60,7 +61,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
      
     layers = [layer[0](**layer[1]) for layer in stage_list]
     random_input = torch.randn(10, 1, 784, device=device)
-    learning_rage = 1
+    
     if rank == 0 and SEQUENTIAL:
         torch.manual_seed(0)
         seq_model = nn.Sequential(*layers).to(device)#MNIST_FCNN().to(device)
