@@ -34,23 +34,28 @@ class Parallelized_Model(nn.Module):
     '''
     Data parallel and weight parallel model.
     '''
-    def __init__(self, stage_list, sample, num_replicas=1, device=None):
+    def __init__(self, stage_list, sample, num_replicas=1, device=None, data_parallel=False):
         super(Parallelized_Model, self).__init__()
+        if num_replicas <= 1 and data_parallel:
+            raise ValueError("Data parallelism requires at least two replicas.")
 
         self.num_replicas = num_replicas
         self.world_size = dist.get_world_size()
+        self.data_parallel = data_parallel
         # self.backend_device = 'cpu' if dist.get_backend() == 'gloo' else 'cuda:0' # TODO: remove if not used
         self.tensor_device = decide_tensor_device(ws=dist.get_world_size(), backend=dist.get_backend(), gpu_id=0) if device is None else device
         if num_replicas*len(stage_list) != self.world_size:
             raise ValueError(f"The number of replicas times the number of layers ({num_replicas}*{len(stage_list)}={num_replicas*len(stage_list)}) must be equal to the world size ({self.world_size}).")
         self.rank = dist.get_rank()
-        
+        self.final_layer_group = dist.new_group(ranks=[r for r in range(self.world_size) if r%len(stage_list) == len(stage_list)-1], use_local_synchronization=True)
+
         # Model copy rank list
         self.stage_list = stage_list
         self.model_ranks = [[r+k*len(self.stage_list) for r in range(len(self.stage_list))] for k in range(num_replicas)] 
         for model_rank in self.model_ranks:
             if self.rank in model_rank:
                 self.rank_list = model_rank
+                self.master_group = dist.new_group(ranks=self.rank_list, use_local_synchronization=True)
                 break
         for ranks in self.model_ranks:
             if self.rank in ranks:
@@ -67,18 +72,50 @@ class Parallelized_Model(nn.Module):
                 self.layer_copies_group = dist.new_group(ranks, use_local_synchronization=True)
         self.sync_params()
     
+    def subdomain_forward(self, sync=False):
+        outputs = self.subdomain.forward()
+        if sync: # NOTE: Probably never used, but included for completeness
+            with torch.no_grad():
+                for output in outputs:
+                    dist.all_reduce(output, group=self.final_layer_group, op=dist.ReduceOp.SUM)
+        return outputs
+    
+    def subdomain_backward(self, sync=True):
+        self.subdomain.backward()
+        if sync and self.data_parallel: # NOTE: Sync True for sure for data parallel settings, but leaving the option to the user to use False
+            self.sync_grads() 
+
+    def subdomain_params(self):
+        return self.subdomain.parameters()
+        
+    def subdomain_grad(self):
+        return self.subdomain.grad()
+    
+    def subdomain_grad_norm(self, p=2):
+        return self.subdomain.grad_norm(p=p)
+    
+    def parameters(self, clone=False): # Returns the global parameters of the model
+        return self.model.parameters(clone=clone)
+    
+    def parameters_norm(self, p=2): # Returns the global parameters norm of the model
+        return self.model.parameters().norm(p=p)
+    
+    def grad(self, clone=False): # Returns the global gradient of the model
+        return self.model.grad(clone=clone)
+
+    def grad_norm(self, p=2): # Returns the global gradient norm of the model
+        return self.model.grad_norm(p=p)
+        
+    def subdomain_grad_norm(self, p=2): # Returns the subdomain gradient norm of the model
+        return self.model.subdomain_grad_norm(p=p)
+
     def forward(self, x, chunks_amount=1, reset_grad = False, compute_grad = True):
-        sync_operation(filename=get_filename(__file__), line_number=get_linenumber())
         return self.model.forward(x, chunks_amount=chunks_amount, reset_grad=reset_grad, compute_grad=compute_grad)
     
-    def backward(self, loss, chunks_amount=1, sync=True):
-        self.model.backward(loss=loss, chunks_amount=chunks_amount)
-        # update the weights across the replicas
+    def backward(self, losses, sync=True):
+        self.model.backward(losses=losses)
         if sync:
-            # average all gradients across the replicas
-            for param in self.model.parameters():
-                dist.all_reduce(tensor=param.grad, group=self.layer_copies_group, op=dist.ReduceOp.SUM)
-                param.grad /= self.num_replicas
+            self.sync_grads() # Synchronize the gradients across all replicas (True by default since this will always be done in both data parallel approaches)
     
     def sync_params(self, method='average'):
         for param in self.model.parameters():
@@ -86,10 +123,15 @@ class Parallelized_Model(nn.Module):
             if method == 'average':
                 param.data /= self.num_replicas
             elif method == 'sum':
-                pass
+                pass # nothing to do since we already summed the parameters through all_reduce
             else:
                 raise ValueError(f"Method {method} is not supported.")
-    
+
+    def sync_grads(self):
+        for param in self.model.parameters():
+            dist.all_reduce(tensor=param.grad, group=self.layer_copies_group, op=dist.ReduceOp.SUM)
+            param.grad /= self.num_replicas
+
 # Global model class
 class Weight_Parallelized_Model(nn.Module):
     def __init__(self, stage_list, rank_list, sample, gpu_id=0, device=None):
@@ -120,9 +162,8 @@ class Weight_Parallelized_Model(nn.Module):
         self.num_g_evals = 0 # Number of gradient evaluations
         self.f_time = 0 # Forward pass time
         self.g_time = 0 # Gradient computation time
-        # These two are built during forward/backward passes in the initialization phase
+        # This is built during forward/backward passes in the initialization phase
         # self.shapes 
-        # self.shapes_backward
     
         # Setup phase to compute the shapes of the tensors in the pipeline
         self.setup_phase = True
@@ -182,6 +223,8 @@ class Weight_Parallelized_Model(nn.Module):
                 chunk_shapes = torch.tensor([chunk.shape[0] for chunk in chunks], dtype=torch.int32).to(self.backend_device) # Store the batch size of each chunk
             # Broadcast the chunk_shapes tensor to all the ranks (this allows to know the shape of the input tensor for each rank in the pipeline and prepare the recv function)
             shape_transfer = dist.broadcast(tensor=chunk_shapes, src=self.rank_list[0], group=self.master_group, async_op=True) # broadcasting only the batch size | async operation to avoid blocking the first layer
+            # if chunk_shapes.item() != 10 and self.rank == self.rank_list[0]:
+                # print(f'Rank {self.rank} | Chunk shapes: {chunk_shapes}')
             # Go through the pipeline
             for c in range(chunks_amount):
                 if self.rank_index == 0: # Beginning of the pipeline (first layer)
@@ -232,6 +275,8 @@ class Weight_Parallelized_Model(nn.Module):
                     dist.send(tensor=out.to(self.backend_device), dst=next_rank) # send the tensor
         self.f_time += time.time() - start
         # If the rank is in the last layer's rank list, return the output, else True (for some reason we can't remember)
+        # if self.rank == 0:
+        #     print(f'Rank {self.rank} | made it to the end of the forward pass')
         return self.outputs if self.rank == self.rank_list[-1] else True
 
     def backward(self, losses):
@@ -272,6 +317,7 @@ class Weight_Parallelized_Model(nn.Module):
                         param.grad += autograd.grad(self.outputs[c], param, grad_outputs=self.grad_output[c], retain_graph=True)[0]/chunks_amount
         # TODO / NOTE: maybe we can delete self.inputs to free memory. It is not used anymore after the backward pass. (even in subdomains)
         self.g_time += time.time() - start
+        # print(f'Rank {self.rank} | made it to the end of the backward pass')
         return None
     
 
@@ -289,10 +335,11 @@ class Weight_Parallelized_Subdomain(nn.Module):
         
     def forward(self):
         start = time.time()
-        for k,chunk in enumerate(self.model.inputs):
+        for k, chunk in enumerate(self.model.inputs):
             self.model.outputs[k] = self.model.stage(chunk)
         self.num_f_evals += 1
         self.f_time += time.time() - start
+        return self.model.outputs
 
     def backward(self):
         start = time.time()

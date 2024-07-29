@@ -111,15 +111,24 @@ class TRAdam(torch.optim.Optimizer):
 
         
 class APTS(torch.optim.Optimizer):
-    def __init__(self, model, criterion, subdomain_optimizer, subdomain_optimizer_defaults, global_optimizer, global_optimizer_defaults, lr=0.01, max_subdomain_iter=0, dogleg=False):
+    def __init__(self, model, criterion, subdomain_optimizer, subdomain_optimizer_defaults, global_optimizer, global_optimizer_defaults, lr=0.01, max_subdomain_iter=0, dogleg=False, APTS_in_data=False, APTS_in_data_sync_strategy='average'):
         '''
         We use infinity norm for the gradient norm.
+        APTS_in_data is a boolean that indicates whether the subdomains are trained independely or not (APTS approach in data). 
+        In case more replias of the model are available and "APTS_in_data = False" then standard parallel in data approach applies.
         '''
         super(APTS, self).__init__(model.parameters(), {'lr': lr, 'max_subdomain_iter': max_subdomain_iter, 'dogleg': dogleg})
         for key in self.param_groups[0].keys():  
             if key not in ['params']:
                 setattr(self, key, self.param_groups[0][key])
         self.model = model # subdomain model
+        # self.model_is_data_parallel = model.data_parallel # standard data parallel approach (True) or subdomain in data approach (False)
+        self.APTS_in_data = APTS_in_data # APTS in data
+        self.APTS_in_data_sync_strategy = APTS_in_data_sync_strategy.lower() # APTS in data synchronization strategy (TODO: investigate 'sum' strategy)
+        if self.APTS_in_data and self.APTS_in_data_sync_strategy not in ['average', 'sum']:
+            raise ValueError('The APTS in data synchronization strategy must be either "average" or "sum"')
+        if self.APTS_in_data and self.APTS_in_data_sync_strategy == 'sum' and dist.get_rank() == 0:
+            print('(WARNING) APTS in data "sum" synchronization strategy still has to be tested/verified.')
         self.criterion = criterion # loss function
         # Throw an error if 'lr' not in subdomain_optimizer_defaults.keys()
         if lr <= 0:
@@ -178,17 +187,25 @@ class APTS(torch.optim.Optimizer):
     def subdomain_steps(self):
         # Set up the learning rate
         if self.max_subdomain_iter > 0:
-            self.subdomain_optimizer.param_groups[0]['lr'] = self.lr/self.max_subdomain_iter#*0.5
+            if self.APTS_in_data and self.APTS_in_data_sync_strategy == 'sum':
+                self.subdomain_optimizer.param_groups[0]['lr'] = self.lr/(self.max_subdomain_iter * self.model.num_replicas)
+            else:
+                self.subdomain_optimizer.param_groups[0]['lr'] = self.lr/self.max_subdomain_iter
             # Do subdomain steps
+            # print(f'Rank {dist.get_rank()} before subdomain iteration param norm: {self.model.parameters_norm()}')
             for i in range(self.max_subdomain_iter):
                 self.subdomain_optimizer.step()
                 self.subdomain_optimizer.zero_grad()
                 if i != self.max_subdomain_iter - 1:
-                    self.model.subdomain.forward()
-                    self.model.subdomain.backward()
+                    self.model.subdomain_forward() 
+                    self.model.subdomain_backward()
             # Check if TRAdam is used as the local optimizer
             # if 'tradam' in str(self.subdomain_optimizer).lower():
             #     self.subdomain_optimizer.reset_momentum()
+            # parameters norm:
+            # print(f'Rank {dist.get_rank()} after subdomain iteration param norm: {self.model.parameters_norm()}')
+            if not self.model.data_parallel:
+                self.model.sync_params(method=self.APTS_in_data_sync_strategy)
             self.update_param_group()
 
     def zero_timers(self):
@@ -285,7 +302,11 @@ class TR(torch.optim.Optimizer):
         grad_norm2 = grad.norm(p=2)
         grad_norm = grad.norm(p=self.norm_type) if self.norm_type != 2 else grad_norm2 
         # Rescale the gradient to e at the edges of the trust region
-        grad = grad * (self.lr/grad_norm)
+        if grad_norm <= torch.finfo(torch.float32).eps:
+            print(f'Stopping TR due to ||g|| = {grad_norm}.')
+            return old_loss 
+        with torch.no_grad():
+            grad = grad * (self.lr/grad_norm)
         # Make sure the loss decreases
         new_loss = torch.inf; c = 0
 

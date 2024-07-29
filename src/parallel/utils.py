@@ -2,7 +2,6 @@ import torch
 import torch.distributed as dist
 import dill
 
-
 def Parallelize(LayerList, rank_list, gpu_per_node):
     '''
     LayerList: contains the unloaded layers to avoid memory overflow.
@@ -77,12 +76,10 @@ def closure(inputs, targets, criterion, model, compute_grad=True, zero_grad=True
     '''
     NOTE: Losses from different chunks are averaged.
     '''
-    if model.__class__.__name__ != 'Weight_Parallelized_Model' and model.__class__.__name__ != 'Parallelized_Model' and model.__class__.__name__ != 'Parallel_Sequential_Model':
-        raise ValueError('Model must be an instance of the "Weight_Parallelized_Model" class or Parallelized_Model or Parallel_Sequential_Model.')
+    if model.__class__.__name__ != 'Parallelized_Model':
+        raise ValueError('Model must be an instance of the "Parallelized_Model".')
     if isinstance(criterion, type):
         raise ValueError('Criterion must be an instance of a class.')
-    if model.__class__.__name__ == 'Parallelized_Model':
-        model = model.model
     if model.rank == model.rank_list[-1]:
         targets = targets.chunk(data_chunks_amount)
     # Compute loss
@@ -98,9 +95,16 @@ def closure(inputs, targets, criterion, model, compute_grad=True, zero_grad=True
             for i,out in enumerate(outputs):
                 losses[i] = criterion(out, targets[i].to(out.device))
             loss = sum(losses)/len(losses)
-        dist.broadcast(tensor=loss.detach(), src=model.rank_list[-1], group=model.master_group)
+        # Average losses across replicas
+        if model.rank == model.rank_list[-1]:
+            dist.all_reduce(tensor=loss, op=dist.ReduceOp.SUM, group=model.final_layer_group) # Summing the losses across final layers of each replicas
+            loss = loss/model.num_replicas
+        loss_broadcast = dist.broadcast(tensor=loss.detach(), src=model.model_ranks[0][-1], async_op=True) # Last layer of first model replica broadcasts the loss to all other ranks 
         if compute_grad and torch.is_grad_enabled():
             model.backward(losses)
+            # Synchronize model gradients
+            model.sync_grads()
+        loss_broadcast.wait()
         if return_output:
             if model.rank == model.rank_list[-1]:
                 # Returning outputs here in case we want to compute the accuracy afterwards
