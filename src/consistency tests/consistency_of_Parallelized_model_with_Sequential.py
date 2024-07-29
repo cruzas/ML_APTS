@@ -15,6 +15,7 @@ from parallel.dataloaders import GeneralizedDistributedDataLoader
 from data_loaders.OverlappingDistributedSampler import *
 
 
+# TODO: return dummy variables in the generalized dataloader for first and last ranks
 
 def main(rank=None, master_addr=None, master_port=None, world_size=None):
     prepare_distributed_environment(rank, master_addr, master_port, world_size)
@@ -25,13 +26,12 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     PARALLEL = True
     SEQUENTIAL = True
     num_replicas = 3
-    batch_size = 17234
-    data_chunks_amount = 10
+    batch_size = 10000 # 17234, 24894
+    data_chunks_amount = 1
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
     seed = 0
     torch.manual_seed(seed)
     learning_rage = 1
-    drop_last=True
     # ____________________________________
         
     rank = dist.get_rank() if dist.get_backend() == 'nccl' else rank
@@ -59,14 +59,14 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         (NN3, {'in_features': 128, 'out_features': 10})   # Stage 3
     ]
     
-    train_loader = GeneralizedDistributedDataLoader(stage_list=stage_list, num_replicas=num_replicas, dataset=train_dataset_par, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True, drop_last=drop_last)
+    train_loader = GeneralizedDistributedDataLoader(stage_list=stage_list, num_replicas=num_replicas, dataset=train_dataset_par, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True)
     dist.barrier()
     if rank == 0:
         print(f'Rank TEST')
-    test_loader = GeneralizedDistributedDataLoader(stage_list=stage_list, num_replicas=num_replicas, dataset=test_dataset_par, batch_size=len(test_dataset_par), shuffle=False, num_workers=0, pin_memory=True, drop_last=drop_last)
+    test_loader = GeneralizedDistributedDataLoader(stage_list=stage_list, num_replicas=num_replicas, dataset=test_dataset_par, batch_size=len(test_dataset_par), shuffle=False, num_workers=0, pin_memory=True)
     dist.barrier()
-    train_loader_seq = DataLoader(train_dataset_seq, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True, drop_last=drop_last)
-    test_loader_seq = DataLoader(test_dataset_seq, batch_size=len(test_dataset_seq), shuffle=False, num_workers=0, pin_memory=True, drop_last=drop_last)
+    train_loader_seq = DataLoader(train_dataset_seq, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True, drop_last=True)
+    test_loader_seq = DataLoader(test_dataset_seq, batch_size=len(test_dataset_seq), shuffle=False, num_workers=0, pin_memory=True, drop_last=True)
      
     layers = [layer[0](**layer[1]) for layer in stage_list]
     random_input = torch.randn(10, 1, 784, device=device)
@@ -103,7 +103,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             # Sequential training loop
             for i, (x, y) in enumerate(train_loader_seq):
                 x = x.to(device)
-                print(f'(SEQ) Norm of input -> {torch.norm(x.flatten())}')
+                # print(f'(SEQ) Norm of input -> {torch.norm(x.flatten())}')
                 y = y.to(device)
                 # Gather sequential model norm
                 seq_optimizer.zero_grad()
@@ -113,7 +113,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
                 counter_seq += 1
                 seq_loss.backward()
                 seq_optimizer.step()
-                print(f'(SEQ) param norm -> {param_norm(seq_model)}, grad norm -> {grad_norm(seq_model)}')
+                # print(f'(SEQ) param norm -> {param_norm(seq_model)}, grad norm -> {grad_norm(seq_model)}')
         
             # Sequential testing loop
             total = 0
@@ -137,6 +137,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             ds = train_loader
             # print(f'Rank {rank} amount of batches {len(ds)}, shape of batches {[[d[0].shape,d[1].shape] for d in ds]}')
             for i, (x, y) in enumerate(train_loader):
+                # print(f'Rank {rank} batch {i} of shape {x.shape}')
                 dist.barrier()
                 # dist.barrier()
                 x = x.to(device)
@@ -157,10 +158,10 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             with torch.no_grad(): # TODO: Make this work also with NCCL
                 correct = 0
                 total = 0
-                for data in test_loader:
+                for i,data in enumerate(test_loader):
                     images, labels = data
                     images, labels = images.to(device), labels.to(device)
-                    closuree = closure(images, labels, criterion, par_model, compute_grad=False, zero_grad=True, return_output=True)       
+                    closuree = closure(images, labels, criterion, par_model, compute_grad=False, zero_grad=True, return_output=True)     
                     _, test_outputs = closuree()
                     if dist.get_rank() == par_model.rank_list[-1]:
                         test_outputs = torch.cat(test_outputs)
