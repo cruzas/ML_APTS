@@ -23,14 +23,14 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     This test is to check the consistency of the Weight_Parallelized_Model with the Sequential model.
     '''
     # _________ Some parameters __________
-    num_replicas = 5
-    batch_size = 11233
+    num_replicas = 2
+    batch_size = 28000
     data_chunks_amount = 10
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
     seed = 0
     torch.manual_seed(seed)
     learning_rage = 1
-    data_parallel = True
+    data_parallel = False # If True, the model will be trained in a standard data parallel way, set this to False to use domain decomposition in data with sync strategy "APTS_in_data_sync_strategy"
     APTS_in_data_sync_strategy = 'average' # 'sum' or 'average'
     # ____________________________________
         
@@ -85,18 +85,14 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         loss_total_par = 0
         counter_par = 0
         # Parallel training loop
-        ds = train_loader
-        # print(f'Rank {rank} amount of batches {len(ds)}, shape of batches {[[d[0].shape,d[1].shape] for d in ds]}')
         for i, (x, y) in enumerate(train_loader):
             dist.barrier()
             # dist.barrier()
             x = x.to(device)
             y = y.to(device)
     
-            tic = time.time()
             # Gather parallel model norm
             par_optimizer.zero_grad()
-            # c = closure(x, y, torch.nn.CrossEntropyLoss(), par_model, data_chunks_amount=data_chunks_amount, compute_grad=True)
             counter_par += 1
             par_loss = par_optimizer.step(closure=closure(x, y, criterion=criterion, model=par_model, data_chunks_amount=data_chunks_amount, compute_grad=True)) 
             loss_total_par += par_loss
@@ -133,6 +129,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         if rank == 0:
             print(f'Epoch {epoch}, Parallel avg loss: {loss_total_par/counter_par}')            
 
+
 if __name__ == '__main__':
     torch.manual_seed(0)
     if 1==2:
@@ -145,6 +142,6 @@ if __name__ == '__main__':
 
         master_addr = 'localhost'
         master_port = '12345'   
-        world_size = 15
+        world_size = 6
         mp.spawn(main, args=(master_addr, master_port, world_size), nprocs=world_size, join=True)
 

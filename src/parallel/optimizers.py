@@ -122,7 +122,6 @@ class APTS(torch.optim.Optimizer):
             if key not in ['params']:
                 setattr(self, key, self.param_groups[0][key])
         self.model = model # subdomain model
-        # self.model_is_data_parallel = model.data_parallel # standard data parallel approach (True) or subdomain in data approach (False)
         self.APTS_in_data = APTS_in_data # APTS in data
         self.APTS_in_data_sync_strategy = APTS_in_data_sync_strategy.lower() # APTS in data synchronization strategy (TODO: investigate 'sum' strategy)
         if self.APTS_in_data and self.APTS_in_data_sync_strategy not in ['average', 'sum']:
@@ -130,7 +129,6 @@ class APTS(torch.optim.Optimizer):
         if self.APTS_in_data and self.APTS_in_data_sync_strategy == 'sum' and dist.get_rank() == 0:
             print('(WARNING) APTS in data "sum" synchronization strategy still has to be tested/verified.')
         self.criterion = criterion # loss function
-        # Throw an error if 'lr' not in subdomain_optimizer_defaults.keys()
         if lr <= 0:
             raise ValueError('The learning rate "lr" must be bigger than 0.')
         subdomain_optimizer_defaults.update({'lr': lr})
@@ -177,8 +175,6 @@ class APTS(torch.optim.Optimizer):
         print('\n'.join(table))
         return '\n'.join(table)
         
-        
-    # override of param_group (update)
     def update_param_group(self):
         for key in self.param_groups[0].keys():
             if key not in ['params']:
@@ -192,7 +188,6 @@ class APTS(torch.optim.Optimizer):
             else:
                 self.subdomain_optimizer.param_groups[0]['lr'] = self.lr/self.max_subdomain_iter
             # Do subdomain steps
-            # print(f'Rank {dist.get_rank()} before subdomain iteration param norm: {self.model.parameters_norm()}')
             for i in range(self.max_subdomain_iter):
                 self.subdomain_optimizer.step()
                 self.subdomain_optimizer.zero_grad()
@@ -202,8 +197,6 @@ class APTS(torch.optim.Optimizer):
             # Check if TRAdam is used as the local optimizer
             # if 'tradam' in str(self.subdomain_optimizer).lower():
             #     self.subdomain_optimizer.reset_momentum()
-            # parameters norm:
-            # print(f'Rank {dist.get_rank()} after subdomain iteration param norm: {self.model.parameters_norm()}')
             if not self.model.data_parallel:
                 self.model.sync_params(method=self.APTS_in_data_sync_strategy)
             self.update_param_group()
@@ -257,7 +250,6 @@ class APTS(torch.optim.Optimizer):
                     new_loss = closure(compute_grad=False, zero_grad=True)
                     # Empty cache to avoid memory problems
                     torch.cuda.empty_cache()
-                # print(c)
             else:
                 # Update the model with the new params
                 for i,p in enumerate(self.model.parameters()):
@@ -307,9 +299,9 @@ class TR(torch.optim.Optimizer):
             return old_loss 
         with torch.no_grad():
             grad = grad * (self.lr/grad_norm)
+        
         # Make sure the loss decreases
         new_loss = torch.inf; c = 0
-
         while old_loss - new_loss < 0 and c < self.max_iter:
             stop = True if abs(self.lr - self.min_lr)/self.min_lr < 1e-6 else False # TODO: Adaptive reduction factor -> if large difference in losses maybe divide by 4
             for i,param in enumerate(self.model.parameters()):
@@ -322,14 +314,11 @@ class TR(torch.optim.Optimizer):
             pred_red = self.lr*grad_norm2 # predicted reduction (first order approximation of the loss function)
             red_ratio = act_red / pred_red # reduction ratio
             
-            # if dist.get_rank() == 0:
-            #     print(f'old loss: {old_loss}, new loss: {new_loss}, act_red: {act_red}, pred_red: {pred_red}, red_ratio: {red_ratio}')
             if red_ratio < self.nu_1: # the reduction ratio is too small -> decrease the learning rate
                 self.lr = max(self.min_lr, self.dec_factor*self.lr)
             elif red_ratio > self.nu_2: # the reduction ratio is good enough -> increase the learning rate
                 self.lr = min(self.max_lr, self.inc_factor*self.lr)
                 break
-            
             # Else learning rate remains unchanged
             if stop:
                 break
@@ -346,8 +335,6 @@ class TR(torch.optim.Optimizer):
                         grad = grad * (-(old_lr-self.lr)/old_lr)
                     else:
                         grad = grad * ((old_lr-self.lr)/old_lr)
-                # if dist.get_rank() == 0:
-                #     print(f'old loss: {old_loss}, new loss: {new_loss}, lr: {self.lr}')
             else:
                 break
             c += 1
