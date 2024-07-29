@@ -16,17 +16,6 @@ def get_linenumber():
 
 def get_filename(file_path):
     return os.path.basename(file_path)
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger()
-def sync_operation(filename=None,line_number=None):
-    pass
-    # global counter
-    # counter += 1
-    # logger.info(f"Rank {dist.get_rank()} starting sync operation. Python script: {filename} | Line number: {line_number}")
-    # dist.barrier()
-    # # torch.cuda.synchronize()
-    # logger.info(f"Rank {dist.get_rank()} finished sync operation. Python script: {filename} | Line number: {line_number}")
     
 # TODO: Currently, backend_device for many things is 'cuda:0'. This assumed the Piz Daint infrastructure, in which each had only one GPU.
 # In the future, we need to make this more generic and consider the case where each node has multiple GPUs.
@@ -114,8 +103,8 @@ class Parallelized_Model(nn.Module):
     
     def backward(self, losses, sync=True):
         self.model.backward(losses=losses)
-        if sync:
-            self.sync_grads() # Synchronize the gradients across all replicas (True by default since this will always be done in both data parallel approaches)
+        if sync: # Synchronize the gradients across all replicas (True by default since this will always be done in both data parallel approaches)
+            self.sync_grads() 
     
     def sync_params(self, method='average'):
         for param in self.model.parameters():
@@ -223,8 +212,7 @@ class Weight_Parallelized_Model(nn.Module):
                 chunk_shapes = torch.tensor([chunk.shape[0] for chunk in chunks], dtype=torch.int32).to(self.backend_device) # Store the batch size of each chunk
             # Broadcast the chunk_shapes tensor to all the ranks (this allows to know the shape of the input tensor for each rank in the pipeline and prepare the recv function)
             shape_transfer = dist.broadcast(tensor=chunk_shapes, src=self.rank_list[0], group=self.master_group, async_op=True) # broadcasting only the batch size | async operation to avoid blocking the first layer
-            # if chunk_shapes.item() != 10 and self.rank == self.rank_list[0]:
-                # print(f'Rank {self.rank} | Chunk shapes: {chunk_shapes}')
+
             # Go through the pipeline
             for c in range(chunks_amount):
                 if self.rank_index == 0: # Beginning of the pipeline (first layer)
@@ -275,8 +263,6 @@ class Weight_Parallelized_Model(nn.Module):
                     dist.send(tensor=out.to(self.backend_device), dst=next_rank) # send the tensor
         self.f_time += time.time() - start
         # If the rank is in the last layer's rank list, return the output, else True (for some reason we can't remember)
-        # if self.rank == 0:
-        #     print(f'Rank {self.rank} | made it to the end of the forward pass')
         return self.outputs if self.rank == self.rank_list[-1] else True
 
     def backward(self, losses):
@@ -317,10 +303,8 @@ class Weight_Parallelized_Model(nn.Module):
                         param.grad += autograd.grad(self.outputs[c], param, grad_outputs=self.grad_output[c], retain_graph=True)[0]/chunks_amount
         # TODO / NOTE: maybe we can delete self.inputs to free memory. It is not used anymore after the backward pass. (even in subdomains)
         self.g_time += time.time() - start
-        # print(f'Rank {self.rank} | made it to the end of the backward pass')
         return None
     
-
 # TODO: We may need a "Parallelized_Subdomain" class which includes data parallelism and weight parallelism. 
     
 # Subdomain model class
@@ -349,9 +333,6 @@ class Weight_Parallelized_Subdomain(nn.Module):
                     param.grad = autograd.grad(self.model.outputs[k], param, grad_outputs=self.model.grad_output[k], retain_graph=True)[0]/len(self.model.outputs)
                 else:
                     param.grad += autograd.grad(self.model.outputs[k], param, grad_outputs=self.model.grad_output[k], retain_graph=True)[0]/len(self.model.outputs)
-                # print the norm of the gradient
-                # print(f'Rank {self.model.rank} | Grad norm: {torch.norm(param.grad.flatten(), p=2)}')
-        # print(f'Rank {self.model.rank} | Grad norm: {torch.norm(torch.cat([param.grad.flatten() for param in self.model.parameters()], dim=0), p=2)}')
         self.num_g_evals += 1
         self.g_time += time.time() - start
             
