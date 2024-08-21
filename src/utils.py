@@ -4,7 +4,17 @@ import subprocess
 import torch.distributed as dist
 
 def find_free_port():
-    """ https://stackoverflow.com/questions/1365265/on-localhost-how-do-i-pick-a-free-port-number """
+    """
+    Returns a free port number on localhost.
+
+    This function binds a socket to an available port on localhost and returns the port number.
+
+    Returns:
+        str: The free port number.
+
+    References:
+        - https://stackoverflow.com/questions/1365265/on-localhost-how-do-i-pick-a-free-port-number
+    """
     import socket
     from contextlib import closing
     with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
@@ -13,6 +23,15 @@ def find_free_port():
         return str(s.getsockname()[1])  
 
 def prepare_distributed_environment(rank=None, master_addr=None, master_port=None, world_size=None):
+    """
+    Initializes the distributed environment for running code on a cluster or a PC.
+
+    Args:
+        rank (int, optional): The rank of the current process. Defaults to None.
+        master_addr (str, optional): The address of the master node. Defaults to None.
+        master_port (str, optional): The port number on the master node. Defaults to None.
+        world_size (int, optional): The total number of processes in the distributed environment. Defaults to None.
+    """
     if rank is None and master_addr is None and master_port is None and world_size is None: # we are on a cluster
         print(f'Should be initializing {os.environ["SLURM_NNODES"]} nodes')
         ## Execute code on a cluster
@@ -33,8 +52,15 @@ def prepare_distributed_environment(rank=None, master_addr=None, master_port=Non
         os.environ['MASTER_PORT'] = master_port # A free port on the master node
         dist.init_process_group(backend='gloo', rank=rank, world_size=world_size)
 
-# Forward pass to define the shapes of the tensors
 def send_shape(shape: list, dst: int, device = None):
+    """
+    Sends a list of shapes to a destination process.
+
+    Args:
+        shape (list): A list of shapes to be sent.
+        dst (int): The destination process to send the shapes to.
+        device (torch.device, optional): The device to send the shapes to. If not provided, it will be determined based on the backend. Defaults to None.
+    """
     if device is None:
         device = torch.device('cuda') if dist.get_backend() == 'nccl' else torch.device('cpu')
     for s in shape:
@@ -42,6 +68,19 @@ def send_shape(shape: list, dst: int, device = None):
     dist.send(tensor=torch.tensor(-1, dtype=torch.int32).to(device), dst=dst)
         
 def receive_shape(src: int, device = None):
+    """
+    Receive the shape of a tensor from a specified source.
+
+    Args:
+        src (int): The source from which to receive the tensor shape.
+        device (torch.device, optional): The device on which to place the tensor. 
+            If not provided, the default device will be used.
+
+    Returns:
+        list: The shape of the received tensor.
+
+    """
+    # Rest of the code...
     if device is None:
         device = torch.device('cuda') if dist.get_backend() == 'nccl' else torch.device('cpu')
     shape = []; temp = 0
@@ -54,9 +93,24 @@ def receive_shape(src: int, device = None):
     return shape
 
 def closure(inputs, targets, criterion, model, compute_grad=True, zero_grad=True, return_output=False, data_chunks_amount=1):
-    '''
+    """
+    Compute the closure function for training a parallelized model.
+
+    Args:
+        inputs (Tensor): The input data.
+        targets (Tensor): The target data.
+        criterion (class): The loss criterion class.
+        model (Parallelized_Model): The parallelized model instance.
+        compute_grad (bool, optional): Whether to compute gradients. Defaults to True.
+        zero_grad (bool, optional): Whether to zero gradients. Defaults to True.
+        return_output (bool, optional): Whether to return the model outputs. Defaults to False.
+        data_chunks_amount (int, optional): The number of data chunks. Defaults to 1.
+
+    Returns:
+        closure2 (function): The closure function for training the model.
+
     NOTE: Losses from different chunks are averaged.
-    '''
+    """
     if model.__class__.__name__ != 'Parallelized_Model':
         raise ValueError('Model must be an instance of the "Parallelized_Model".')
     if isinstance(criterion, type):
