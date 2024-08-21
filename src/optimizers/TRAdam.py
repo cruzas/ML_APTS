@@ -3,6 +3,19 @@ import time
 
 class TRAdam(torch.optim.Optimizer):
     def __init__(self, params, lr, betas=(0.9, 0.999), eps=1e-8, norm_type=torch.inf): #torch.inf
+        """
+        Initializes a TRAdam optimizer.
+
+        Args:
+            params (iterable): Iterable of parameters to optimize.
+            lr (float): Learning rate.
+            betas (Tuple[float, float], optional): Coefficients used for computing running averages of gradient and its square. Defaults to (0.9, 0.999).
+            eps (float, optional): Term added to the denominator to improve numerical stability. Defaults to 1e-8.
+            norm_type (float or torch.Tensor, optional): Type of norm to be used. Must be 2 or torch.inf. Defaults to torch.inf.
+
+        Raises:
+            ValueError: If norm_type is neither 2 nor torch.inf.
+        """
 
         super(TRAdam, self).__init__(params, {'lr': lr, 'betas': betas, 'eps': eps, 'norm_type': norm_type})
         self.lr = lr
@@ -17,18 +30,37 @@ class TRAdam(torch.optim.Optimizer):
         self.timings = {}
     
     def reset_momentum(self):
+        """
+        Resets the momentum values for the optimizer.
+
+        This method sets the momentum values (`m` and `v`) to zero for all parameters in the optimizer's parameter groups.
+        """
         self.m = [0 for _ in self.param_groups[0]['params']]
         self.v = [0 for _ in self.param_groups[0]['params']]
 
     def get_timings(self):
+        """
+        Returns:
+            dict: A dictionary containing the timings of the optimizer.
+        """
         timings = {key: self.timings[key] for key in self.timings.keys()}
         return timings
     
     def zero_timers(self):
+        """
+        Resets the timers for each key in the timings dictionary to zero.
+
+        Parameters:
+        - self: The instance of the TRAdam optimizer.
+        """
         self.timings = {key: 0 for key in self.timings.keys()}
         
     def display_avg_timers(self):
-        '''Display the timings of the optimizer in a table format with ordered columns'''
+        """
+        Display the average timers for each timer in the timings dictionary.
+        Returns:
+            str: A formatted table displaying the timers, time in seconds, and percentage.
+        """
         timings = self.get_timings()
         total_time = sum(timings.values())
         
@@ -58,6 +90,22 @@ class TRAdam(torch.optim.Optimizer):
         return '\n'.join(table)
             
     def step(self ,closure=None):
+        def step(self, closure=None):
+            """
+            Performs a single optimization step.
+            Args:
+                closure (callable, optional): A closure that reevaluates the model and returns the loss. 
+                    If provided, the optimizer will call it before performing the optimization step. 
+                    Default: None.
+            Returns:
+                loss: The loss value after the optimization step.
+            Raises:
+                RuntimeError: If the gradients are sparse.
+            Notes:
+                - This method updates the internal parameters of the optimizer.
+                - The step length is computed based on the gradients and the optimizer's learning rate.
+                - The step length is used to update the model parameters.
+            """
         self.t += 1
         tic = time.time()
         loss = closure() if closure is not None else None 
