@@ -12,7 +12,9 @@ from utils import *
 # In the future, we need to make this more generic and consider the case where each node has multiple GPUs.
 class Parallelized_Model(nn.Module):
     '''
-    Data parallel and weight parallel model.
+    Data parallel and weight parallel model wrapper.
+    Meaning of the parameters:
+    - stage_list: List of tuples. Each tuple contains a layer class and its parameters. The layer class is a function that returns a layer (e.g. nn.Linear, nn.Conv2d, nn.Sequential, etc.). The parameters are the parameters of the layer class.
     '''
     def __init__(self, stage_list, sample, num_replicas=1, device=None, data_parallel=False):
         super(Parallelized_Model, self).__init__()
@@ -53,6 +55,16 @@ class Parallelized_Model(nn.Module):
         self.sync_params()
     
     def subdomain_forward(self, sync=False):
+        """
+        Performs forward pass on the subdomain.
+
+        Parameters:
+            sync (bool): If True, performs synchronous forward pass by reducing outputs using `dist.all_reduce`.
+                         Defaults to False.
+
+        Returns:
+            outputs (list): List of outputs from the forward pass.
+        """
         outputs = self.subdomain.forward()
         if sync: # NOTE: Probably never used, but included for completeness
             with torch.no_grad():
@@ -61,43 +73,154 @@ class Parallelized_Model(nn.Module):
         return outputs
     
     def subdomain_backward(self, sync=True):
+        """
+        Backward pass through the subdomain.
+
+        Parameters:
+            sync (bool, optional): Whether to synchronize gradients when using data parallel settings. Defaults to True.
+
+        Returns:
+            None
+        """
         self.subdomain.backward()
         if sync and self.data_parallel: # NOTE: Sync True for sure for data parallel settings, but leaving the option to the user to use False
             self.sync_grads() 
 
     def subdomain_params(self):
+        """
+        Returns the parameters of the subdomain.
+
+        Returns:
+            dict: A dictionary containing the parameters of the subdomain.
+        """
         return self.subdomain.parameters()
         
     def subdomain_grad(self):
+        """
+        Returns the gradient of the subdomain.
+
+        Returns:
+            The gradient of the subdomain.
+        """
         return self.subdomain.grad()
     
     def subdomain_grad_norm(self, p=2):
+        """
+        Calculate the gradient norm of the subdomain.
+
+        Parameters:
+        - p (int, optional): The norm type. Defaults to 2.
+
+        Returns:
+        - float: The gradient norm of the subdomain.
+        """
         return self.subdomain.grad_norm(p=p)
     
     def parameters(self, clone=False): # Returns the global parameters of the model
+        """
+        Returns the global parameters of the model.
+
+        Parameters:
+            clone (bool): Whether to clone the parameters or not. Default is False.
+
+        Returns:
+            torch.nn.parameter.Parameter: The global parameters of the model.
+        """
         return self.model.parameters(clone=clone)
     
     def parameters_norm(self, p=2): # Returns the global parameters norm of the model
+        """
+        Returns the global parameters norm of the model.
+
+        Parameters:
+        - p (int): The norm type. Default is 2.
+
+        Returns:
+        - float: The global parameters norm of the model.
+        """
         return self.model.parameters().norm(p=p)
     
     def grad(self, clone=False): # Returns the global gradient of the model
+        """
+        Returns the global gradient of the model.
+
+        Parameters:
+            clone (bool): Whether to clone the model before computing the gradient. Default is False.
+
+        Returns:
+            ndarray: The global gradient of the model.
+        """
         return self.model.grad(clone=clone)
 
     def grad_norm(self, p=2): # Returns the global gradient norm of the model
+        """
+        Returns the global gradient norm of the model.
+
+        Parameters:
+        - p (int): The norm type. Default is 2.
+
+        Returns:
+        - float: The global gradient norm of the model.
+        """
         return self.model.grad_norm(p=p)
         
     def subdomain_grad_norm(self, p=2): # Returns the subdomain gradient norm of the model
+        """
+        Returns the subdomain gradient norm of the model.
+
+        Parameters:
+        - p (int, optional): The norm type. Defaults to 2.
+
+        Returns:
+        - float: The subdomain gradient norm of the model.
+        """
         return self.model.subdomain_grad_norm(p=p)
 
     def forward(self, x, chunks_amount=1, reset_grad = False, compute_grad = True):
+        """
+        Forward pass through the model.
+
+        Args:
+            x: The input data.
+            chunks_amount: The number of chunks to split the input data into.
+            reset_grad: Whether to reset the gradients of the model parameters.
+            compute_grad: Whether to compute gradients during the forward pass.
+
+        Returns:
+            The output of the forward pass.
+        """
         return self.model.forward(x, chunks_amount=chunks_amount, reset_grad=reset_grad, compute_grad=compute_grad)
     
     def backward(self, losses, sync=True):
+        """
+        Backpropagates the given losses through the model and updates the gradients.
+
+        Parameters:
+        - losses (Tensor): The loss values to backpropagate.
+        - sync (bool): Whether to synchronize the gradients across all replicas. Default is True.
+
+        Returns:
+        None
+        """
         self.model.backward(losses=losses)
         if sync: # Synchronize the gradients across all replicas (True by default since this will always be done in both data parallel approaches)
             self.sync_grads() 
     
     def sync_params(self, method='average'):
+        """
+        Synchronizes the parameters of the model across all replicas.
+
+        Parameters:
+            method (str): The method to use for synchronization. Default is 'average'.
+                - 'average': Divides the summed parameters by the number of replicas.
+                - 'sum': No operation is performed since the parameters are already summed.
+
+        Raises:
+            ValueError: If the method is not supported.
+
+        Returns:
+            None
+        """
         for param in self.model.parameters():
             dist.all_reduce(tensor=param.data, group=self.layer_copies_group, op=dist.ReduceOp.SUM)
             if method == 'average':
@@ -108,28 +231,71 @@ class Parallelized_Model(nn.Module):
                 raise ValueError(f"Method {method} is not supported.")
 
     def sync_grads(self):
+        """
+        Synchronizes gradients across multiple replicas of the model.
+
+        This method performs gradient synchronization by reducing the gradients of each parameter
+        across all replicas using the `all_reduce` function from the `torch.distributed` module.
+        The reduction operation used is the sum (`ReduceOp.SUM`).
+
+        After the reduction, the gradients are divided by the number of replicas (`self.num_replicas`)
+        to obtain the average gradient.
+
+        Note:
+        - This method assumes that the model's parameters are already initialized.
+        - The synchronization is performed using the `layer_copies_group` group.
+
+        Args:
+            self (object): The `self` object.
+        
+        Returns:
+            None
+        """
         for param in self.model.parameters():
             dist.all_reduce(tensor=param.grad, group=self.layer_copies_group, op=dist.ReduceOp.SUM)
             param.grad /= self.num_replicas
 
 # Global model class
 class Weight_Parallelized_Model(nn.Module):
-    def __init__(self, stage_list, rank_list, sample, gpu_id=0, device=None):
+    def __init__(self, stage_list, rank_list, sample, device=None):
+        '''Initializes the Weight_Parallelized_Model class. This class is used to parallelize the weights of a model across multiple ranks.
+        Parallelization in weights includes pipelining the forward and backward passes across multiple ranks and layer sharding.
+
+        Parameters:
+        - stage_list (list): A list of tuples containing the layer class and its parameters.
+        - rank_list (list): A list of ranks for distributed training.
+        - sample (torch.Tensor): The input sample.
+        - device (torch.device): The device to be used for computation. Default is None.
+        Attributes:
+        - rank (int): The rank of the current process.
+        - rank_list (list): The list of ranks for distributed training.
+        - rank_index (int): The index of the current rank in the rank_list.
+        - master_group (torch.distributed.ProcessGroup): The process group for synchronization.
+        - backend (str): The backend for distributed training.
+        - backend_device (str): The device to be used for computation.
+        - tensor_device (torch.device): The device to be used for tensor operations.
+        - inputs (list): A list to store the inputs of the next rank or layer.
+        - outputs (list): A list to store the outputs of the previous rank or layer.
+        - grad_output (list): A list to store the gradients of the output of the current layer.
+        - stage (torch.nn.Module): The current layer of the model.
+        - num_f_evals (int): The number of forward evaluations.
+        - num_g_evals (int): The number of gradient evaluations.
+        - f_time (float): The time taken for the forward pass.
+        - g_time (float): The time taken for gradient computation.
+        - subdomain (Weight_Parallelized_Subdomain): The subdomain model.
         '''
-        - input_shape: Shape of the input tensor. This is used to generate a dummy tensor for the first layer and compute the output shape of every layer to adapt the send/recv in the pipeline.
         
+        '''
         NOTE: grad_norm function returns the infinity norm of the subdomain gradient of the model (i.e. restricted to the current rank).
         Assumptions:
         1) Each sample has shape[0] = batch size -> each row is a sample.
         2) Only one layer is passed in the stage_list. Note that this counts sequential layers as one layer (e.g. nn.Sequential(nn.Linear(100,200), nn.ReLU(), nn.Linear(200,300)) counts as one layer).
-        
         ''' 
         super(Weight_Parallelized_Model, self).__init__()
         self.rank = dist.get_rank()
         self.rank_list = rank_list
         self.rank_index = rank_list.index(self.rank)
         self.master_group = dist.new_group(ranks=self.rank_list, use_local_synchronization=True)
-        self.gpu_id = gpu_id
         self.backend = dist.get_backend()
         self.backend_device = 'cpu' if self.backend == 'gloo' else self.tensor_device
         self.tensor_device = decide_tensor_device(ws=dist.get_world_size(), backend=dist.get_backend(), gpu_id=0) if device is None else device
@@ -158,6 +324,9 @@ class Weight_Parallelized_Model(nn.Module):
         self.subdomain = Weight_Parallelized_Subdomain(self) # Initialize the subdomain model
 
     def zero_counters(self):
+        """
+        Resets all the counters and timers to zero.
+        """
         self.num_f_evals = 0
         self.num_g_evals = 0
         self.f_time = 0
@@ -168,23 +337,82 @@ class Weight_Parallelized_Model(nn.Module):
         self.subdomain.g_time = 0
 
     def zero_grad(self):
+        """
+        Clears the gradients of all parameters in the model.
+
+        This method sets the gradients of all parameters in the model to zero.
+        It is typically called before the backward pass to avoid accumulating gradients from previous iterations.
+
+        Parameters:
+            self (object): The current instance of the class.
+
+        Returns:
+            None
+        """
         self.stage.zero_grad()
     
     def grad(self, clone=False): # Returns the global gradient of the model
+        """
+        Returns the global gradient of the model.
+
+        Parameters:
+            clone (bool): Whether to clone the gradient tensors or not. Default is False.
+
+        Returns:
+            Weight_Parallelized_Tensor: The global gradient of the model.
+        """
         gradient = [param.grad.clone() if clone else param.grad for param in self.parameters()]
         return Weight_Parallelized_Tensor(gradient, self.backend, self.master_group, self.rank)
     
     def grad_norm(self, p=2): # Returns the global gradient norm of the model
+        """
+        Returns the global gradient norm of the model.
+
+        Parameters:
+        - p (int, optional): The norm type. Default is 2.
+
+        Returns:
+        - float: The global gradient norm of the model.
+        """
         return self.grad().norm(p=p)
     
     def parameters(self, clone=False): # Returns the global parameters of the model
+        """
+        Returns the global parameters of the model.
+
+        Parameters:
+            clone (bool): Whether to clone the parameters or not. Default is False.
+
+        Returns:
+            Weight_Parallelized_Tensor: A tensor containing the global parameters.
+        """
         params = [param.clone() if clone else param for param in self.stage.parameters()]
         return Weight_Parallelized_Tensor(params, self.backend, self.master_group, self.rank)
     
     def subdomain_grad_norm(self, p=2): # Returns the subdomain gradient norm of the model
+        """
+        Returns the subdomain gradient norm of the model.
+
+        Parameters:
+        - p (int, optional): The norm type. Default is 2.
+
+        Returns:
+        - float: The subdomain gradient norm of the model.
+        """
         return torch.norm(torch.cat([param.grad.flatten() for param in self.parameters()], dim=0), p=p).item()
 
     def forward(self, x, chunks_amount=1, reset_grad = False, compute_grad = True):
+        """
+        Forward pass through the pipeline.
+        Args:
+            x (torch.Tensor): Input tensor.
+            chunks_amount (int, optional): Number of chunks to split the input tensor into. Defaults to 1.
+            reset_grad (bool, optional): Flag to reset the gradients of the model before starting to accumulate them again. Defaults to False.
+            compute_grad (bool, optional): Flag to compute gradients. Defaults to True.
+        Returns:
+            torch.Tensor or bool: Output tensor if the rank is in the last layer's rank list, else True.
+        """
+        
         start = time.time()
         # Initialize the input and output tensors (needed for the backward pass)
         self.inputs = [None]*chunks_amount 
@@ -257,6 +485,14 @@ class Weight_Parallelized_Model(nn.Module):
         return self.outputs if self.rank == self.rank_list[-1] else True
 
     def backward(self, losses):
+        """
+        Performs the backward pass of the pipeline model.
+        Args:
+            losses (list): A list of loss values for each chunk.
+        Returns:
+            None
+        """
+        
         chunks_amount = len(losses) # Number of chunks
         self.grad_output = [None]*chunks_amount 
         start = time.time()
@@ -301,6 +537,22 @@ class Weight_Parallelized_Model(nn.Module):
 # Subdomain model class
 class Weight_Parallelized_Subdomain(nn.Module):
     def __init__(self, model):
+        """
+        A module for weight parallelization of subdomains.
+        Args:
+            model (Weight_Parallelized_Model): The entire Weight_Parallelized_Model structure.
+        Attributes:
+            model (Weight_Parallelized_Model): The entire Weight_Parallelized_Model structure.
+            num_f_evals (int): Number of forward evaluations.
+            num_g_evals (int): Number of gradient evaluations.
+            f_time (float): Time taken for forward evaluations.
+            g_time (float): Time taken for gradient evaluations.
+        Methods:
+            forward(): Performs forward pass through the model.
+            backward(): Performs backward pass through the model.
+            grad(): Returns the gradients of the model parameters.
+            grad_norm(): Returns the norm of the gradients of the model parameters.
+        """
         super(Weight_Parallelized_Subdomain, self).__init__()
         self.model = model
         self.num_f_evals = 0 # Number of forward evaluations
@@ -309,6 +561,11 @@ class Weight_Parallelized_Subdomain(nn.Module):
         self.g_time = 0
         
     def forward(self):
+        """
+        Performs forward pass through the model.
+        Returns:
+            torch.Tensor: The model outputs.
+        """
         start = time.time()
         for k, chunk in enumerate(self.model.inputs):
             self.model.outputs[k] = self.model.stage(chunk)
@@ -317,6 +574,9 @@ class Weight_Parallelized_Subdomain(nn.Module):
         return self.model.outputs
 
     def backward(self):
+        """
+        Performs backward pass through the model.
+        """
         start = time.time()
         for k in range(len(self.model.outputs)):
             for param in self.model.stage.parameters():
@@ -328,15 +588,52 @@ class Weight_Parallelized_Subdomain(nn.Module):
         self.g_time += time.time() - start
             
     def grad(self):
+        """
+        Returns the gradients of the model parameters.
+        Returns:
+            List[torch.Tensor]: The gradients of the model parameters.
+        """
         return [param.grad for param in self.model.parameters()]
     
     def grad_norm(self):
+        """
+        Returns the norm of the gradients of the model parameters.
+        Returns:
+            float: The norm of the gradients of the model parameters.
+        """
         return torch.norm(torch.cat([param.grad.flatten() for param in self.model.parameters()], dim=0), p=2).item()
 
 # TODO: We may need a "Parallelized_Tensor" class which includes data parallelism of tensors (in case we want to do different strategies with the steps in APTS).
 
 # Global gradient class
 class Weight_Parallelized_Tensor(nn.Module):
+    """
+    A custom PyTorch module for parallelized tensor operations with gradient accumulation.
+    Args:
+        tensor (list): List of tensors representing the model parameters.
+        backend (str): The backend used for parallelization (e.g., 'gloo', 'nccl').
+        master_group (dist.ProcessGroup): The process group containing all ranks related to the model.
+        rank (int): The rank of the current process.
+    Methods:
+        norm(p=2):
+            Computes the L2 norm of the tensor.
+        __iter__():
+            Returns an iterator over the tensor.
+        __repr__():
+            Returns a string representation of the object.
+        __matmul__(a):
+            Performs matrix multiplication between the tensor and another tensor a.
+        __rmatmul__(a):
+            Performs matrix multiplication between another tensor a and the tensor.
+        __rmul__(a):
+            Performs element-wise multiplication between a scalar or tensor a and the tensor.
+        __mul__(a):
+            Performs element-wise multiplication between the tensor and another tensor a.
+        __add__(a):
+            Performs element-wise addition between the tensor and another tensor a.
+        __sub__(a):
+            Performs element-wise subtraction between the tensor and another tensor a.
+    """
     def __init__(self, tensor, backend, master_group, rank):
         super().__init__()  # Call to the superclass (nn.Module) constructor
         self.tensor = tensor
@@ -367,6 +664,15 @@ class Weight_Parallelized_Tensor(nn.Module):
         return self.__mul__(a)  # This handles the commutative property of multiplication
     
     def __mul__(self, a):  # self.grad * a
+        """
+        Multiply the Weight_Parallelized_Tensor instance by a scalar or another Weight_Parallelized_Tensor instance.
+
+        Parameters:
+            a (Union[Weight_Parallelized_Tensor, float, int]): The scalar or Weight_Parallelized_Tensor instance to multiply with.
+
+        Returns:
+            Union[float, Weight_Parallelized_Tensor]: If `a` is a Weight_Parallelized_Tensor instance, the method returns the dot product of the flattened gradients of `self` and `a` after reducing the gradients on the master rank. If `a` is a scalar, the method returns a new Weight_Parallelized_Tensor instance with each element multiplied by `a`.
+        """
         if isinstance(a, Weight_Parallelized_Tensor):  # When both operands are Weight_Parallelized_Tensor instances
             g1 = torch.cat([p.flatten() for p in self.tensor], dim=0)  # Flatten the gradients
             g2 = torch.cat([p.flatten() for p in a.tensor], dim=0)  # Flatten the gradients
@@ -386,6 +692,18 @@ class Weight_Parallelized_Tensor(nn.Module):
             return Weight_Parallelized_Tensor([p-q for p,q in zip(self.tensor, a.tensor)], backend=self.backend, master_group=self.master_group, rank=self.rank)
 
 def decide_tensor_device(ws, backend, gpu_id):
+    """
+    Determines the device on which to perform tensor operations.
+
+    Parameters:
+    - ws (int): The number of worker processes.
+    - backend (str): The backend for distributed training.
+    - gpu_id (int): The ID of the GPU to use.
+
+    Returns:
+    - str: The device on which to perform tensor operations. It can be 'cpu' or 'cuda:<gpu_id>'.
+
+    """
     if torch.cuda.is_available():
         if backend == 'gloo':
             if torch.cuda.device_count() < ws:

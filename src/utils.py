@@ -44,12 +44,10 @@ def prepare_distributed_environment(rank=None, master_addr=None, master_port=Non
             f"scontrol show hostname {node_list} | head -n1"
         )
         os.environ["MASTER_ADDR"] = master_node
-        print(f"Dist initialized before process group? {dist.is_initialized()}")
         dist.init_process_group(backend="nccl")
-        print(f"Dist initialized after init process group? {dist.is_initialized()} with world size {dist.get_world_size()}")
-    else: # we are on a PC
+    else: # To execute on a PC
         os.environ['MASTER_ADDR'] = master_addr
-        os.environ['MASTER_PORT'] = master_port # A free port on the master node
+        os.environ['MASTER_PORT'] = master_port 
         dist.init_process_group(backend='gloo', rank=rank, world_size=world_size)
 
 def send_shape(shape: list, dst: int, device = None):
