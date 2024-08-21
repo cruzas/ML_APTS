@@ -1,20 +1,12 @@
+# Parallelized Model Wrapper (PMW) for PyTorch
+
 import math
 import time 
 import torch
-import os
 import torch.nn as nn
 import torch.distributed as dist
 import torch.autograd as autograd
-import diffdist.functional as dist
 from utils import *
-from inspect import currentframe, getframeinfo
-
-def get_linenumber():
-    cf = currentframe()
-    return cf.f_back.f_lineno
-
-def get_filename(file_path):
-    return os.path.basename(file_path)
     
 # TODO: Currently, backend_device for many things is 'cuda:0'. This assumed the Piz Daint infrastructure, in which each had only one GPU.
 # In the future, we need to make this more generic and consider the case where each node has multiple GPUs.

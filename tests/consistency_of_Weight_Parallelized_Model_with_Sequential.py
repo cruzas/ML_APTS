@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from utils import prepare_distributed_environment
-from models import *
+from pmw import *
 from optimizers import *
 from utils import *
 from torchvision import datasets, transforms
