@@ -67,7 +67,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
 
     dist.barrier()
     if PARALLEL:
-        weight_par_model = Weight_Parallelized_Model(stage_list=stage_list, rank_list=list(range(0,len(stage_list))), sample=random_input, gpu_id=0) 
+        weight_par_model = Weight_Parallelized_Model(stage_list=stage_list, rank_list=list(range(0,len(stage_list))), sample=random_input) 
     if PARALLEL and SEQUENTIAL:
         for i, p1 in enumerate(weight_par_model.stage.parameters()):
             p1.data = list(layers[rank].parameters())[i].data.clone().detach().to(weight_par_model.tensor_device)
