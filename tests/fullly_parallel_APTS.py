@@ -1,22 +1,15 @@
-import os
 import torch
 import torch.nn as nn
 import torch.distributed as dist
 import torch.multiprocessing as mp
-import sys
-sys.path.append(os.path.join(os.getcwd(), "src")) # Add the path to the sys.path
-from utils.utils import prepare_distributed_environment
-from parallel.models import *
-from parallel.optimizers import *
-from parallel.utils import *
+from utils import prepare_distributed_environment
+from models import *
+from optimizers import *
+from utils import *
 from torchvision import datasets, transforms
-from torch.utils.data import DataLoader
-from parallel.dataloaders import GeneralizedDistributedDataLoader
-from data_loaders.OverlappingDistributedSampler import *
-
+from dataloaders import GeneralizedDistributedDataLoader
 
 # TODO: return dummy variables in the generalized dataloader for first and last ranks
-
 def main(rank=None, master_addr=None, master_port=None, world_size=None):
     prepare_distributed_environment(rank, master_addr, master_port, world_size)
     '''

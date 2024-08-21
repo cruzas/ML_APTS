@@ -6,8 +6,7 @@ import torch.nn as nn
 import torch.distributed as dist
 import torch.autograd as autograd
 import diffdist.functional as dist
-from parallel.utils import *
-import logging
+from utils import *
 from inspect import currentframe, getframeinfo
 
 def get_linenumber():

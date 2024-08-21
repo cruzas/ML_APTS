@@ -1,11 +1,14 @@
 
-*.pyc
-src/models/.DS_Store
-src/utils/.DS_Store
-src/optimizers/.DS_Store
-src/.DS_Store
-.DS_Store
 data/
 *.err
 *.out
 *.csv
+*.npz
+*.png
+*.pdf
+*.jpg
+*.jpeg
+*.DS_Store
+*.pyc
+# Ingnore all pycache directories
+__pycache__/
