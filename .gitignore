@@ -13,3 +13,4 @@ data/
 # Ingnore all pycache directories
 __pycache__/
 ./optimizers/__pycache__/
+./vscode/
