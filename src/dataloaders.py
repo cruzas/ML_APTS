@@ -11,6 +11,15 @@ class MockDataset(Dataset):
     # First=False means that the mock input data and real output data will be provided
     # First=None means that the mock input and output data will be provided
     def __init__(self, dataset, amount_of_batches=None, device=None, first=True):
+        """
+        Initializes a MockDataset object.
+
+        Args:
+            dataset: The dataset to be used.
+            amount_of_batches (optional): The number of batches to be used. Defaults to None.
+            device (optional): The device to be used. Defaults to None.
+            first (optional): A boolean indicating if it is the first dataset. Defaults to True.
+        """
         super(MockDataset, self).__init__()
         self.amount_of_batches = amount_of_batches
         self.dataset = dataset
@@ -18,9 +27,24 @@ class MockDataset(Dataset):
         self.device = device
 
     def __len__(self):
+        """
+        Returns the number of batches in the dataloader.
+
+        :return: The number of batches.
+        :rtype: int
+        """
         return self.amount_of_batches
 
     def __getitem__(self, idx):
+        """
+        Get the item at the specified index.
+
+        Parameters:
+            idx (int): The index of the item to retrieve.
+
+        Returns:
+            tuple: A tuple containing the item at the specified index.
+        """
         if self.first == True:
             return (self.dataset[idx][0], 1)
         elif self.first == False:
@@ -30,11 +54,25 @@ class MockDataset(Dataset):
         
 class GeneralizedDistributedDataLoader(DataLoader):
     def __init__(self, stage_list, num_replicas, dataset, batch_size, shuffle, device='cpu' if not torch.cuda.is_available() else 'cuda', num_workers=0, pin_memory=False, seed=0, **kwargs):
-        '''
+        """
+        Initializes the GeneralizedDistributedDataLoader object.
+
+        Args:
+            stage_list (list): A list of stages.
+            num_replicas (int): The number of replicas.
+            dataset: The dataset to be loaded.
+            batch_size (int): The batch size.
+            shuffle (bool): Whether to shuffle the data.
+            device (str): The device to use. Defaults to 'cpu' if torch.cuda.is_available() is False, otherwise 'cuda'.
+            num_workers (int): The number of worker processes. Defaults to 0.
+            pin_memory (bool): Whether to pin memory. Defaults to False.
+            seed (int): The random seed. Defaults to 0.
+            **kwargs: Additional keyword arguments.
+            
         E.g.: Supppose len(stage_list) = 3 and num_replicas = 2.Then:
         model 0 will be distributed across ranks [0,1,2] with first layer in rank 0 and second layer in rank 1 and so on.
         model 1 will be distributed across ranks [3,4,5] with first layer in rank 3 and second layer in rank 4 and so on.
-        '''
+        """
         if 'drop_last' in kwargs:
             #print a warning 
             print(f"(WARNING) drop_last will always be set to 'True' in the GeneralizedDistributedDataLoader.")
@@ -65,10 +103,23 @@ class GeneralizedDistributedSampler(DistributedSampler):
     def __init__(self, layer_ranks, dataset: Dataset, num_replicas: Optional[int] = None,
                  rank: Optional[int] = None, shuffle: bool = True,
                  seed: int = 0, drop_last: bool = False, **kwargs): 
-        '''
-        Variables for the DistributedSampler: 
-        dataset, num_replicas, rank, shuffle, seed, drop_last
-        '''
+        """
+        Initializes the GeneralizedDistributedSampler object.
+
+        Parameters:
+        - layer_ranks: List of ranks for each layer.
+        - dataset: The dataset to sample from.
+        - num_replicas: Number of distributed replicas. Defaults to None.
+        - rank: Rank of the current process. Defaults to None.
+        - shuffle: Whether to shuffle the samples. Defaults to True.
+        - seed: Seed value for shuffling. Defaults to 0.
+        - drop_last: Whether to drop the last incomplete batch. Defaults to False.
+        - **kwargs: Additional keyword arguments.
+
+        Raises:
+        - RuntimeError: If the distributed package is not available.
+        - ValueError: If num_replicas is not equal to the number of layer_ranks.
+        """
         if not dist.is_available():
             raise RuntimeError("Requires distributed package to be available")
         rank = dist.get_rank() if rank is None else rank
