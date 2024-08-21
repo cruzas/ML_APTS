@@ -1,25 +1,7 @@
-# External libraries
 import os  
 import torch
-import argparse
 import subprocess
-import numpy as np
-import matplotlib.pyplot as plt
-# import pandas as pd
-import torch.optim as optim
 import torch.distributed as dist
-import torchvision.datasets as datasets
-import torchvision.transforms as transforms
-from torch.utils.data import DataLoader
-
-# User libraries
-# from optimizers.TR import TR
-# from optimizers.APTS_D import APTS_D
-# from optimizers.APTS_W import APTS_W
-from models.neural_networks import *
-import torchvision.models as models
-from data_loaders.Power_DL import *
-from data_loaders.OverlappingDistributedSampler import *
 
 def find_free_port():
     """ https://stackoverflow.com/questions/1365265/on-localhost-how-do-i-pick-a-free-port-number """
