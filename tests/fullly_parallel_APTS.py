@@ -16,14 +16,14 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     This test is to check the consistency of the Weight_Parallelized_Model with the Sequential model.
     '''
     # _________ Some parameters __________
-    num_replicas = 2
+    num_replicas_per_dsd = 2  # dsd : data subdomain
+    num_dsd = 1
     batch_size = 28000
     data_chunks_amount = 10
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
     seed = 0
     torch.manual_seed(seed)
     learning_rage = 1
-    data_parallel = False # If True, the model will be trained in a standard data parallel way, set this to False to use domain decomposition in data with sync strategy "APTS_in_data_sync_strategy"
     APTS_in_data_sync_strategy = 'average' # 'sum' or 'average'
     # ____________________________________
         
@@ -49,11 +49,13 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         (NN3, {'in_features': 128, 'out_features': 10})   # Stage 3
     ]
     
-    train_loader = GeneralizedDistributedDataLoader(stage_list=stage_list, num_replicas=num_replicas, dataset=train_dataset_par, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True)
-    test_loader = GeneralizedDistributedDataLoader(stage_list=stage_list, num_replicas=num_replicas, dataset=test_dataset_par, batch_size=len(test_dataset_par), shuffle=False, num_workers=0, pin_memory=True)
     random_input = torch.randn(10, 1, 784, device=device)
 
-    par_model = Parallelized_Model(stage_list=stage_list, sample=random_input, num_replicas=num_replicas, device=device, data_parallel=data_parallel) 
+    par_model = Parallelized_Model(stage_list=stage_list, sample=random_input, num_replicas_per_dsd=num_replicas_per_dsd, num_dsd=num_dsd, device=device) 
+    
+    train_loader = GeneralizedDistributedDataLoader(stage_list=stage_list, num_replicas=par_model.tot_replicas, dataset=train_dataset_par, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True)
+    test_loader = GeneralizedDistributedDataLoader(stage_list=stage_list, num_replicas=par_model.tot_replicas, dataset=test_dataset_par, batch_size=len(test_dataset_par), shuffle=False, num_workers=0, pin_memory=True)
+
     subdomain_optimizer = torch.optim.SGD
     glob_opt_params = {
         'lr': 0.01,

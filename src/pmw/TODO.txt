@@ -1,0 +1,5 @@
+# TODO: We may need a "Parallelized_Subdomain" class which includes data parallelism and weight parallelism. 
+    
+# Subdomain model class
+
+# TODO: We may need a "Parallelized_Tensor" class which includes data parallelism of tensors (in case we want to do different strategies with the steps in APTS).
