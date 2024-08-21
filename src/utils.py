@@ -131,12 +131,12 @@ def closure(inputs, targets, criterion, model, compute_grad=True, zero_grad=True
         # Average losses across replicas
         if model.rank == model.rank_list[-1]:
             dist.all_reduce(tensor=loss, op=dist.ReduceOp.SUM, group=model.final_layer_group) # Summing the losses across final layers of each replicas
-            loss = loss/model.num_replicas
+            loss = loss/model.tot_replicas
         loss_broadcast = dist.broadcast(tensor=loss.detach(), src=model.model_ranks[0][-1], async_op=True) # Last layer of first model replica broadcasts the loss to all other ranks 
         if compute_grad and torch.is_grad_enabled():
             model.backward(losses)
             # Synchronize model gradients
-            model.sync_grads()
+            model.sync_global_grads()
         loss_broadcast.wait()
         if return_output:
             if model.rank == model.rank_list[-1]:
@@ -146,3 +146,16 @@ def closure(inputs, targets, criterion, model, compute_grad=True, zero_grad=True
                 return loss.item(), None
         return loss.item()
     return closure2 
+
+
+def decide_tensor_device(ws, backend, gpu_id):
+    if torch.cuda.is_available():
+        if backend == 'gloo':
+            if torch.cuda.device_count() < ws:
+                return f'cuda:{gpu_id}'
+            else:
+                return f'cuda:{dist.get_rank()}'
+        else:
+            return f'cuda:{gpu_id}'
+    else:
+        return 'cpu'
