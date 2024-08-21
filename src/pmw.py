@@ -42,7 +42,7 @@ class Parallelized_Model(nn.Module):
         for ranks in self.model_ranks:
             if self.rank in ranks:
                 # TODO: Change gpu_id to be more generic for tensor sharding later on...
-                self.model = Weight_Parallelized_Model(stage_list=stage_list, rank_list=ranks, sample=sample, gpu_id=0, device=device)
+                self.model = Weight_Parallelized_Model(stage_list=stage_list, rank_list=ranks, sample=sample, device=device)
                 self.subdomain = self.model.subdomain
         
         # Create a process group for each layer. This group contains all the ranks that are responsible for the layer across all replicas.
