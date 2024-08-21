@@ -1,13 +1,10 @@
 from torch.utils.data import DataLoader
 import torch
 import torch.distributed as dist
-from time import time
-from concurrent.futures import ProcessPoolExecutor
 from torch.utils.data.distributed import DistributedSampler
 from torch.utils.data import DataLoader
 from typing import Optional
 from torch.utils.data import Dataset
-import numpy as np
 
 class MockDataset(Dataset):
     # NOTE: First=True means that the real input data and mock output data will be provided
@@ -63,8 +60,6 @@ class GeneralizedDistributedDataLoader(DataLoader):
             dataset = MockDataset(dataset, len(dataset), device=device, first=False)
             self.sampler = GeneralizedDistributedSampler(layer_ranks=last_layer_ranks, dataset=dataset, num_replicas=num_replicas, rank=rank, shuffle=shuffle, drop_last=True, seed=seed, **kwargs)
             super(GeneralizedDistributedDataLoader, self).__init__(dataset=dataset, batch_size=batch_size//num_replicas, shuffle=False, sampler=self.sampler, num_workers=num_workers, pin_memory=pin_memory, drop_last=True, **kwargs)
-
-
 
 class GeneralizedDistributedSampler(DistributedSampler):
     def __init__(self, layer_ranks, dataset: Dataset, num_replicas: Optional[int] = None,

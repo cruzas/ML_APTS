@@ -12,3 +12,4 @@ data/
 *.pyc
 # Ingnore all pycache directories
 __pycache__/
+./optimizers/__pycache__/
