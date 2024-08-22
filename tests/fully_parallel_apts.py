@@ -1,20 +1,17 @@
 import torch
-import torch.nn as nn
 import torch.distributed as dist
 import torch.multiprocessing as mp
-from utils import prepare_distributed_environment
-from pmw import *
-from optimizers import *
-from utils import *
+import torch.nn as nn
 from torchvision import datasets, transforms
+
 from dataloaders import GeneralizedDistributedDataLoader
+from optimizers import APTS, TR
+from pmw.parallelized_model import ParallelizedModel
+from utils import Utils
 
 # TODO: return dummy variables in the generalized dataloader for first and last ranks
 def main(rank=None, master_addr=None, master_port=None, world_size=None):
-    prepare_distributed_environment(rank, master_addr, master_port, world_size)
-    '''
-    This test is to check the consistency of the Weight_Parallelized_Model with the Sequential model.
-    '''
+    Utils.prepare_distributed_environment(rank, master_addr, master_port, world_size)
     # _________ Some parameters __________
     num_replicas = 2
     batch_size = 28000
@@ -40,9 +37,22 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
 
     criterion = torch.nn.CrossEntropyLoss()
 
-    NN1 = lambda in_features,out_features: nn.Sequential(nn.Flatten(start_dim=1), nn.Linear(in_features,out_features), nn.ReLU(), nn.Linear(out_features, 256), nn.ReLU())
-    NN2 = lambda in_features,out_features: nn.Sequential(nn.Linear(in_features,out_features), nn.ReLU())
-    NN3 = lambda in_features,out_features: nn.Sequential(nn.Linear(in_features,out_features), nn.Sigmoid(), nn.LogSoftmax(dim=1))
+    NN1 = lambda in_features,out_features: nn.Sequential(
+        nn.Flatten(start_dim=1), 
+        nn.Linear(in_features,out_features), 
+        nn.ReLU(),
+        nn.Linear(out_features, 256), 
+        nn.ReLU())
+    
+    NN2 = lambda in_features,out_features: nn.Sequential(
+        nn.Linear(in_features,out_features), 
+        nn.ReLU())
+    
+    NN3 = lambda in_features,out_features: nn.Sequential(
+        nn.Linear(in_features,out_features), 
+        nn.Sigmoid(), 
+        nn.LogSoftmax(dim=1))
+    
     stage_list = [
         (NN1, {'in_features': 784, 'out_features': 256}), # Stage 1
         (NN2, {'in_features': 256, 'out_features': 128}), # Stage 2
@@ -51,9 +61,9 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     
     train_loader = GeneralizedDistributedDataLoader(stage_list=stage_list, num_replicas=num_replicas, dataset=train_dataset_par, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True)
     test_loader = GeneralizedDistributedDataLoader(stage_list=stage_list, num_replicas=num_replicas, dataset=test_dataset_par, batch_size=len(test_dataset_par), shuffle=False, num_workers=0, pin_memory=True)
-    random_input = torch.randn(10, 1, 784, device=device)
+    random_input = torch.randn(10, 1, 784, device=device) 
 
-    par_model = Parallelized_Model(stage_list=stage_list, sample=random_input, num_replicas=num_replicas, device=device, data_parallel=data_parallel) 
+    par_model = ParallelizedModel(stage_list=stage_list, sample=random_input, num_replicas=num_replicas, device=device, data_parallel=data_parallel) 
     subdomain_optimizer = torch.optim.SGD
     glob_opt_params = {
         'lr': 0.01,
@@ -87,7 +97,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             # Gather parallel model norm
             par_optimizer.zero_grad()
             counter_par += 1
-            par_loss = par_optimizer.step(closure=closure(x, y, criterion=criterion, model=par_model, data_chunks_amount=data_chunks_amount, compute_grad=True)) 
+            par_loss = par_optimizer.step(closure=Utils.closure(x, y, criterion=criterion, model=par_model, data_chunks_amount=data_chunks_amount, compute_grad=True)) 
             loss_total_par += par_loss
             par_model.sync_params()
             # print(f"(ACTUAL PARALLEL) stage {rank} param norm: {torch.norm(torch.cat([p.flatten() for p in par_model.parameters()]))}, grad norm: {torch.norm(torch.cat([p.grad.flatten() for p in par_model.parameters()]))}")   
@@ -99,7 +109,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             for data in test_loader:
                 images, labels = data
                 images, labels = images.to(device), labels.to(device)
-                closuree = closure(images, labels, criterion, par_model, compute_grad=False, zero_grad=True, return_output=True)       
+                closuree = Utils.closure(images, labels, criterion, par_model, compute_grad=False, zero_grad=True, return_output=True)       
                 _, test_outputs = closuree()
                 if dist.get_rank() == par_model.rank_list[-1]:
                     test_outputs = torch.cat(test_outputs)
@@ -128,13 +138,13 @@ if __name__ == '__main__':
     if 1==2:
         main()
     else:
-        world_size = torch.cuda.device_count() if torch.cuda.is_available() else 0
-        if world_size == 0:
+        WORLD_SIZE = torch.cuda.device_count() if torch.cuda.is_available() else 0
+        if WORLD_SIZE == 0:
             print("No CUDA device(s) detected.")
             exit(0)
 
-        master_addr = 'localhost'
-        master_port = '12345'   
-        world_size = 6
-        mp.spawn(main, args=(master_addr, master_port, world_size), nprocs=world_size, join=True)
+        MASTER_ADDR = 'localhost'
+        MASTER_PORT = '12345'   
+        WORLD_SIZE = 6
+        mp.spawn(main, args=(MASTER_ADDR, MASTER_PORT, WORLD_SIZE), nprocs=WORLD_SIZE, join=True)
 
