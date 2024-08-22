@@ -19,7 +19,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     num_replicas_per_dsd = 2  # dsd : data subdomain
     num_dsd = 1
     batch_size = 28000
-    data_chunks_amount = 10
+    data_chunks_amount = 10 
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
     seed = 0
     torch.manual_seed(seed)
