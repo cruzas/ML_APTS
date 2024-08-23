@@ -7,11 +7,11 @@ from torchvision import datasets, transforms
 from dataloaders import GeneralizedDistributedDataLoader
 from optimizers import APTS, TR
 from pmw.parallelized_model import ParallelizedModel
-from utils import Utils
+import utils
 
 # TODO: return dummy variables in the generalized dataloader for first and last ranks
 def main(rank=None, master_addr=None, master_port=None, world_size=None):
-    Utils.prepare_distributed_environment(rank, master_addr, master_port, world_size)
+    utils.prepare_distributed_environment(rank, master_addr, master_port, world_size)
     # _________ Some parameters __________
     num_replicas = 2
     batch_size = 28000
@@ -97,7 +97,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             # Gather parallel model norm
             par_optimizer.zero_grad()
             counter_par += 1
-            par_loss = par_optimizer.step(closure=Utils.closure(x, y, criterion=criterion, model=par_model, data_chunks_amount=data_chunks_amount, compute_grad=True)) 
+            par_loss = par_optimizer.step(closure=utils.closure(x, y, criterion=criterion, model=par_model, data_chunks_amount=data_chunks_amount, compute_grad=True)) 
             loss_total_par += par_loss
             par_model.sync_params()
             # print(f"(ACTUAL PARALLEL) stage {rank} param norm: {torch.norm(torch.cat([p.flatten() for p in par_model.parameters()]))}, grad norm: {torch.norm(torch.cat([p.grad.flatten() for p in par_model.parameters()]))}")   
@@ -109,7 +109,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             for data in test_loader:
                 images, labels = data
                 images, labels = images.to(device), labels.to(device)
-                closuree = Utils.closure(images, labels, criterion, par_model, compute_grad=False, zero_grad=True, return_output=True)       
+                closuree = utils.closure(images, labels, criterion, par_model, compute_grad=False, zero_grad=True, return_output=True)       
                 _, test_outputs = closuree()
                 if dist.get_rank() == par_model.rank_list[-1]:
                     test_outputs = torch.cat(test_outputs)

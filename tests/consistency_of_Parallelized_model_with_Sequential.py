@@ -1,11 +1,12 @@
+import time
 import torch
 import torch.nn as nn
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from utils import prepare_distributed_environment
-from pmw import *
+from pmw.parallelized_model import ParallelizedModel
 from optimizers import *
-from utils import *
+import utils
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
 from dataloaders import GeneralizedDistributedDataLoader
@@ -14,7 +15,7 @@ from dataloaders import GeneralizedDistributedDataLoader
 def main(rank=None, master_addr=None, master_port=None, world_size=None):
     prepare_distributed_environment(rank, master_addr, master_port, world_size)
     '''
-    This test is to check the consistency of the Weight_Parallelized_Model with the Sequential model.
+    This test is to check the consistency of the data parallel model with the sequential model.
     '''
     # _________ Some parameters __________
     PARALLEL = True
@@ -77,7 +78,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     dist.barrier()
     if PARALLEL:
         torch.manual_seed(seed)
-        par_model = Parallelized_Model(stage_list=stage_list, sample=random_input, num_replicas=num_replicas, device=device) 
+        par_model = ParallelizedModel(stage_list=stage_list, sample=random_input, num_replicas=num_replicas, device=device) 
 
     if PARALLEL and SEQUENTIAL:
         for i, p1 in enumerate(par_model.parameters()):
@@ -140,7 +141,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
                 tic = time.time()
                 # Gather parallel model norm
                 par_optimizer.zero_grad()
-                c = closure(x, y, torch.nn.CrossEntropyLoss(), par_model, data_chunks_amount=data_chunks_amount, compute_grad=True)
+                c = utils.closure(x, y, torch.nn.CrossEntropyLoss(), par_model, data_chunks_amount=data_chunks_amount, compute_grad=True)
                 par_loss = c()
                 loss_total_par += par_loss
                 counter_par += 1
@@ -155,7 +156,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
                 for i,data in enumerate(test_loader):
                     images, labels = data
                     images, labels = images.to(device), labels.to(device)
-                    closuree = closure(images, labels, criterion, par_model, compute_grad=False, zero_grad=True, return_output=True)     
+                    closuree = utils.closure(images, labels, criterion, par_model, compute_grad=False, zero_grad=True, return_output=True)     
                     _, test_outputs = closuree()
                     if dist.get_rank() == par_model.rank_list[-1]:
                         test_outputs = torch.cat(test_outputs)
