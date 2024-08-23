@@ -3,7 +3,6 @@ import torch
 import torch.nn as nn
 import torch.distributed as dist
 import torch.multiprocessing as mp
-from utils import prepare_distributed_environment
 from pmw.parallelized_model import ParallelizedModel
 from optimizers import *
 import utils
@@ -13,20 +12,20 @@ from dataloaders import GeneralizedDistributedDataLoader
 
 # TODO: return dummy variables in the generalized dataloader for first and last ranks
 def main(rank=None, master_addr=None, master_port=None, world_size=None):
-    prepare_distributed_environment(rank, master_addr, master_port, world_size)
+    utils.prepare_distributed_environment(rank, master_addr, master_port, world_size)
     '''
     This test is to check the consistency of the data parallel model with the sequential model.
     '''
     # _________ Some parameters __________
     PARALLEL = True
     SEQUENTIAL = True
-    num_replicas = 3
+    num_replicas = 1
     batch_size = 10000 # 17234, 24894
     data_chunks_amount = 1
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
     seed = 0
     torch.manual_seed(seed)
-    learning_rage = 1
+    learning_rate = 1
     # ____________________________________
         
     rank = dist.get_rank() if dist.get_backend() == 'nccl' else rank
@@ -72,7 +71,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
 
         param_norm = lambda seq_model: [torch.norm(torch.cat([p.flatten() for p in stage.parameters()])).item() for stage in seq_model]
         grad_norm = lambda seq_model: [torch.norm(torch.cat([p.grad.flatten() for p in stage.parameters()])).item() for stage in seq_model]
-        seq_optimizer = torch.optim.SGD(seq_model.parameters(), lr=learning_rage)
+        seq_optimizer = torch.optim.SGD(seq_model.parameters(), lr=learning_rate)
         print(f'START (SEQ) param norm -> {param_norm(seq_model)}')
 
     dist.barrier()
@@ -86,7 +85,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             p1.requires_grad = True
     if PARALLEL:
         print(f'START (PAR) Rank {rank} param norm -> {torch.norm(torch.cat([p.flatten() for p in par_model.parameters()]))}')
-        par_optimizer = torch.optim.SGD(par_model.parameters(), lr=learning_rage)
+        par_optimizer = torch.optim.SGD(par_model.parameters(), lr=learning_rate)
         
     for epoch in range(40):
         dist.barrier()
@@ -193,5 +192,5 @@ if __name__ == '__main__':
 
         master_addr = 'localhost'
         master_port = '12345'   
-        world_size = 9
+        world_size = 3
         mp.spawn(main, args=(master_addr, master_port, world_size), nprocs=world_size, join=True)
