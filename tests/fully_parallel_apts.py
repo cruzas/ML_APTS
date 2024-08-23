@@ -12,6 +12,7 @@ import utils
 # TODO: return dummy variables in the generalized dataloader for first and last ranks
 def main(rank=None, master_addr=None, master_port=None, world_size=None):
     utils.prepare_distributed_environment(rank, master_addr, master_port, world_size)
+    utils.check_gpus_per_rank() 
     # _________ Some parameters __________
     num_replicas = 2
     batch_size = 28000
