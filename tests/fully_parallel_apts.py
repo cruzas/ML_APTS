@@ -16,8 +16,8 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     utils.prepare_distributed_environment(rank, master_addr, master_port, world_size, is_cuda_enabled=True)
     utils.check_gpus_per_rank() 
     # _________ Some parameters __________
-    num_subdomains = 1
-    num_replicas_per_subdomain = 2
+    num_subdomains = 5
+    num_replicas_per_subdomain = 1
     batch_size = 28000
     data_chunks_amount = 10
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
@@ -149,6 +149,6 @@ if __name__ == '__main__':
 
         MASTER_ADDR = 'localhost'
         MASTER_PORT = '12345'   
-        WORLD_SIZE = 6
+        WORLD_SIZE = 15
         mp.spawn(main, args=(MASTER_ADDR, MASTER_PORT, WORLD_SIZE), nprocs=WORLD_SIZE, join=True)
 
