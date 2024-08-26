@@ -9,9 +9,11 @@ from optimizers import APTS, TR
 from pmw.parallelized_model import ParallelizedModel
 import utils
 
+
+
 # TODO: return dummy variables in the generalized dataloader for first and last ranks
 def main(rank=None, master_addr=None, master_port=None, world_size=None):
-    utils.prepare_distributed_environment(rank, master_addr, master_port, world_size)
+    utils.prepare_distributed_environment(rank, master_addr, master_port, world_size, is_cuda_enabled=True)
     utils.check_gpus_per_rank() 
     # _________ Some parameters __________
     num_subdomains = 1
@@ -22,7 +24,6 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     seed = 0
     torch.manual_seed(seed)
     learning_rage = 1
-    data_parallel = False # If True, the model will be trained in a standard data parallel way, set this to False to use domain decomposition in data with sync strategy "APTS_in_data_sync_strategy"
     APTS_in_data_sync_strategy = 'average' # 'sum' or 'average'
     # ____________________________________
     tot_replicas = num_subdomains * num_replicas_per_subdomain 
