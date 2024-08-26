@@ -14,7 +14,8 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     utils.prepare_distributed_environment(rank, master_addr, master_port, world_size)
     utils.check_gpus_per_rank() 
     # _________ Some parameters __________
-    num_replicas = 2
+    num_subdomains = 1
+    num_replicas_per_subdomain = 2
     batch_size = 28000
     data_chunks_amount = 10
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
@@ -24,6 +25,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     data_parallel = False # If True, the model will be trained in a standard data parallel way, set this to False to use domain decomposition in data with sync strategy "APTS_in_data_sync_strategy"
     APTS_in_data_sync_strategy = 'average' # 'sum' or 'average'
     # ____________________________________
+    tot_replicas = num_subdomains * num_replicas_per_subdomain 
         
     rank = dist.get_rank() if dist.get_backend() == 'nccl' else rank
 
@@ -60,11 +62,11 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         (NN3, {'in_features': 128, 'out_features': 10})   # Stage 3
     ]
     
-    train_loader = GeneralizedDistributedDataLoader(stage_list=stage_list, num_replicas=num_replicas, dataset=train_dataset_par, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True)
-    test_loader = GeneralizedDistributedDataLoader(stage_list=stage_list, num_replicas=num_replicas, dataset=test_dataset_par, batch_size=len(test_dataset_par), shuffle=False, num_workers=0, pin_memory=True)
+    train_loader = GeneralizedDistributedDataLoader(stage_list=stage_list, num_replicas=tot_replicas, dataset=train_dataset_par, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True)
+    test_loader = GeneralizedDistributedDataLoader(stage_list=stage_list, num_replicas=tot_replicas, dataset=test_dataset_par, batch_size=len(test_dataset_par), shuffle=False, num_workers=0, pin_memory=True)
     random_input = torch.randn(10, 1, 784, device=device) 
 
-    par_model = ParallelizedModel(stage_list=stage_list, sample=random_input, num_replicas=num_replicas, device=device, data_parallel=data_parallel) 
+    par_model = ParallelizedModel(stage_list=stage_list, sample=random_input, num_replicas_per_subdomain=num_replicas_per_subdomain, num_subdomains=num_subdomains) 
     subdomain_optimizer = torch.optim.SGD
     glob_opt_params = {
         'lr': 0.01,
@@ -112,22 +114,22 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
                 images, labels = images.to(device), labels.to(device)
                 closuree = utils.closure(images, labels, criterion, par_model, compute_grad=False, zero_grad=True, return_output=True)       
                 _, test_outputs = closuree()
-                if dist.get_rank() == par_model.rank_list[-1]:
+                if dist.get_rank() in par_model.all_stage_ranks[-1]:
                     test_outputs = torch.cat(test_outputs)
                     _, predicted = torch.max(test_outputs.data, 1)
                     total += labels.size(0)
                     correct += (predicted == labels.to(predicted.device)).sum().item()
 
-            if dist.get_rank() == par_model.rank_list[-1]:
+            if dist.get_rank() in par_model.all_stage_ranks[-1]:
                 accuracy = 100 * correct / total
-                if rank in [r[-1] for r in par_model.model_ranks[1:]]:
-                    dist.send(tensor=torch.tensor(accuracy).to('cpu'), dst=par_model.model_ranks[0][-1])
-                if rank == par_model.model_ranks[0][-1]:
-                    for i in range(len(par_model.model_ranks)-1):
+                if rank in par_model.all_stage_ranks[-1][1:]:
+                    dist.send(tensor=torch.tensor(accuracy).to('cpu'), dst=par_model.all_stage_ranks[-1][0])
+                if rank == par_model.all_stage_ranks[-1][0]:
+                    for i in range(len(par_model.all_stage_ranks[-1][1:])):
                         temp = torch.zeros(1)
-                        dist.recv(tensor=temp, src=par_model.model_ranks[i+1][-1])
+                        dist.recv(tensor=temp, src=par_model.all_stage_ranks[-1][i+1])
                         accuracy += temp.item() 
-                    accuracy /= len(par_model.model_ranks)
+                    accuracy /= len(par_model.all_stage_ranks[-1])
                     print(f'Epoch {epoch}, Parallel accuracy: {accuracy}')
 
         if rank == 0:
