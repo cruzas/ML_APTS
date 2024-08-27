@@ -41,30 +41,27 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
 
     criterion = torch.nn.CrossEntropyLoss()
 
-    NN1 = lambda in_features,out_features: nn.Sequential(
-        nn.Flatten(start_dim=1), 
-        nn.Linear(in_features,out_features), 
-        nn.ReLU(),
-        nn.Linear(out_features, 256), 
-        nn.ReLU())
+    NN1 = [nn.Flatten, nn.Linear, nn.ReLU,nn.Linear, nn.ReLU]
+    NN1_dict_list = [{'start_dim': 1}, 
+                    {'in_features': 784, 'out_features': 256}, 
+                    {}, 
+                    {'in_features': 256, 'out_features': 256}, 
+                    {}]
+
+    NN2 = [nn.Linear, nn.ReLU]
+    NN2_dict_list = [{'in_features': 256, 'out_features': 128}, {}]
     
-    NN2 = lambda in_features,out_features: nn.Sequential(
-        nn.Linear(in_features,out_features), 
-        nn.ReLU())
-    
-    NN3 = lambda in_features,out_features: nn.Sequential(
-        nn.Linear(in_features,out_features), 
-        nn.Sigmoid(), 
-        nn.LogSoftmax(dim=1))
+    NN3 = [nn.Linear, nn.Sigmoid, nn.LogSoftmax]
+    NN3_dict_list = [{'in_features': 128, 'out_features': 10}, {}, {'dim': 1}]
     
     stage_list = [
-        (NN1, {'in_features': 784, 'out_features': 256}), # Stage 1
-        (NN2, {'in_features': 256, 'out_features': 128}), # Stage 2
-        (NN3, {'in_features': 128, 'out_features': 10})   # Stage 3
+        (NN1, NN1_dict_list), # Stage 1
+        (NN2, NN2_dict_list), # Stage 2
+        (NN3, NN3_dict_list)  # Stage 3
     ]
     
-    train_loader = GeneralizedDistributedDataLoader(stage_list=stage_list, num_replicas=tot_replicas, dataset=train_dataset_par, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True)
-    test_loader = GeneralizedDistributedDataLoader(stage_list=stage_list, num_replicas=tot_replicas, dataset=test_dataset_par, batch_size=len(test_dataset_par), shuffle=False, num_workers=0, pin_memory=True)
+    train_loader = GeneralizedDistributedDataLoader(len_stage_list=len(stage_list), num_replicas=tot_replicas, dataset=train_dataset_par, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True)
+    test_loader = GeneralizedDistributedDataLoader(len_stage_list=len(stage_list), num_replicas=tot_replicas, dataset=test_dataset_par, batch_size=len(test_dataset_par), shuffle=False, num_workers=0, pin_memory=True)
     random_input = torch.randn(10, 1, 784, device=device) 
 
     par_model = ParallelizedModel(stage_list=stage_list, sample=random_input, num_replicas_per_subdomain=num_replicas_per_subdomain, num_subdomains=num_subdomains) 

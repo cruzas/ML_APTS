@@ -12,14 +12,14 @@ from dataloaders import GeneralizedDistributedDataLoader
 
 # TODO: return dummy variables in the generalized dataloader for first and last ranks
 def main(rank=None, master_addr=None, master_port=None, world_size=None):
-    utils.prepare_distributed_environment(rank, master_addr, master_port, world_size)
+    utils.prepare_distributed_environment(rank, master_addr, master_port, world_size, is_cuda_enabled=False)
     '''
     This test is to check the consistency of the data parallel model with the sequential model.
     '''
     # _________ Some parameters __________
     PARALLEL = True
     SEQUENTIAL = True
-
+    is_sharded = False
     num_replicas_per_subdomain = 2
     num_subdomains = 1
     batch_size = 10000 # 17234, 24894
@@ -47,27 +47,41 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
 
     criterion = torch.nn.CrossEntropyLoss()
 
-    NN1 = lambda in_features,out_features: nn.Sequential(nn.Flatten(start_dim=1), nn.Linear(in_features,out_features), nn.ReLU(), nn.Linear(out_features, 256), nn.ReLU())
-    NN2 = lambda in_features,out_features: nn.Sequential(nn.Linear(in_features,out_features), nn.ReLU())
-    NN3 = lambda in_features,out_features: nn.Sequential(nn.Linear(in_features,out_features), nn.Sigmoid(), nn.LogSoftmax(dim=1))
+    NN1 = [nn.Flatten, nn.Linear, nn.ReLU,nn.Linear, nn.ReLU]
+    NN1_dict_list = [{'start_dim': 1}, 
+                    {'in_features': 784, 'out_features': 256}, 
+                    {}, 
+                    {'in_features': 256, 'out_features': 256}, 
+                    {}]
+
+    NN2 = [nn.Linear, nn.ReLU]
+    NN2_dict_list = [{'in_features': 256, 'out_features': 128}, {}]
+    
+    NN3 = [nn.Linear, nn.Sigmoid, nn.LogSoftmax]
+    NN3_dict_list = [{'in_features': 128, 'out_features': 10}, {}, {'dim': 1}]
+    
     stage_list = [
-        (NN1, {'in_features': 784, 'out_features': 256}), # Stage 1
-        (NN2, {'in_features': 256, 'out_features': 128}), # Stage 2
-        (NN3, {'in_features': 128, 'out_features': 10})   # Stage 3
+        (NN1, NN1_dict_list), # Stage 1
+        (NN2, NN2_dict_list), # Stage 2
+        (NN3, NN3_dict_list)  # Stage 3
     ]
     
-    train_loader = GeneralizedDistributedDataLoader(stage_list=stage_list, num_replicas=tot_replicas, dataset=train_dataset_par, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True)
+    train_loader = GeneralizedDistributedDataLoader(len_stage_list=len(stage_list), num_replicas=tot_replicas, dataset=train_dataset_par, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True)
     dist.barrier()
-    if rank == 0:
-        print(f'Rank TEST')
-    test_loader = GeneralizedDistributedDataLoader(stage_list=stage_list, num_replicas=tot_replicas, dataset=test_dataset_par, batch_size=len(test_dataset_par), shuffle=False, num_workers=0, pin_memory=True)
+    test_loader = GeneralizedDistributedDataLoader(len_stage_list=len(stage_list), num_replicas=tot_replicas, dataset=test_dataset_par, batch_size=len(test_dataset_par), shuffle=False, num_workers=0, pin_memory=True)
     dist.barrier()
     train_loader_seq = DataLoader(train_dataset_seq, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True, drop_last=True)
     test_loader_seq = DataLoader(test_dataset_seq, batch_size=len(test_dataset_seq), shuffle=False, num_workers=0, pin_memory=True, drop_last=True)
-     
-    layers = [layer[0](**layer[1]) for layer in stage_list]
+    
     random_input = torch.randn(10, 1, 784, device=device)
     
+    layers = []
+    for stage in stage_list:
+        layer = []
+        for i in range(len(stage[0])):
+            layer.append(stage[0][i](**stage[1][i]))
+        layers.append(nn.Sequential(*layer))
+
     if rank == 0 and SEQUENTIAL:
         torch.manual_seed(seed)
         seq_model = nn.Sequential(*layers).to(device)#MNIST_FCNN().to(device)
@@ -80,12 +94,13 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     dist.barrier()
     if PARALLEL:
         torch.manual_seed(seed)
-        par_model = ParallelizedModel(stage_list=stage_list, sample=random_input, num_replicas_per_subdomain=num_replicas_per_subdomain, num_subdomains=num_subdomains) 
+        par_model = ParallelizedModel(stage_list=stage_list, sample=random_input, num_replicas_per_subdomain=num_replicas_per_subdomain, num_subdomains=num_subdomains, is_sharded=is_sharded) 
 
     if PARALLEL and SEQUENTIAL:
-        for i, p1 in enumerate(par_model.subdomain.weight_parallelized_model.subdomain.parameters()):
-            p1.data = list(layers[par_model.subdomain.weight_parallelized_model.rank_list.index(rank)].parameters())[i].data.clone().detach().to(par_model.tensor_device)
-            p1.requires_grad = True
+        with torch.no_grad():
+            for i, p1 in enumerate(par_model.subdomain.weight_parallelized_model.subdomain.parameters()):
+                p1.data = list(layers[par_model.subdomain.weight_parallelized_model.rank_list.index(rank)].parameters())[i].data.clone().detach().to(par_model.tensor_device)
+                p1.requires_grad = True
     if PARALLEL:
         print(f'START (PAR) Rank {rank} param norm -> {torch.norm(torch.cat([p.flatten() for p in par_model.parameters()]))}')
         par_optimizer = torch.optim.SGD(par_model.parameters(), lr=learning_rate)
