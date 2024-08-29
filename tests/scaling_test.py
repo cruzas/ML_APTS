@@ -1,6 +1,9 @@
-import torch
-import os
 import argparse
+import time 
+import torch
+import torch.distributed as dist
+import os
+import pandas as pd
 import sys
 
 # Make ../src visible for imports
@@ -21,25 +24,159 @@ def parse_args(args):
                         type=int, default=1, required=True)
     parser.add_argument("--epochs", type=int, default=10, required=True)
     parser.add_argument("--trial", type=int, default=1, required=True)
+    parser.add_argument("--lr", type=float, default=1.0, required=False)
     return parser.parse_args(args)
 
 
 def main(args, rank=None, master_addr=None, master_port=None, world_size=None):
+    # Parse command line arguments
     parsed_args = parse_args(args)
+
+    # Initialize distributed environment and make sure all ranks have the same number of GPUs
     # utils.prepare_distributed_environment(
     #     rank, master_addr, master_port, world_size, is_cuda_enabled=True)
     # utils.check_gpus_per_rank()
+    rank = dist.get_rank() if dist.get_backend() == 'nccl' else rank
 
-    # Make seed depend on trial number to ensure reproducibility. Make it something complicated.
+    # Set seed    
     seed = 123456789 * parsed_args.trial
     torch.manual_seed(seed)
 
-    nn = networks.construct_stage_list(
+    tot_replicas = parsed_args.num_subdomains * \
+        parsed_args.num_replicas_per_subdomain
+
+    APTS_in_data_sync_strategy = 'average'  # 'sum' or 'average'
+    criterion = torch.nn.CrossEntropyLoss()    
+
+    # Create training and testing datasets
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        # NOTE: Normalization makes a huge difference
+        transforms.Normalize((0.1307,), (0.3081,)),
+        transforms.Lambda(lambda x: x.view(
+            x.size(0), -1))  # Reshape the tensor
+    ])
+
+    train_dataset_par = datasets.MNIST(
+        root='./data', train=True, download=True, transform=transform)
+    test_dataset_par = datasets.MNIST(
+        root='./data', train=False, download=True, transform=transform)
+
+    # Create data loaders
+    train_loader = GeneralizedDistributedDataLoader(len_stage_list=len(
+        stage_list), num_replicas=tot_replicas, dataset=train_dataset_par, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True)
+    test_loader = GeneralizedDistributedDataLoader(len_stage_list=len(stage_list), num_replicas=tot_replicas, dataset=test_dataset_par, batch_size=len(
+        test_dataset_par), shuffle=False, num_workers=0, pin_memory=True)
+
+    if parse_args.dataset == "mnist":
+        input_size = 784
+        # random_input = torch.randn(10, 1, 784, device=device)
+        random_input = torch.randn(10, 1, input_size, device=device)
+    elif parse_args.dataset == "cifar10":
+        # TODO: Verify whether this works or not
+        raise NotImplementedError("CIFAR-10 dataset is not implemented yet.")
+    else:
+        raise ValueError(f"Unknown dataset: {parse_args.dataset}")
+    
+    # Create model
+    stage_list = networks.construct_stage_list(
         parsed_args.model, parsed_args.num_stages_per_replica)
+    par_model = ParallelizedModel(stage_list=stage_list, sample=random_input,
+                                  num_replicas_per_subdomain=num_replicas_per_subdomain, num_subdomains=num_subdomains)
 
-    print(parsed_args)
-    print("\n")
+    # Create optimizer
+    subdomain_optimizer = torch.optim.SGD
+    glob_opt_params = {
+        'lr': 0.01,
+        'max_lr': 1.0,
+        'min_lr': 0.0001,
+        'nu': 0.5,
+        'inc_factor': 2.0,
+        'dec_factor': 0.5,
+        'nu_1': 0.25,
+        'nu_2': 0.75,
+        'max_iter': 5,
+        'norm_type': 2
+    }
+    par_optimizer = APTS(model=par_model, criterion=criterion, subdomain_optimizer=subdomain_optimizer, subdomain_optimizer_defaults={'lr': learning_rage},
+                         global_optimizer=TR, global_optimizer_defaults=glob_opt_params, lr=learning_rage, max_subdomain_iter=5, dogleg=True, APTS_in_data_sync_strategy=APTS_in_data_sync_strategy)
 
+    loss_per_epoch = [None] * parse_args.epochs
+    acc_per_epoch = [None] * parse_args.epochs
+    time_per_epoch = [None] * parse_args.epochs
+    for epoch in range(parse_args.epochs):
+        dist.barrier()
+        if rank == 0:
+            print(f'____________ EPOCH {epoch} ____________')
+        dist.barrier()
+        loss_total_par = 0
+        counter_par = 0
+        # Parallel training loop
+        for i, (x, y) in enumerate(train_loader):
+            dist.barrier()
+            x = x.to(device)
+            y = y.to(device)
+
+            # Gather parallel model norm
+            par_optimizer.zero_grad()
+            counter_par += 1
+            step_start_time = time.time()  # Start time for the optimizer step
+            par_loss = par_optimizer.step(closure=utils.closure(
+                x, y, criterion=criterion, model=par_model, data_chunks_amount=data_chunks_amount, compute_grad=True))
+            time_per_epoch[epoch] = time.time() - step_start_time
+
+            loss_total_par += par_loss
+            par_model.sync_params()
+            step_end_time = time.time()  # End time for the optimizer step
+
+        loss_per_epoch[epoch] = loss_total_par / counter_par
+        if rank == 0:
+            print(
+                f'Epoch {epoch}, Parallel avg loss: {loss_per_epoch[epoch]}')
+
+        # Parallel testing loop
+        with torch.no_grad():  # TODO: Make this work also with NCCL
+            correct = 0
+            total = 0
+            for data in test_loader:
+                images, labels = data
+                images, labels = images.to(device), labels.to(device)
+                closuree = utils.closure(
+                    images, labels, criterion, par_model, compute_grad=False, zero_grad=True, return_output=True)
+                _, test_outputs = closuree()
+                if rank in par_model.all_stage_ranks[-1]:
+                    test_outputs = torch.cat(test_outputs)
+                    _, predicted = torch.max(test_outputs.data, 1)
+                    total += labels.size(0)
+                    correct += (predicted ==
+                                labels.to(predicted.device)).sum().item()
+
+            if rank in par_model.all_stage_ranks[-1]:
+                accuracy = 100 * correct / total
+                if rank in par_model.all_stage_ranks[-1][1:]:
+                    dist.send(tensor=torch.tensor(accuracy).to(
+                        'cpu'), dst=par_model.all_stage_ranks[-1][0])
+                if rank == par_model.all_stage_ranks[-1][0]:
+                    for i in range(len(par_model.all_stage_ranks[-1][1:])):
+                        temp = torch.zeros(1)
+                        dist.recv(
+                            tensor=temp, src=par_model.all_stage_ranks[-1][i+1])
+                        accuracy += temp.item()
+                    accuracy /= len(par_model.all_stage_ranks[-1])
+                    print(f'Epoch {epoch}, Parallel accuracy: {accuracy}')
+                    acc_per_epoch[epoch] = accuracy
+
+    if rank == par_model.all_stage_ranks[-1][0]:
+        print(f"Loss per epoch: {loss_per_epoch}")
+        print(f"Accuracy per epoch: {acc_per_epoch}")
+        print(f"Time per epoch: {time_per_epoch}")
+
+        # Save results to a CSV file. You can use pandas.
+        results = pd.DataFrame(
+            {'loss': loss_per_epoch, 'accuracy': acc_per_epoch, 'time': time_per_epoch})
+        
+        results.to_csv(f"results_{parsed_args.optimizer}_{parsed_args.dataset}_{parsed_args.model}_{parsed_args.num_subdomains}_{parsed_args.num_replicas_per_subdomain}_{parsed_args.num_stages_per_replica}_{parsed_args.epochs}_{parsed_args.trial}.csv", index=False)
+    
 
 if __name__ == '__main__':
     main(sys.argv[1:])
