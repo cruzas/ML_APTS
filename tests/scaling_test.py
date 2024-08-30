@@ -33,10 +33,12 @@ def main(args, rank=None, master_addr=None, master_port=None, world_size=None):
     parsed_args = parse_args(args)
 
     # Initialize distributed environment and make sure all ranks have the same number of GPUs
-    # utils.prepare_distributed_environment(
-    #     rank, master_addr, master_port, world_size, is_cuda_enabled=True)
-    # utils.check_gpus_per_rank()
+    utils.prepare_distributed_environment(
+        rank, master_addr, master_port, world_size, is_cuda_enabled=True)
+    utils.check_gpus_per_rank()
     rank = dist.get_rank() if dist.get_backend() == 'nccl' else rank
+
+    exit(0)
 
     # Set seed    
     seed = 123456789 * parsed_args.trial
