@@ -46,7 +46,7 @@ def main(args, rank=None, master_addr=None, master_port=None, world_size=None):
     # Make sure all ranks have the same number of GPUs
     utils.check_gpus_per_rank()
     rank = dist.get_rank() if dist.get_backend() == 'nccl' else rank
-    device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+    device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
     # Set seed    
     seed = 123456789 * parsed_args.trial
@@ -93,7 +93,7 @@ def main(args, rank=None, master_addr=None, master_port=None, world_size=None):
     if parsed_args.dataset.lower() == "mnist":
         input_size = 784
         # random_input = torch.randn(10, 1, 784, device=device)
-        random_input = torch.randn(10, 1, input_size, device=device)
+        random_input = torch.randn(parsed_args.batch_size, 1, input_size, device=device)
     elif parsed_args.dataset.lower() == "cifar10":
         # TODO: Verify whether this works or not
         raise NotImplementedError("CIFAR-10 dataset is not implemented yet.")
@@ -143,7 +143,7 @@ def main(args, rank=None, master_addr=None, master_port=None, world_size=None):
             x = x.to(device)
             y = y.to(device)
 
-            print(f"Train loader x shape: {x.shape}, y shape: {y.shape}")
+            print(f"Rank {dist.get_rank()} train loader x shape: {x.shape}, y shape: {y.shape}")
 
             # Gather parallel model norm
             par_optimizer.zero_grad()
