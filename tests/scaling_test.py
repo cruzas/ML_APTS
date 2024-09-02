@@ -21,7 +21,7 @@ def parse_cmd_args(args):
     parser = argparse.ArgumentParser()
     parser.add_argument("--optimizer", type=str, default="APTS", required=False)
     parser.add_argument("--dataset", type=str, default="mnist", required=False)
-    parser.add_argument("--batch_size", type=int, default=60000, required=False)
+    parser.add_argument("--batch_size", type=int, default=28000, required=False)
     parser.add_argument("--model", type=str,
                         default="feedforward", required=False)
     parser.add_argument("--num_subdomains", type=int, default=2, required=False)
@@ -33,7 +33,7 @@ def parse_cmd_args(args):
     parser.add_argument("--trial", type=int, default=1, required=False)
     parser.add_argument("--lr", type=float, default=1.0, required=False)
     parser.add_argument("--is_sharded", type=bool, default=False, required=False)
-    parser.add_argument("--data_chunks_amount", type=int, default=1, required=False)
+    parser.add_argument("--data_chunks_amount", type=int, default=10, required=False)
     return parser.parse_args(args)
 
 
@@ -49,8 +49,14 @@ def main(rank=None, cmd_args=None, master_addr=None, master_port=None, world_siz
     rank = dist.get_rank() if dist.get_backend() == 'nccl' else rank
     device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
+    # CSV filename
+    results_dir = "results"
+    csv_filename = os.path.join(results_dir, f"{parsed_args.optimizer}_{parsed_args.dataset}_{parsed_args.batch_size}_{parsed_args.model}_{parsed_args.num_subdomains}_{parsed_args.num_replicas_per_subdomain}_{parsed_args.num_stages_per_replica}_{parsed_args.epochs}_t{parsed_args.trial}.csv")
+    # csv_filename = f"{parsed_args.optimizer}_{parsed_args.dataset}_{parsed_args.batch_size}_{parsed_args.model}_{parsed_args.num_subdomains}_{parsed_args.num_replicas_per_subdomain}_{parsed_args.num_stages_per_replica}_{parsed_args.epochs}_t{parsed_args.trial}.csv"
+    print(f"CSV filename: {csv_filename}")
+
     # Set seed    
-    seed = 123456789 * parsed_args.trial
+    seed = 0#123456789 * parsed_args.trial
     torch.manual_seed(seed)
 
     tot_replicas = parsed_args.num_subdomains * \
@@ -68,28 +74,20 @@ def main(rank=None, cmd_args=None, master_addr=None, master_port=None, world_siz
             x.size(0), -1))  # Reshape the tensor
     ])
 
-    print("Creating datasets")
     train_dataset_par = datasets.MNIST(
         root='./data', train=True, download=True, transform=transform)
     test_dataset_par = datasets.MNIST(
         root='./data', train=False, download=True, transform=transform)
-    print("Datasets created")
 
     # Create stage list
-    print("Creating stage list")
     stage_list = networks.construct_stage_list(
         parsed_args.model, parsed_args.num_stages_per_replica)
-    print("Stage list: ", stage_list)
-    print("Stage list created")
 
     # Create data loaders
-    print("Creating data loaders")
     train_loader = GeneralizedDistributedDataLoader(len_stage_list=len(
         stage_list), num_replicas=tot_replicas, dataset=train_dataset_par, batch_size=parsed_args.batch_size, shuffle=False, num_workers=0, pin_memory=True)
     test_loader = GeneralizedDistributedDataLoader(len_stage_list=len(stage_list), num_replicas=tot_replicas, dataset=test_dataset_par, batch_size=len(
         test_dataset_par), shuffle=False, num_workers=0, pin_memory=True)
-    print("Data loaders created")
-
 
     if parsed_args.dataset.lower() == "mnist":
         input_size = 784
@@ -102,15 +100,12 @@ def main(rank=None, cmd_args=None, master_addr=None, master_port=None, world_siz
         raise ValueError(f"Unknown dataset: {parsed_args.dataset}")
     
     # Create model
-    print("Creating model")
     par_model = ParallelizedModel(stage_list=stage_list, sample=random_input,
                                   num_replicas_per_subdomain=parsed_args.num_replicas_per_subdomain, 
                                   num_subdomains=parsed_args.num_subdomains,
                                   is_sharded=parsed_args.is_sharded)
-    print("Model created")
 
     # Create optimizer
-    print("Creating optimizer")
     subdomain_optimizer = torch.optim.SGD
     glob_opt_params = {
         'lr': 0.01,
@@ -127,7 +122,6 @@ def main(rank=None, cmd_args=None, master_addr=None, master_port=None, world_siz
     par_optimizer = APTS(model=par_model, criterion=criterion, subdomain_optimizer=subdomain_optimizer, subdomain_optimizer_defaults={'lr': parsed_args.lr},
                          global_optimizer=TR, global_optimizer_defaults=glob_opt_params, lr=parsed_args.lr, max_subdomain_iter=5, dogleg=True, APTS_in_data_sync_strategy=APTS_in_data_sync_strategy)
 
-    print("Optimizer created")
     loss_per_epoch = [None] * parsed_args.epochs
     acc_per_epoch = [None] * parsed_args.epochs
     time_per_epoch = [None] * parsed_args.epochs
@@ -143,8 +137,6 @@ def main(rank=None, cmd_args=None, master_addr=None, master_port=None, world_siz
             dist.barrier()
             x = x.to(device)
             y = y.to(device)
-
-            print(f"Rank {dist.get_rank()} train loader x shape: {x.shape}, y shape: {y.shape}")
 
             # Gather parallel model norm
             par_optimizer.zero_grad()
@@ -203,7 +195,8 @@ def main(rank=None, cmd_args=None, master_addr=None, master_port=None, world_siz
         results = pd.DataFrame(
             {'loss': loss_per_epoch, 'accuracy': acc_per_epoch, 'time': time_per_epoch})
         
-        results.to_csv(f"results_{parsed_args.optimizer}_{parsed_args.dataset}_{parsed_args.model}_{parsed_args.num_subdomains}_{parsed_args.num_replicas_per_subdomain}_{parsed_args.num_stages_per_replica}_{parsed_args.epochs}_{parsed_args.trial}.csv", index=False)
+        print(f"Saving results to {csv_filename}")
+        results.to_csv(csv_filename, index=False)
     
 
 if __name__ == '__main__':
