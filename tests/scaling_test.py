@@ -182,11 +182,11 @@ def main(rank=None, cmd_args=None, master_addr=None, master_port=None, world_siz
             if rank in par_model.all_stage_ranks[-1]:
                 accuracy = 100 * correct / total
                 if rank in par_model.all_stage_ranks[-1][1:]:
-                    dist.send(tensor=torch.tensor(accuracy).to(
-                        'cpu'), dst=par_model.all_stage_ranks[-1][0])
+                    accuracy = torch.tensor(accuracy).to(device)
+                    dist.send(tensor=accuracy, dst=par_model.all_stage_ranks[-1][0])
                 if rank == par_model.all_stage_ranks[-1][0]:
                     for i in range(len(par_model.all_stage_ranks[-1][1:])):
-                        temp = torch.zeros(1)
+                        temp = torch.zeros(1).to(device)
                         dist.recv(
                             tensor=temp, src=par_model.all_stage_ranks[-1][i+1])
                         accuracy += temp.item()
@@ -207,8 +207,8 @@ def main(rank=None, cmd_args=None, master_addr=None, master_port=None, world_siz
     
 
 if __name__ == '__main__':
-    if 1 == 2:
-        main(sys.argv[1:])
+    if 1 == 1:
+        main(cmd_args=sys.argv[1:])
     else:
         WORLD_SIZE = torch.cuda.device_count() if torch.cuda.is_available() else 0
         if WORLD_SIZE == 0:
