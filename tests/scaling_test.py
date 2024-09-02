@@ -19,27 +19,27 @@ from pmw.parallelized_model import ParallelizedModel
 
 def parse_cmd_args(args):
     parser = argparse.ArgumentParser()
-    parser.add_argument("--optimizer", type=str, default="APTS", required=True)
-    parser.add_argument("--dataset", type=str, default="mnist", required=True)
-    parser.add_argument("--batch_size", type=int, default=32, required=True)
+    parser.add_argument("--optimizer", type=str, default="APTS", required=False)
+    parser.add_argument("--dataset", type=str, default="mnist", required=False)
+    parser.add_argument("--batch_size", type=int, default=60000, required=False)
     parser.add_argument("--model", type=str,
-                        default="feedforward", required=True)
-    parser.add_argument("--num_subdomains", type=int, default=1, required=True)
+                        default="feedforward", required=False)
+    parser.add_argument("--num_subdomains", type=int, default=2, required=False)
     parser.add_argument("--num_replicas_per_subdomain",
-                        type=int, default=1, required=True)
+                        type=int, default=1, required=False)
     parser.add_argument("--num_stages_per_replica",
-                        type=int, default=1, required=True)
-    parser.add_argument("--epochs", type=int, default=10, required=True)
-    parser.add_argument("--trial", type=int, default=1, required=True)
+                        type=int, default=2, required=False)
+    parser.add_argument("--epochs", type=int, default=10, required=False)
+    parser.add_argument("--trial", type=int, default=1, required=False)
     parser.add_argument("--lr", type=float, default=1.0, required=False)
     parser.add_argument("--is_sharded", type=bool, default=False, required=False)
     parser.add_argument("--data_chunks_amount", type=int, default=1, required=False)
     return parser.parse_args(args)
 
 
-def main(args, rank=None, master_addr=None, master_port=None, world_size=None):
+def main(rank=None, cmd_args=None, master_addr=None, master_port=None, world_size=None):
     # Parse command line arguments
-    parsed_args = parse_cmd_args(args)
+    parsed_args = parse_cmd_args(cmd_args)
 
     # Initialize distributed environment
     utils.prepare_distributed_environment(
@@ -217,6 +217,9 @@ if __name__ == '__main__':
 
         MASTER_ADDR = 'localhost'
         MASTER_PORT = '12345'
-        WORLD_SIZE = 15
-        mp.spawn(main, args=(MASTER_ADDR, MASTER_PORT, WORLD_SIZE),
+        WORLD_SIZE = 4
+        # Also add command-line arguments to main
+        # --optimizer "APTS" --dataset "MNIST" --batch_size "60000" --model "feedforward" --num_subdomains "2" --num_replicas_per_subdomain "1" --num_stages_per_replica "2" --trial "0" --epochs "2"
+
+        mp.spawn(main, args=(None, MASTER_ADDR, MASTER_PORT, WORLD_SIZE),
                  nprocs=WORLD_SIZE, join=True)
