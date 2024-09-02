@@ -20,6 +20,7 @@ from pmw.parallelized_model import ParallelizedModel
 def parse_cmd_args(args):
     parser = argparse.ArgumentParser()
     parser.add_argument("--optimizer", type=str, default="APTS", required=False)
+    parser.add_argument("--lr", type=float, default=1.0, required=False)
     parser.add_argument("--dataset", type=str, default="mnist", required=False)
     parser.add_argument("--batch_size", type=int, default=28000, required=False)
     parser.add_argument("--model", type=str,
@@ -29,10 +30,9 @@ def parse_cmd_args(args):
                         type=int, default=1, required=False)
     parser.add_argument("--num_stages_per_replica",
                         type=int, default=2, required=False)
-    parser.add_argument("--epochs", type=int, default=10, required=False)
     parser.add_argument("--seed", type=int, default=0, required=False)
     parser.add_argument("--trial", type=int, default=1, required=False)
-    parser.add_argument("--lr", type=float, default=1.0, required=False)
+    parser.add_argument("--epochs", type=int, default=10, required=False)
     parser.add_argument("--is_sharded", type=bool, default=False, required=False)
     parser.add_argument("--data_chunks_amount", type=int, default=10, required=False)
     return parser.parse_args(args)
@@ -52,7 +52,12 @@ def main(rank=None, cmd_args=None, master_addr=None, master_port=None, world_siz
 
     # CSV filename
     results_dir = "results"
-    csv_filename = os.path.join(results_dir, f"{parsed_cmd_args.optimizer}_{parsed_cmd_args.dataset}_{parsed_cmd_args.batch_size}_{parsed_cmd_args.model}_{parsed_cmd_args.num_subdomains}_{parsed_cmd_args.num_replicas_per_subdomain}_{parsed_cmd_args.num_stages_per_replica}_{parsed_cmd_args.epochs}_{parsed_cmd_args.seed}_t{parsed_cmd_args.trial}.csv")
+    csv_filename = os.path.join(results_dir, f"{parsed_cmd_args.optimizer}_{parsed_cmd_args.lr}_{parsed_cmd_args.dataset}_{parsed_cmd_args.batch_size}_{parsed_cmd_args.model}_{parsed_cmd_args.num_subdomains}_{parsed_cmd_args.num_replicas_per_subdomain}_{parsed_cmd_args.num_stages_per_replica}_{parsed_cmd_args.epochs}_{parsed_cmd_args.seed}_t{parsed_cmd_args.trial}.csv")
+
+    # If csv_filename exists, exit 0
+    if os.path.exists(csv_filename):
+        print(f"File {csv_filename} already exists. Exiting.")
+        exit(0)
 
     # Set seed    
     seed = parsed_cmd_args.seed
