@@ -30,6 +30,7 @@ def parse_cmd_args(args):
     parser.add_argument("--num_stages_per_replica",
                         type=int, default=2, required=False)
     parser.add_argument("--epochs", type=int, default=10, required=False)
+    parser.add_argument("--seed", type=int, default=0, required=False)
     parser.add_argument("--trial", type=int, default=1, required=False)
     parser.add_argument("--lr", type=float, default=1.0, required=False)
     parser.add_argument("--is_sharded", type=bool, default=False, required=False)
@@ -39,7 +40,7 @@ def parse_cmd_args(args):
 
 def main(rank=None, cmd_args=None, master_addr=None, master_port=None, world_size=None):
     # Parse command line arguments
-    parsed_args = parse_cmd_args(cmd_args)
+    parsed_cmd_args = parse_cmd_args(cmd_args)
 
     # Initialize distributed environment
     utils.prepare_distributed_environment(
@@ -51,16 +52,14 @@ def main(rank=None, cmd_args=None, master_addr=None, master_port=None, world_siz
 
     # CSV filename
     results_dir = "results"
-    csv_filename = os.path.join(results_dir, f"{parsed_args.optimizer}_{parsed_args.dataset}_{parsed_args.batch_size}_{parsed_args.model}_{parsed_args.num_subdomains}_{parsed_args.num_replicas_per_subdomain}_{parsed_args.num_stages_per_replica}_{parsed_args.epochs}_t{parsed_args.trial}.csv")
-    # csv_filename = f"{parsed_args.optimizer}_{parsed_args.dataset}_{parsed_args.batch_size}_{parsed_args.model}_{parsed_args.num_subdomains}_{parsed_args.num_replicas_per_subdomain}_{parsed_args.num_stages_per_replica}_{parsed_args.epochs}_t{parsed_args.trial}.csv"
-    print(f"CSV filename: {csv_filename}")
+    csv_filename = os.path.join(results_dir, f"{parsed_cmd_args.optimizer}_{parsed_cmd_args.dataset}_{parsed_cmd_args.batch_size}_{parsed_cmd_args.model}_{parsed_cmd_args.num_subdomains}_{parsed_cmd_args.num_replicas_per_subdomain}_{parsed_cmd_args.num_stages_per_replica}_{parsed_cmd_args.epochs}_{parsed_cmd_args.seed}_t{parsed_cmd_args.trial}.csv")
 
     # Set seed    
-    seed = 0#123456789 * parsed_args.trial
+    seed = parsed_cmd_args.seed
     torch.manual_seed(seed)
 
-    tot_replicas = parsed_args.num_subdomains * \
-        parsed_args.num_replicas_per_subdomain 
+    tot_replicas = parsed_cmd_args.num_subdomains * \
+        parsed_cmd_args.num_replicas_per_subdomain 
 
     APTS_in_data_sync_strategy = 'average'  # 'sum' or 'average'
     criterion = torch.nn.CrossEntropyLoss()    
@@ -81,29 +80,29 @@ def main(rank=None, cmd_args=None, master_addr=None, master_port=None, world_siz
 
     # Create stage list
     stage_list = networks.construct_stage_list(
-        parsed_args.model, parsed_args.num_stages_per_replica)
+        parsed_cmd_args.model, parsed_cmd_args.num_stages_per_replica)
 
     # Create data loaders
     train_loader = GeneralizedDistributedDataLoader(len_stage_list=len(
-        stage_list), num_replicas=tot_replicas, dataset=train_dataset_par, batch_size=parsed_args.batch_size, shuffle=False, num_workers=0, pin_memory=True)
+        stage_list), num_replicas=tot_replicas, dataset=train_dataset_par, batch_size=parsed_cmd_args.batch_size, shuffle=False, num_workers=0, pin_memory=True)
     test_loader = GeneralizedDistributedDataLoader(len_stage_list=len(stage_list), num_replicas=tot_replicas, dataset=test_dataset_par, batch_size=len(
         test_dataset_par), shuffle=False, num_workers=0, pin_memory=True)
 
-    if parsed_args.dataset.lower() == "mnist":
+    if parsed_cmd_args.dataset.lower() == "mnist":
         input_size = 784
         # random_input = torch.randn(10, 1, 784, device=device)
-        random_input = torch.randn(parsed_args.batch_size, 1, input_size, device=device)
-    elif parsed_args.dataset.lower() == "cifar10":
+        random_input = torch.randn(parsed_cmd_args.batch_size, 1, input_size, device=device)
+    elif parsed_cmd_args.dataset.lower() == "cifar10":
         # TODO: Verify whether this works or not
         raise NotImplementedError("CIFAR-10 dataset is not implemented yet.")
     else:
-        raise ValueError(f"Unknown dataset: {parsed_args.dataset}")
+        raise ValueError(f"Unknown dataset: {parsed_cmd_args.dataset}")
     
     # Create model
     par_model = ParallelizedModel(stage_list=stage_list, sample=random_input,
-                                  num_replicas_per_subdomain=parsed_args.num_replicas_per_subdomain, 
-                                  num_subdomains=parsed_args.num_subdomains,
-                                  is_sharded=parsed_args.is_sharded)
+                                  num_replicas_per_subdomain=parsed_cmd_args.num_replicas_per_subdomain, 
+                                  num_subdomains=parsed_cmd_args.num_subdomains,
+                                  is_sharded=parsed_cmd_args.is_sharded)
 
     # Create optimizer
     subdomain_optimizer = torch.optim.SGD
@@ -119,13 +118,13 @@ def main(rank=None, cmd_args=None, master_addr=None, master_port=None, world_siz
         'max_iter': 5,
         'norm_type': 2
     }
-    par_optimizer = APTS(model=par_model, criterion=criterion, subdomain_optimizer=subdomain_optimizer, subdomain_optimizer_defaults={'lr': parsed_args.lr},
-                         global_optimizer=TR, global_optimizer_defaults=glob_opt_params, lr=parsed_args.lr, max_subdomain_iter=5, dogleg=True, APTS_in_data_sync_strategy=APTS_in_data_sync_strategy)
+    par_optimizer = APTS(model=par_model, criterion=criterion, subdomain_optimizer=subdomain_optimizer, subdomain_optimizer_defaults={'lr': parsed_cmd_args.lr},
+                         global_optimizer=TR, global_optimizer_defaults=glob_opt_params, lr=parsed_cmd_args.lr, max_subdomain_iter=5, dogleg=True, APTS_in_data_sync_strategy=APTS_in_data_sync_strategy)
 
-    loss_per_epoch = [None] * parsed_args.epochs
-    acc_per_epoch = [None] * parsed_args.epochs
-    time_per_epoch = [None] * parsed_args.epochs
-    for epoch in range(parsed_args.epochs):
+    loss_per_epoch = [None] * parsed_cmd_args.epochs
+    acc_per_epoch = [None] * parsed_cmd_args.epochs
+    time_per_epoch = [None] * parsed_cmd_args.epochs
+    for epoch in range(parsed_cmd_args.epochs):
         dist.barrier()
         if rank == 0:
             print(f'____________ EPOCH {epoch} ____________')
@@ -143,9 +142,16 @@ def main(rank=None, cmd_args=None, master_addr=None, master_port=None, world_siz
             counter_par += 1
             step_start_time = time.time()  # Start time for the optimizer step
             par_loss = par_optimizer.step(closure=utils.closure(
-                x, y, criterion=criterion, model=par_model, data_chunks_amount=parsed_args.data_chunks_amount, compute_grad=True))
+                x, y, criterion=criterion, model=par_model, data_chunks_amount=parsed_cmd_args.data_chunks_amount, compute_grad=True))
             par_model.sync_params()
+            dist.barrier() # To ensure a more accurate measure of time per epoch
             time_per_epoch[epoch] = time.time() - step_start_time
+
+            # Average the time per epoch across all ranks
+            time_per_epoch[epoch] = torch.tensor(time_per_epoch[epoch]).to(device)
+            dist.all_reduce(tensor=time_per_epoch[epoch], op=dist.ReduceOp.SUM)
+            time_per_epoch[epoch] /= dist.get_world_size()
+            time_per_epoch[epoch] = time_per_epoch[epoch].item()
 
             loss_total_par += par_loss
 
