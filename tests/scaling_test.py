@@ -5,6 +5,7 @@ import torch.distributed as dist
 import os
 import pandas as pd
 import sys
+import torch.multiprocessing as mp
 
 # Make ../src visible for imports
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
@@ -206,4 +207,16 @@ def main(args, rank=None, master_addr=None, master_port=None, world_size=None):
     
 
 if __name__ == '__main__':
-    main(sys.argv[1:])
+    if 1 == 2:
+        main(sys.argv[1:])
+    else:
+        WORLD_SIZE = torch.cuda.device_count() if torch.cuda.is_available() else 0
+        if WORLD_SIZE == 0:
+            print("No CUDA device(s) detected.")
+            exit(0)
+
+        MASTER_ADDR = 'localhost'
+        MASTER_PORT = '12345'
+        WORLD_SIZE = 15
+        mp.spawn(main, args=(MASTER_ADDR, MASTER_PORT, WORLD_SIZE),
+                 nprocs=WORLD_SIZE, join=True)
