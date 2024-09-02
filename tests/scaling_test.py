@@ -121,10 +121,11 @@ def main(rank=None, cmd_args=None, master_addr=None, master_port=None, world_siz
     par_optimizer = APTS(model=par_model, criterion=criterion, subdomain_optimizer=subdomain_optimizer, subdomain_optimizer_defaults={'lr': parsed_cmd_args.lr},
                          global_optimizer=TR, global_optimizer_defaults=glob_opt_params, lr=parsed_cmd_args.lr, max_subdomain_iter=5, dogleg=True, APTS_in_data_sync_strategy=APTS_in_data_sync_strategy)
 
-    loss_per_epoch = [None] * parsed_cmd_args.epochs
-    acc_per_epoch = [None] * parsed_cmd_args.epochs
-    time_per_epoch = [None] * parsed_cmd_args.epochs
-    for epoch in range(parsed_cmd_args.epochs):
+    loss_per_epoch = [None] * (parsed_cmd_args.epochs + 1)
+    acc_per_epoch = [None] * (parsed_cmd_args.epochs + 1)
+    time_per_epoch = [None] * (parsed_cmd_args.epochs + 1)
+    time_per_epoch[0] = 0
+    for epoch in range(parsed_cmd_args.epochs + 1):
         dist.barrier()
         if rank == 0:
             print(f'____________ EPOCH {epoch} ____________')
@@ -132,28 +133,35 @@ def main(rank=None, cmd_args=None, master_addr=None, master_port=None, world_siz
         loss_total_par = 0
         counter_par = 0
         # Parallel training loop
+        step_start_time = time.time()  # Start time for the optimizer step
         for i, (x, y) in enumerate(train_loader):
             dist.barrier()
+            counter_par += 1
             x = x.to(device)
             y = y.to(device)
 
-            # Gather parallel model norm
             par_optimizer.zero_grad()
-            counter_par += 1
-            step_start_time = time.time()  # Start time for the optimizer step
-            par_loss = par_optimizer.step(closure=utils.closure(
-                x, y, criterion=criterion, model=par_model, data_chunks_amount=parsed_cmd_args.data_chunks_amount, compute_grad=True))
+            if epoch == 0:
+                # Compute initial loss using closure only
+                closure = utils.closure(
+                    x, y, criterion=criterion, model=par_model, data_chunks_amount=parsed_cmd_args.data_chunks_amount, compute_grad=False)
+                par_loss = closure()
+            else:
+                # Gather parallel model norm
+                par_loss = par_optimizer.step(closure=utils.closure(
+                    x, y, criterion=criterion, model=par_model, data_chunks_amount=parsed_cmd_args.data_chunks_amount, compute_grad=True))
+            
             par_model.sync_params()
-            dist.barrier() # To ensure a more accurate measure of time per epoch
-            time_per_epoch[epoch] = time.time() - step_start_time
+            loss_total_par += par_loss
 
+        dist.barrier() # To ensure a more accurate measure of time per epoch
+        if epoch > 0:
+            time_per_epoch[epoch] = time.time() - step_start_time
             # Average the time per epoch across all ranks
             time_per_epoch[epoch] = torch.tensor(time_per_epoch[epoch]).to(device)
             dist.all_reduce(tensor=time_per_epoch[epoch], op=dist.ReduceOp.SUM)
             time_per_epoch[epoch] /= dist.get_world_size()
             time_per_epoch[epoch] = time_per_epoch[epoch].item()
-
-            loss_total_par += par_loss
 
         loss_per_epoch[epoch] = loss_total_par / counter_par
         if rank == 0:
