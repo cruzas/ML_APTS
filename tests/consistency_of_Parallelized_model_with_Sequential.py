@@ -12,7 +12,7 @@ from dataloaders import GeneralizedDistributedDataLoader
 
 # TODO: return dummy variables in the generalized dataloader for first and last ranks
 def main(rank=None, master_addr=None, master_port=None, world_size=None):
-    utils.prepare_distributed_environment(rank, master_addr, master_port, world_size, is_cuda_enabled=False)
+    utils.prepare_distributed_environment(rank, master_addr, master_port, world_size, is_cuda_enabled=True)
     '''
     This test is to check the consistency of the data parallel model with the sequential model.
     '''
@@ -99,7 +99,8 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     if PARALLEL and SEQUENTIAL:
         with torch.no_grad():
             for i, p1 in enumerate(par_model.subdomain.weight_parallelized_model.subdomain.parameters()):
-                p1.data = list(layers[par_model.subdomain.weight_parallelized_model.rank_list.index(rank)].parameters())[i].data.clone().detach().to(par_model.tensor_device)
+                layer_number = par_model.from_rank_structure_to_layer_number()
+                p1.data = list(layers[layer_number].parameters())[i].data.clone().detach().to(par_model.tensor_device)
                 p1.requires_grad = True
     if PARALLEL:
         print(f'START (PAR) Rank {rank} param norm -> {torch.norm(torch.cat([p.flatten() for p in par_model.parameters()]))}')
@@ -175,23 +176,20 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
                     images, labels = images.to(device), labels.to(device)
                     closuree = utils.closure(images, labels, criterion, par_model, compute_grad=False, zero_grad=True, return_output=True)       
                     _, test_outputs = closuree()
-                    if dist.get_rank() in par_model.all_stage_ranks[-1]:
+                    if dist.get_rank() in par_model.all_final_stages_main_rank:
                         test_outputs = torch.cat(test_outputs)
                         _, predicted = torch.max(test_outputs.data, 1)
                         total += labels.size(0)
-                        correct += (predicted == labels.to(predicted.device)).sum().item()
+                        correct += (predicted ==
+                                    labels.to(predicted.device)).sum().item()
 
-                if dist.get_rank() in par_model.all_stage_ranks[-1]:
+                if dist.get_rank() in par_model.all_final_stages_main_rank:
                     accuracy = 100 * correct / total
-                    if rank in par_model.all_stage_ranks[-1][1:]:
-                        dist.send(tensor=torch.tensor(accuracy).to('cpu'), dst=par_model.all_stage_ranks[-1][0])
-                    if rank == par_model.all_stage_ranks[-1][0]:
-                        for i in range(len(par_model.all_stage_ranks[-1][1:])):
-                            temp = torch.zeros(1)
-                            dist.recv(tensor=temp, src=par_model.all_stage_ranks[-1][i+1])
-                            accuracy += temp.item() 
-                        accuracy /= len(par_model.all_stage_ranks[-1])
-                        print(f'Epoch {epoch}, Parallel accuracy: {accuracy}')
+                    # here we dist all reduce the accuracy
+                    accuracy = torch.tensor(accuracy).to(device)
+                    dist.all_reduce(accuracy, op=dist.ReduceOp.SUM, group=par_model.all_final_stages_main_rank_group)
+                    accuracy /= len(par_model.all_final_stages_main_rank)
+                    print(f'Epoch {epoch}, Parallel accuracy: {accuracy}')
  
         
         if rank == 0 and SEQUENTIAL:

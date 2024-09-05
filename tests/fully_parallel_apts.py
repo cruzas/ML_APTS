@@ -9,6 +9,7 @@ from optimizers import APTS, TR
 from pmw.parallelized_model import ParallelizedModel
 import utils
 
+#TODO: Make sure that even in case layers are set to be non trainable, the code doesn't crash
 
 # TODO: return dummy variables in the generalized dataloader for first and last ranks
 def main(rank=None, master_addr=None, master_port=None, world_size=None):
@@ -16,7 +17,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         rank, master_addr, master_port, world_size, is_cuda_enabled=True)
     utils.check_gpus_per_rank()
     # _________ Some parameters __________
-    num_subdomains = 5
+    num_subdomains = 2
     num_replicas_per_subdomain = 1
     batch_size = 28000
     data_chunks_amount = 10
@@ -25,6 +26,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     torch.manual_seed(seed)
     learning_rage = 1
     APTS_in_data_sync_strategy = 'average'  # 'sum' or 'average'
+    is_sharded = False
     # ____________________________________
     tot_replicas = num_subdomains * num_replicas_per_subdomain
 
@@ -64,6 +66,9 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         (NN3, NN3_dict_list)  # Stage 3
     ]
 
+#  sharded first layer into [0,1] -> dataloader should upload batch to 0 only
+
+
     train_loader = GeneralizedDistributedDataLoader(len_stage_list=len(
         stage_list), num_replicas=tot_replicas, dataset=train_dataset_par, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True)
     test_loader = GeneralizedDistributedDataLoader(len_stage_list=len(stage_list), num_replicas=tot_replicas, dataset=test_dataset_par, batch_size=len(
@@ -71,7 +76,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     random_input = torch.randn(10, 1, 784, device=device)
 
     par_model = ParallelizedModel(stage_list=stage_list, sample=random_input,
-                                  num_replicas_per_subdomain=num_replicas_per_subdomain, num_subdomains=num_subdomains)
+                                  num_replicas_per_subdomain=num_replicas_per_subdomain, num_subdomains=num_subdomains, is_sharded=is_sharded)
     subdomain_optimizer = torch.optim.SGD
     glob_opt_params = {
         'lr': 0.01,
@@ -121,26 +126,20 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
                 closuree = utils.closure(
                     images, labels, criterion, par_model, compute_grad=False, zero_grad=True, return_output=True)
                 _, test_outputs = closuree()
-                if dist.get_rank() in par_model.all_stage_ranks[-1]:
+                if dist.get_rank() in par_model.all_final_stages_main_rank:
                     test_outputs = torch.cat(test_outputs)
                     _, predicted = torch.max(test_outputs.data, 1)
                     total += labels.size(0)
                     correct += (predicted ==
                                 labels.to(predicted.device)).sum().item()
 
-            if dist.get_rank() in par_model.all_stage_ranks[-1]:
+            if dist.get_rank() in par_model.all_final_stages_main_rank:
                 accuracy = 100 * correct / total
-                if rank in par_model.all_stage_ranks[-1][1:]:
-                    dist.send(tensor=torch.tensor(accuracy).to(
-                        'cpu'), dst=par_model.all_stage_ranks[-1][0])
-                if rank == par_model.all_stage_ranks[-1][0]:
-                    for i in range(len(par_model.all_stage_ranks[-1][1:])):
-                        temp = torch.zeros(1)
-                        dist.recv(
-                            tensor=temp, src=par_model.all_stage_ranks[-1][i+1])
-                        accuracy += temp.item()
-                    accuracy /= len(par_model.all_stage_ranks[-1])
-                    print(f'Epoch {epoch}, Parallel accuracy: {accuracy}')
+                # here we dist all reduce the accuracy
+                accuracy = torch.tensor(accuracy).to(device)
+                dist.all_reduce(accuracy, op=dist.ReduceOp.SUM, group=par_model.all_final_stages_main_rank_group)
+                accuracy /= len(par_model.all_final_stages_main_rank)
+                print(f'Epoch {epoch}, Parallel accuracy: {accuracy}')
 
         if rank == 0:
             print(
@@ -159,6 +158,6 @@ if __name__ == '__main__':
 
         MASTER_ADDR = 'localhost'
         MASTER_PORT = '12345'
-        WORLD_SIZE = 15
+        WORLD_SIZE = 6
         mp.spawn(main, args=(MASTER_ADDR, MASTER_PORT, WORLD_SIZE),
                  nprocs=WORLD_SIZE, join=True)
