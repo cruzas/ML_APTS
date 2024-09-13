@@ -47,6 +47,8 @@ def main(rank=None, cmd_args=None, master_addr=None, master_port=None, world_siz
         rank, master_addr, master_port, world_size, is_cuda_enabled=True)
     # Make sure all ranks have the same number of GPUs
     utils.check_gpus_per_rank()
+
+    # Rank and main computing device
     rank = dist.get_rank() if dist.get_backend() == 'nccl' else rank
     device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
@@ -63,10 +65,13 @@ def main(rank=None, cmd_args=None, master_addr=None, master_port=None, world_siz
     seed = parsed_cmd_args.seed
     torch.manual_seed(seed)
 
+    # Total number of model replicas
     tot_replicas = parsed_cmd_args.num_subdomains * \
         parsed_cmd_args.num_replicas_per_subdomain 
 
     APTS_in_data_sync_strategy = 'average'  # 'sum' or 'average'
+
+    # Loss function
     criterion = torch.nn.CrossEntropyLoss()    
 
     # Create training and testing datasets
@@ -78,6 +83,7 @@ def main(rank=None, cmd_args=None, master_addr=None, master_port=None, world_siz
             x.size(0), -1))  # Reshape the tensor
     ])
 
+    # Training and test sets
     train_dataset_par = datasets.MNIST(
         root='./data', train=True, download=True, transform=transform)
     test_dataset_par = datasets.MNIST(
@@ -87,27 +93,25 @@ def main(rank=None, cmd_args=None, master_addr=None, master_port=None, world_siz
     stage_list = networks.construct_stage_list(
         parsed_cmd_args.model, parsed_cmd_args.num_stages_per_replica)
 
-    # Create data loaders
-    train_loader = GeneralizedDistributedDataLoader(len_stage_list=len(
-        stage_list), num_replicas=tot_replicas, dataset=train_dataset_par, batch_size=parsed_cmd_args.batch_size, shuffle=False, num_workers=0, pin_memory=True)
-    test_loader = GeneralizedDistributedDataLoader(len_stage_list=len(stage_list), num_replicas=tot_replicas, dataset=test_dataset_par, batch_size=len(
-        test_dataset_par), shuffle=False, num_workers=0, pin_memory=True)
-
+    # Create model
     if parsed_cmd_args.dataset.lower() == "mnist":
         input_size = 784
-        # random_input = torch.randn(10, 1, 784, device=device)
         random_input = torch.randn(parsed_cmd_args.batch_size, 1, input_size, device=device)
     elif parsed_cmd_args.dataset.lower() == "cifar10":
         # TODO: Verify whether this works or not
         raise NotImplementedError("CIFAR-10 dataset is not implemented yet.")
     else:
         raise ValueError(f"Unknown dataset: {parsed_cmd_args.dataset}")
-    
-    # Create model
-    par_model = ParallelizedModel(stage_list=stage_list, sample=random_input,
+
+    par_model = ParallelizedModel(stage_list=stage_list, 
+                                  sample=random_input,
                                   num_replicas_per_subdomain=parsed_cmd_args.num_replicas_per_subdomain, 
                                   num_subdomains=parsed_cmd_args.num_subdomains,
                                   is_sharded=parsed_cmd_args.is_sharded)
+    
+    # Create data loaders
+    train_loader = GeneralizedDistributedDataLoader(model_structure=par_model.all_model_ranks, dataset=train_dataset_par, batch_size=parsed_cmd_args.batch_size, shuffle=False, num_workers=0, pin_memory=True)
+    test_loader = GeneralizedDistributedDataLoader(model_structure=par_model.all_model_ranks, dataset=test_dataset_par, batch_size=len(test_dataset_par), shuffle=False, num_workers=0, pin_memory=True)
 
     # Create optimizer
     subdomain_optimizer = torch.optim.SGD
@@ -123,8 +127,16 @@ def main(rank=None, cmd_args=None, master_addr=None, master_port=None, world_siz
         'max_iter': 5,
         'norm_type': 2
     }
-    par_optimizer = APTS(model=par_model, criterion=criterion, subdomain_optimizer=subdomain_optimizer, subdomain_optimizer_defaults={'lr': parsed_cmd_args.lr},
-                         global_optimizer=TR, global_optimizer_defaults=glob_opt_params, lr=parsed_cmd_args.lr, max_subdomain_iter=5, dogleg=True, APTS_in_data_sync_strategy=APTS_in_data_sync_strategy)
+    par_optimizer = APTS(model=par_model, 
+                         criterion=criterion, 
+                         subdomain_optimizer=subdomain_optimizer, 
+                         subdomain_optimizer_defaults={'lr': parsed_cmd_args.lr},
+                         global_optimizer=TR, 
+                         global_optimizer_defaults=glob_opt_params, 
+                         lr=parsed_cmd_args.lr, 
+                         max_subdomain_iter=5, 
+                         dogleg=True, 
+                         APTS_in_data_sync_strategy=APTS_in_data_sync_strategy)
 
     loss_per_epoch = [None] * (parsed_cmd_args.epochs + 1)
     acc_per_epoch = [None] * (parsed_cmd_args.epochs + 1)
@@ -170,8 +182,7 @@ def main(rank=None, cmd_args=None, master_addr=None, master_port=None, world_siz
 
         loss_per_epoch[epoch] = loss_total_par / counter_par
         if rank == 0:
-            print(
-                f'Epoch {epoch}, Parallel avg loss: {loss_per_epoch[epoch]}')
+            print(f'Epoch {epoch}, Parallel avg loss: {loss_per_epoch[epoch]}')
 
         # Parallel testing loop
         with torch.no_grad():  # TODO: Make this work also with NCCL
@@ -180,39 +191,30 @@ def main(rank=None, cmd_args=None, master_addr=None, master_port=None, world_siz
             for data in test_loader:
                 images, labels = data
                 images, labels = images.to(device), labels.to(device)
-                closuree = utils.closure(
-                    images, labels, criterion, par_model, compute_grad=False, zero_grad=True, return_output=True)
-                _, test_outputs = closuree()
-                if rank in par_model.all_stage_ranks[-1]:
+                test_closure = utils.closure(images, labels, criterion, par_model, compute_grad=False, zero_grad=True, return_output=True)
+                _, test_outputs = test_closure()
+                if rank in par_model.all_final_stages_main_rank:
                     test_outputs = torch.cat(test_outputs)
                     _, predicted = torch.max(test_outputs.data, 1)
                     total += labels.size(0)
-                    correct += (predicted ==
-                                labels.to(predicted.device)).sum().item()
+                    correct += (predicted == labels.to(predicted.device)).sum().item()
 
-            if rank in par_model.all_stage_ranks[-1]:
+            if rank in par_model.all_final_stages_main_rank:
                 accuracy = 100 * correct / total
-                if rank in par_model.all_stage_ranks[-1][1:]:
-                    accuracy = torch.tensor(accuracy).to(device)
-                    dist.send(tensor=accuracy, dst=par_model.all_stage_ranks[-1][0])
-                if rank == par_model.all_stage_ranks[-1][0]:
-                    for i in range(len(par_model.all_stage_ranks[-1][1:])):
-                        temp = torch.zeros(1).to(device)
-                        dist.recv(
-                            tensor=temp, src=par_model.all_stage_ranks[-1][i+1])
-                        accuracy += temp.item()
-                    accuracy /= len(par_model.all_stage_ranks[-1])
-                    print(f'Epoch {epoch}, Parallel accuracy: {accuracy}')
-                    acc_per_epoch[epoch] = accuracy
+                accuracy = torch.tensor(accuracy).to(device)
+                dist.all_reduce(accuracy, op=dist.ReduceOp.SUM, group=par_model.all_final_stages_main_rank_group)
+                accuracy /= len(par_model.all_final_stages_main_rank)
+                acc_per_epoch[epoch] = accuracy.item()
 
-    if rank == par_model.all_stage_ranks[-1][0]:
+                print(f'Epoch {epoch}, Parallel accuracy: {acc_per_epoch[epoch]}')
+    
+    if rank == par_model.all_final_stages_main_rank[0]:
         print(f"Loss per epoch: {loss_per_epoch}")
         print(f"Accuracy per epoch: {acc_per_epoch}")
         print(f"Time per epoch: {time_per_epoch}")
 
         # Save results to a CSV file. You can use pandas.
-        results = pd.DataFrame(
-            {'loss': loss_per_epoch, 'accuracy': acc_per_epoch, 'time': time_per_epoch})
+        results = pd.DataFrame({'loss': loss_per_epoch, 'accuracy': acc_per_epoch, 'time': time_per_epoch})
         
         print(f"Saving results to {csv_filename}")
         results.to_csv(csv_filename, index=False)
