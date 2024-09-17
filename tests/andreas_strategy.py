@@ -26,7 +26,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     torch.manual_seed(seed)
     learning_rage = 1
     step_strategy = 'mean' # 'mean' or 'weighted_mean'
-    APTS_in_data_sync_strategy = 'average' #if step_strategy == 'weighted_mean' else 'average'  # 'sum' or 'average'
+    APTS_in_data_sync_strategy = 'sum' #if step_strategy == 'weighted_mean' else 'average'  # 'sum' or 'average'
     is_sharded = False
     # ____________________________________
 
