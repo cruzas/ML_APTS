@@ -18,7 +18,13 @@ from datasets.Domain2D import *
 from models.ResNetDenseConstantWidth import *
 from PDEs.Burgers import *
 
+from trainers.UnconstrainedRegressionTrainer import *
+from trainers.PrecLBFGS import *
+from trainers.GDLinesearch import *
+
 torch.set_default_dtype(torch.float64)
+args = argparse.Namespace()
+args.seed = 0; args.num_points_x = 25; args.num_points_y = 50; args.num_ref = 4; args.num_levels = 1; args.width = 20; args.hiddenlayers_coarse = 6; args.ada_net = False; args.T = 1; args.history = 1; args.use_adaptive_activation = False; args.opt_type = 0; args.lr_global = 1e-3; args.max_epochs = 1000
 print(" \n \n args ", args, " \n \n ")
 
 np.random.seed(args.seed)
@@ -65,7 +71,7 @@ epoch = 0
 train_loss = 0
 converged = False
 
-
+args.opt_type = 2
 if(args.opt_type == 0):
     algo = GDLinesearch
 elif(args.opt_type == 1):
@@ -75,6 +81,7 @@ elif(args.opt_type == 2):
 else:
     algo = optim.SGD
 
+print(f"Optimizer type: {algo}")
 
 dir_name = "Algo_"+str(args.opt_type)
 Path(dir_name).mkdir(parents=True, exist_ok=True)

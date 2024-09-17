@@ -9,6 +9,10 @@ from optimizers import APTS, TR
 from pmw.parallelized_model import ParallelizedModel
 import utils
 
+num_subdomains = 1
+num_replicas_per_subdomain = 1
+stages_amount = 1 # 1 or 3
+
 #TODO: Make sure that even in case layers are set to be non trainable, the code doesn't crash
 
 # TODO: return dummy variables in the generalized dataloader for first and last ranks
@@ -17,8 +21,6 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         rank, master_addr, master_port, world_size, is_cuda_enabled=True)
     utils.check_gpus_per_rank()
     # _________ Some parameters __________
-    num_subdomains = 2
-    num_replicas_per_subdomain = 1
     batch_size = 28000
     data_chunks_amount = 10
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
@@ -46,24 +48,52 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
 
     criterion = torch.nn.CrossEntropyLoss()
 
-    NN1 = [nn.Flatten, nn.Linear, nn.ReLU, nn.Linear, nn.ReLU]
-    NN1_dict_list = [{'start_dim': 1},
-                     {'in_features': 784, 'out_features': 256},
-                     {},
-                     {'in_features': 256, 'out_features': 256},
-                     {}]
+    if stages_amount == 1:
+        NN1 = [nn.Flatten, nn.Linear, nn.ReLU, nn.Linear, nn.ReLU, 
+               nn.Linear, nn.ReLU, 
+               nn.Linear, nn.Sigmoid, nn.LogSoftmax]
+               
+        NN1_dict_list = [{'start_dim': 1}, {'in_features': 784, 'out_features': 256}, {}, {'in_features': 256, 'out_features': 256},{}, # NN1
+                        {'in_features': 256, 'out_features': 128}, {}, # NN2
+                        {'in_features': 128, 'out_features': 10}, {}, {'dim': 1}] # NN3
 
-    NN2 = [nn.Linear, nn.ReLU]
-    NN2_dict_list = [{'in_features': 256, 'out_features': 128}, {}]
+        stage_list = [
+            (NN1, NN1_dict_list),  # Stage 1
+        ]
+    elif stages_amount == 2:
+        NN1 = [nn.Flatten, nn.Linear, nn.ReLU, nn.Linear, nn.ReLU]
+        NN1_dict_list = [{'start_dim': 1},
+                        {'in_features': 784, 'out_features': 256},
+                        {},
+                        {'in_features': 256, 'out_features': 256},
+                        {}]
 
-    NN3 = [nn.Linear, nn.Sigmoid, nn.LogSoftmax]
-    NN3_dict_list = [{'in_features': 128, 'out_features': 10}, {}, {'dim': 1}]
+        NN2 = [nn.Linear, nn.ReLU, nn.Linear, nn.Sigmoid, nn.LogSoftmax]
+        NN2_dict_list = [{'in_features': 256, 'out_features': 128}, {}, {'in_features': 128, 'out_features': 10}, {}, {'dim': 1}]
 
-    stage_list = [
-        (NN1, NN1_dict_list),  # Stage 1
-        (NN2, NN2_dict_list),  # Stage 2
-        (NN3, NN3_dict_list)  # Stage 3
-    ]
+        stage_list = [
+            (NN1, NN1_dict_list),  # Stage 1
+            (NN2, NN2_dict_list)  # Stage 2
+        ]
+    else:
+        NN1 = [nn.Flatten, nn.Linear, nn.ReLU, nn.Linear, nn.ReLU]
+        NN1_dict_list = [{'start_dim': 1},
+                        {'in_features': 784, 'out_features': 256},
+                        {},
+                        {'in_features': 256, 'out_features': 256},
+                        {}]
+
+        NN2 = [nn.Linear, nn.ReLU]
+        NN2_dict_list = [{'in_features': 256, 'out_features': 128}, {}]
+
+        NN3 = [nn.Linear, nn.Sigmoid, nn.LogSoftmax]
+        NN3_dict_list = [{'in_features': 128, 'out_features': 10}, {}, {'dim': 1}]
+
+        stage_list = [
+            (NN1, NN1_dict_list),  # Stage 1
+            (NN2, NN2_dict_list),  # Stage 2
+            (NN3, NN3_dict_list)  # Stage 3
+        ]
 
     #  sharded first layer into [0,1] -> dataloader should upload batch to 0 only
     random_input = torch.randn(10, 1, 784, device=device)
@@ -88,7 +118,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         'max_iter': 5,
         'norm_type': 2
     }
-    par_optimizer = APTS(model=par_model, criterion=criterion, subdomain_optimizer=subdomain_optimizer, subdomain_optimizer_defaults={'lr': learning_rage},
+    par_optimizer = APTS(model=par_model, subdomain_optimizer=subdomain_optimizer, subdomain_optimizer_defaults={'lr': learning_rage},
                          global_optimizer=TR, global_optimizer_defaults=glob_opt_params, lr=learning_rage, max_subdomain_iter=5, dogleg=True, APTS_in_data_sync_strategy=APTS_in_data_sync_strategy)
 
     for epoch in range(40):
@@ -99,7 +129,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         loss_total_par = 0
         counter_par = 0
         # Parallel training loop
-        for i, (x, y) in enumerate(train_loader):
+        for _, (x, y) in enumerate(train_loader):
             dist.barrier()
             # dist.barrier()
             x = x.to(device)
@@ -156,6 +186,6 @@ if __name__ == '__main__':
 
         MASTER_ADDR = 'localhost'
         MASTER_PORT = '12345'
-        WORLD_SIZE = 6
+        WORLD_SIZE = num_subdomains*num_replicas_per_subdomain*stages_amount
         mp.spawn(main, args=(MASTER_ADDR, MASTER_PORT, WORLD_SIZE),
                  nprocs=WORLD_SIZE, join=True)
