@@ -46,7 +46,7 @@ def parse_cmd_args(args):
     parser.add_argument("--trial", type=int, default=1, required=False)
     parser.add_argument("--epochs", type=int, default=10, required=False)
     parser.add_argument("--is_sharded", type=bool, default=False, required=False)
-    parser.add_argument("--data_chunks_amount", type=int, default=10, required=False)
+    parser.add_argument("--data_chunks_amount", type=int, default=1, required=False)
     return parser.parse_args(args)
 
 
@@ -60,20 +60,32 @@ def main(rank=None, cmd_args=None, master_addr=None, master_port=None, world_siz
     parsed_cmd_args = parse_cmd_args(sys.argv[1:])
 
     args = argparse.Namespace()
-    args.seed = 0
-    args.num_points_x = 25
-    args.num_points_y = 50
-    args.num_ref = 4
-    args.num_levels = 1
+    args.seed = 123
+    args.num_points_x = 100
+    args.num_points_y = 100
+    args.num_points_z = 100
+    args.num_ref = 1
     args.width = 20
-    args.hiddenlayers_coarse = 6
+    args.num_subdomains = 2
+    args.hiddenlayers_coarse = 3
     args.ada_net = False
-    args.T = 1
+    args.T = 2.0
     args.history = 1
     args.use_adaptive_activation = False
-    args.opt_type = 0
-    args.lr_global = 1e-1
+    args.lr_global = 1e-3
+    args.lr_local = 1e-3
     args.max_epochs = 1000
+    args.momentum = 0.9
+    args.num_batches = 1
+    args.num_coarse_steps = 5
+    args.num_levels = 3
+    args.num_local_steps = 10
+    args.overlap_width = 0
+    args.use_SPQN = True
+    args.use_adaptive_activation = True
+    args.use_coarse = True
+    args.use_layerwise_lr = True 
+    args.use_stochastic = False
     print(" \n \n args ", args, " \n \n ")
     device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
@@ -132,7 +144,7 @@ def main(rank=None, cmd_args=None, master_addr=None, master_port=None, world_siz
     train_loss = 0
     converged = False
 
-    args.opt_type = 4
+    args.opt_type = 1
     if (args.opt_type == 0):
         algo = GDLinesearch
     elif (args.opt_type == 1):
