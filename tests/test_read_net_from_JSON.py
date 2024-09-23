@@ -8,6 +8,7 @@ import os
 import sys
 
 
+
 def concat_fun(out_1, out_2):
     return torch.cat([out_1, out_2])
 
@@ -34,13 +35,13 @@ net2 = {
         "callable": {'object': nn.Linear, 'settings': {"in_features": 700, "out_features": 256}},
         "dst": {'to': ["stage2_layer1"], 'strategy': None}, # strategy must have as many outputs as the length of the to list (input will be the output of the processed data in current callable)
         "rcv": {'src': ["start"], 'strategy': None},
-        "stage": 1,
+        "stage": 1.1, # First number: stage; second number: process number
     },
     "input_layer2": {
         "callable": {'object': nn.Linear, "settings": {"in_features": 84, "out_features": 256}},
         "dst": ["stage2_layer1"],
         "rcv": {"src": ["preprocessing1"], "strategy": None},
-        "stage": 1,
+        "stage": 1.2,
     },    
     "finish": {}
 }
