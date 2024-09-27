@@ -13,8 +13,7 @@ import utils
 
 num_subdomains = 2
 num_replicas_per_subdomain = 2
-stages_amount = 2 # 1 or 3
-gpus_per_sharded_layer = 2
+num_stages = 2 # 1 or 3
 
 #TODO: Make sure that even in case layers are set to be non trainable, the code doesn't crash
 
@@ -52,10 +51,9 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     criterion = torch.nn.CrossEntropyLoss()
 
     model_dict = get_model_dict()
-    gpus_per_sharded_layer = 2
-    model_handler = ModelHandler(model_dict, num_subdomains, num_replicas_per_subdomain, gpus_per_sharded_layer, available_ranks=None)
+    model_handler = ModelHandler(model_dict, num_subdomains, num_replicas_per_subdomain, available_ranks=None)
 
-    if stages_amount == 1:
+    if num_stages == 1:
         # Go through every key in dictionary and set the field stage to 0
         for key in model_dict.keys():
             model_dict[key]['stage'] = 0
@@ -151,6 +149,6 @@ if __name__ == '__main__':
 
         MASTER_ADDR = 'localhost'
         MASTER_PORT = '12345'
-        WORLD_SIZE = num_subdomains*num_replicas_per_subdomain*stages_amount*gpus_per_sharded_layer
+        WORLD_SIZE = num_subdomains*num_replicas_per_subdomain*num_stages*2
         mp.spawn(main, args=(MASTER_ADDR, MASTER_PORT, WORLD_SIZE),
                  nprocs=WORLD_SIZE, join=True)
