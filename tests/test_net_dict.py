@@ -60,8 +60,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
 
     #  sharded first layer into [0,1] -> dataloader should upload batch to 0 only
     random_input = torch.randn(10, 1, 784, device=device)
-    par_model = ParallelizedModel(stage_list=model_dict, sample=random_input,
-                                  num_replicas_per_subdomain=num_replicas_per_subdomain, num_subdomains=num_subdomains, is_sharded=is_sharded)
+    par_model = ParallelizedModel(model_handler=model_handler, sample=random_input)
 
     train_loader = GeneralizedDistributedDataLoader(model_structure=par_model.all_model_ranks, dataset=train_dataset_par, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True)
     test_loader = GeneralizedDistributedDataLoader(model_structure=par_model.all_model_ranks, dataset=test_dataset_par, batch_size=len(
