@@ -14,6 +14,7 @@ import utils
 num_subdomains = 2
 num_replicas_per_subdomain = 2
 num_stages = 2 # 1 or 3
+num_shards = 1
 
 #TODO: Make sure that even in case layers are set to be non trainable, the code doesn't crash
 
@@ -148,6 +149,6 @@ if __name__ == '__main__':
 
         MASTER_ADDR = 'localhost'
         MASTER_PORT = '12345'
-        WORLD_SIZE = num_subdomains*num_replicas_per_subdomain*num_stages*2
+        WORLD_SIZE = num_subdomains*num_replicas_per_subdomain*num_stages*num_shards
         mp.spawn(main, args=(MASTER_ADDR, MASTER_PORT, WORLD_SIZE),
                  nprocs=WORLD_SIZE, join=True)
