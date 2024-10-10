@@ -9,6 +9,13 @@ import utils
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
 from dataloaders import GeneralizedDistributedDataLoader
+from models.model_dict import *
+from pmw.model_handler import *
+
+num_subdomains = 2
+num_replicas_per_subdomain = 2
+num_stages = 2 # 1 or 3
+num_shards = 1
 
 # TODO: return dummy variables in the generalized dataloader for first and last ranks
 def main(rank=None, master_addr=None, master_port=None, world_size=None):
@@ -19,18 +26,17 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     # _________ Some parameters __________
     PARALLEL = True
     SEQUENTIAL = True
-    is_sharded = False
-    num_replicas_per_subdomain = 2
-    num_subdomains = 1
-    batch_size = 10000 # 17234, 24894
-    data_chunks_amount = 1
+    batch_size = 28000
+    data_chunks_amount = 10
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
     seed = 0
     torch.manual_seed(seed)
+    learning_rage = 1
+    APTS_in_data_sync_strategy = 'average'  # 'sum' or 'average'
+    is_sharded = False
     learning_rate = 1
     # ____________________________________
-    tot_replicas = num_subdomains * num_replicas_per_subdomain
-        
+
     rank = dist.get_rank() if dist.get_backend() == 'nccl' else rank
 
     transform = transforms.Compose([
@@ -47,29 +53,20 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
 
     criterion = torch.nn.CrossEntropyLoss()
 
-    NN1 = [nn.Flatten, nn.Linear, nn.ReLU,nn.Linear, nn.ReLU]
-    NN1_dict_list = [{'start_dim': 1}, 
-                    {'in_features': 784, 'out_features': 256}, 
-                    {}, 
-                    {'in_features': 256, 'out_features': 256}, 
-                    {}]
+    
+    model_dict = get_model_dict()
+    model_handler = ModelHandler(model_dict, num_subdomains, num_replicas_per_subdomain, available_ranks=None)
+    if num_stages == 1:
+        # Go through every key in dictionary and set the field stage to 0
+        for key in model_dict.keys():
+            model_dict[key]['stage'] = 0
 
-    NN2 = [nn.Linear, nn.ReLU]
-    NN2_dict_list = [{'in_features': 256, 'out_features': 128}, {}]
+    #  sharded first layer into [0,1] -> dataloader should upload batch to 0 only
+    random_input = torch.randn(10, 1, 784, device=device)
+    par_model = ParallelizedModel(model_handler=model_handler, sample=random_input)
     
-    NN3 = [nn.Linear, nn.Sigmoid, nn.LogSoftmax]
-    NN3_dict_list = [{'in_features': 128, 'out_features': 10}, {}, {'dim': 1}]
-    
-    stage_list = [
-        (NN1, NN1_dict_list), # Stage 1
-        (NN2, NN2_dict_list), # Stage 2
-        (NN3, NN3_dict_list)  # Stage 3
-    ]
-    
-    train_loader = GeneralizedDistributedDataLoader(len_stage_list=len(stage_list), num_replicas=tot_replicas, dataset=train_dataset_par, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True)
-    dist.barrier()
-    test_loader = GeneralizedDistributedDataLoader(len_stage_list=len(stage_list), num_replicas=tot_replicas, dataset=test_dataset_par, batch_size=len(test_dataset_par), shuffle=False, num_workers=0, pin_memory=True)
-    dist.barrier()
+    train_loader = GeneralizedDistributedDataLoader(model_handler=model_handler, dataset=train_dataset_par, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True)
+    test_loader = GeneralizedDistributedDataLoader(model_handler=model_handler, dataset=test_dataset_par, batch_size=len(test_dataset_par), shuffle=False, num_workers=0, pin_memory=True)
     train_loader_seq = DataLoader(train_dataset_seq, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True, drop_last=True)
     test_loader_seq = DataLoader(test_dataset_seq, batch_size=len(test_dataset_seq), shuffle=False, num_workers=0, pin_memory=True, drop_last=True)
     
@@ -209,5 +206,5 @@ if __name__ == '__main__':
 
         master_addr = 'localhost'
         master_port = '12345'   
-        world_size = 6
+        world_size = num_subdomains*num_replicas_per_subdomain*num_stages*num_shards
         mp.spawn(main, args=(master_addr, master_port, world_size), nprocs=world_size, join=True)
