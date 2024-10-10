@@ -11,8 +11,8 @@ from pmw.parallelized_model import ParallelizedModel
 from pmw.model_handler import *
 import utils
 
-num_subdomains = 2
-num_replicas_per_subdomain = 2
+num_subdomains = 1
+num_replicas_per_subdomain = 1
 num_stages = 2 # 1 or 2
 num_shards = 1
 
@@ -83,7 +83,6 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     # par_optimizer = APTS(model=par_model, subdomain_optimizer=subdomain_optimizer, subdomain_optimizer_defaults={'lr': learning_rage},
     #                      global_optimizer=TR, global_optimizer_defaults=glob_opt_params, lr=learning_rage, max_subdomain_iter=5, dogleg=True, APTS_in_data_sync_strategy=APTS_in_data_sync_strategy)
     par_optimizer = torch.optim.SGD(par_model.parameters(), lr=learning_rage)
-    
     for epoch in range(40):
         dist.barrier()
         if rank == 0:
@@ -97,12 +96,15 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             # dist.barrier()
             x = x.to(device)
             y = y.to(device)
-
+            closuree = utils.closure(x, y, criterion=criterion, model=par_model, data_chunks_amount=data_chunks_amount, compute_grad=False, return_output=True)
+            loss, output = closuree()
             # Gather parallel model norm
             par_optimizer.zero_grad()
             counter_par += 1
+
             par_loss = par_optimizer.step(closure=utils.closure(
-                x, y, criterion=criterion, model=par_model, data_chunks_amount=data_chunks_amount, compute_grad=True))
+                x, y, criterion=criterion, model=par_model, data_chunks_amount=data_chunks_amount, compute_grad=True)) 
+            exit(0)
             loss_total_par += par_loss
             par_model.sync_params()
             # print(f"(ACTUAL PARALLEL) stage {rank} param norm: {torch.norm(torch.cat([p.flatten() for p in par_model.parameters()]))}, grad norm: {torch.norm(torch.cat([p.grad.flatten() for p in par_model.parameters()]))}")
