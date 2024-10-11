@@ -96,15 +96,14 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             # dist.barrier()
             x = x.to(device)
             y = y.to(device)
-            closuree = utils.closure(x, y, criterion=criterion, model=par_model, data_chunks_amount=data_chunks_amount, compute_grad=False, return_output=True)
-            loss, output = closuree()
+
             # Gather parallel model norm
             par_optimizer.zero_grad()
             counter_par += 1
 
             par_loss = par_optimizer.step(closure=utils.closure(
                 x, y, criterion=criterion, model=par_model, data_chunks_amount=data_chunks_amount, compute_grad=True)) 
-            exit(0)
+
             loss_total_par += par_loss
             par_model.sync_params()
             # print(f"(ACTUAL PARALLEL) stage {rank} param norm: {torch.norm(torch.cat([p.flatten() for p in par_model.parameters()]))}, grad norm: {torch.norm(torch.cat([p.grad.flatten() for p in par_model.parameters()]))}")
