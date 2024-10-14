@@ -38,8 +38,8 @@ class NN3(nn.Module):
         self.linear1 = nn.Linear(2, 2)
         self.linear2 = nn.Linear(2, 2)
 
-    def forward(self, b):
-        out0 = torch.relu(self.linear1(b))
+    def forward(self, a, b):
+        out0 = torch.relu(self.linear1(b)) + a
         out3 = torch.relu(self.linear2(out0)) + b
         return out3
     
@@ -65,7 +65,7 @@ class GlobalModel(nn.Module):
     def forward(self, x):
         a, b = self.model1(x)
         out = self.model2(a, b)
-        out3 = self.model3(b)
+        out3 = self.model3(a, b)
         final_out = self.model4(out, out3)
         return final_out
 
@@ -107,7 +107,7 @@ for _ in range(200):
     # Forward pass through NN1 and NN2
     out_11, out_12 = nn1(x)
     out2 = nn2(out_11, out_12)
-    out3 = nn3(out_12)
+    out3 = nn3(out_11, out_12)
     final_out = nn4(out2, out3)
     loss = criterion(final_out, y)
 
@@ -126,23 +126,22 @@ for _ in range(200):
 
     # FROM HERE THINGS GO WRONG
     # OUTPUT GRADIENTS FROM NN3 - Compute gradients of out3 w.r.t out_12
-    grad_12 = torch.autograd.grad(outputs=out3, inputs=out_12, grad_outputs=grad_out3, retain_graph=True, create_graph=False)[0]
+    grad3_11, grad3_12 = torch.autograd.grad(outputs=out3, inputs=[out_11, out_12], grad_outputs=grad_out3, retain_graph=True, create_graph=False)
+    grad2_11, grad2_12 = torch.autograd.grad(outputs=out2, inputs=[out_11, out_12], grad_outputs=grad_out2, retain_graph=True, create_graph=False)
     
     # OUTPUT GRADIENTS FROM NN2 - Compute gradients of out2 w.r.t out_11
     grad_11 = torch.autograd.grad(outputs=out2, inputs=out_11, grad_outputs=grad_out2, retain_graph=True, create_graph=False)[0]
-    grad_120 = torch.autograd.grad(outputs=out2, inputs=out_12, grad_outputs=grad_out2, retain_graph=True, create_graph=False)[0]
 
     # Compute gradients w.r.t. NN1 parameters using grad_out1 and grad_out3
     for param in nn1.linear3.parameters():
         param.grad = torch.autograd.grad(
             outputs=out_12,
             inputs=param,
-            grad_outputs=grad_12+grad_120,
+            grad_outputs=grad3_12+grad2_12,
             retain_graph=True,
         )[0]
-        
     
-    for param in nn1.linear2.parameters():
+    for param in list(nn1.linear2.parameters())+list(nn1.linear1.parameters()):
         param.grad = torch.autograd.grad(
             outputs=out_11,
             inputs=param,
@@ -152,23 +151,17 @@ for _ in range(200):
         param.grad += torch.autograd.grad(
             outputs=out_12,
             inputs=param,
-            grad_outputs=grad_12,
-            retain_graph=True,
-        )[0]
-        
-    for param in nn1.linear1.parameters():
-        param.grad = torch.autograd.grad(
-            outputs=out_11,
-            inputs=param,
-            grad_outputs=grad_11,
+            grad_outputs=grad2_12,
             retain_graph=True,
         )[0]
         param.grad += torch.autograd.grad(
             outputs=out_12,
             inputs=param,
-            grad_outputs=grad_12,
+            grad_outputs=grad2_12,
             retain_graph=True,
         )[0]
+
+
         
     nn1_grads = [param.grad.clone() if param.grad is not None else torch.zeros_like(param) for param in nn1.parameters()]
 
