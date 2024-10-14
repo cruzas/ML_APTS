@@ -27,7 +27,7 @@ class NN2(nn.Module):
         self.linear2 = nn.Linear(2, 2)
 
     def forward(self, a, b):
-        out0 = torch.relu(self.linear1(a)) + (2 * b)
+        out0 = torch.relu(self.linear1(a)) + (123 * b)
         out2 = torch.relu(self.linear2(out0)) + b
         return out2
     
