@@ -33,21 +33,31 @@ class GlobalModelTruncated(nn.Module):
         self.layer4 = nn.Linear(2, 2)
         self.layer5 = nn.Linear(2, 2)
         
-    def forward(self, x):
+    def forward(self, x, chunk_id):
+        if chunk_id == 0:
+            self.sd0_out0 = []
+            self.sd0_out1 = []
+            self.sd1_out0 = []
+            self.sd1_out1 = []
+            self.sd1_out3 = []
+            self.sd1_out4 = []
+            self.sd2_out3 = []
+            self.sd2_out4 = []
+            self.sd2_out5 = []
         # SD0
-        self.sd0_out0 = torch.relu(self.layer0(x))
-        self.sd0_out1 = torch.relu(self.layer1(self.sd0_out0))
+        self.sd0_out0.append(torch.relu(self.layer0(x)))
+        self.sd0_out1.append(torch.relu(self.layer1(self.sd0_out0[-1])))
         # SD1
-        self.sd1_out0 = self.sd0_out0.detach().clone().requires_grad_(True)
-        self.sd1_out1 = self.sd0_out1.detach().clone().requires_grad_(True)
-        self.sd1_out2 = torch.relu(self.layer2(self.sd1_out1))
-        self.sd1_out3 = torch.relu(self.layer3(self.sd1_out2)) + self.sd1_out0/2 + 1
-        self.sd1_out4 = torch.relu(self.layer4(self.sd1_out3)) + torch.sigmoid(self.sd1_out1 + self.sd1_out2)
+        self.sd1_out0.append(self.sd0_out0[-1].detach().clone().requires_grad_(True))
+        self.sd1_out1.append(self.sd0_out1[-1].detach().clone().requires_grad_(True))
+        sd1_out2 = torch.relu(self.layer2(self.sd1_out1[-1]))
+        self.sd1_out3.append(torch.relu(self.layer3(sd1_out2)) + self.sd1_out0[-1]/2 + 1)
+        self.sd1_out4.append(torch.relu(self.layer4(self.sd1_out3[-1])) + torch.sigmoid(self.sd1_out1[-1] + sd1_out2))
         # SD2
-        self.sd2_out4 = self.sd1_out4.detach().clone().requires_grad_(True)
-        self.sd2_out3 = self.sd1_out3.detach().clone().requires_grad_(True)
-        self.sd2_out5 = torch.relu(self.layer5(self.sd2_out4)) + 2*self.sd2_out3
-        return self.sd2_out5
+        self.sd2_out4.append(self.sd1_out4[-1].detach().clone().requires_grad_(True))
+        self.sd2_out3.append(self.sd1_out3[-1].detach().clone().requires_grad_(True))
+        self.sd2_out5.append(torch.relu(self.layer5(self.sd2_out4[-1])) + 2*self.sd2_out3[-1])
+        return self.sd2_out5[-1]
 
 for _ in range(1):
     # Create the global model, loss function, and input
@@ -59,46 +69,47 @@ for _ in range(1):
     criterion = nn.MSELoss()
 
     # Sample input and target with requires_grad=False
-    x = torch.tensor([[1.0, 2.0]], requires_grad=False)
-    y = torch.tensor([[1.1, 2.1]])
+    X = torch.randn(10, 2, requires_grad=False)
+    Y = torch.randn(10, 2)
+    chunk_amount = 5
 
-    # Forward pass through the global model
-    output = gb(x)
-    loss = criterion(output, y)
+    output = gb(X)
+    loss = criterion(output, Y)
     loss.backward(retain_graph=True)
     global_grads = {name: param.grad.clone() for name, param in gb.named_parameters()}
     
-    # Zero gradients for gb_trunc
-    gb_trunc.zero_grad()
-    final_out = gb_trunc(x)
-    loss_trunc = criterion(final_out, y)
-    def update_params(model, grads):
-        for param, grad in zip(model.parameters(), grads):
-            if param.grad is None:
-                param.grad = grad
-            else:
-                param.grad += grad
+    loss_trunc = []
+    for chunk_id, (x, y) in enumerate(zip(X.chunk(chunk_amount), Y.chunk(chunk_amount))):
+        # Zero gradients for gb_trunc
+        gb_trunc.zero_grad()
+        final_out = gb_trunc(x, chunk_id)
+        loss_trunc.append(criterion(final_out, y))
 
-    # MANUAL GRADIENT COMPUTATION
-    # PATTERN:
-    # 1. Compute the backward of every output in the subdomain
-    # 2. Compute the autograd.grad of every output in the subdomain with respect to each input in a for-loop
-    # SD2
-    loss_trunc.backward(retain_graph=True)
-    grad_loss_sd2_out4 = torch.autograd.grad(outputs=loss_trunc, inputs=gb_trunc.sd2_out4, retain_graph=True)[0]
-    grad_loss_sd2_out3 = torch.autograd.grad(outputs=loss_trunc, inputs=gb_trunc.sd2_out3, retain_graph=True)[0]
-
-    # SD1
-    gb_trunc.sd1_out4.backward(grad_loss_sd2_out4, retain_graph=True)
-    gb_trunc.sd1_out3.backward(grad_loss_sd2_out3, retain_graph=True)
-    grad_sd1_out43_sd1_out0 = torch.autograd.grad(outputs=[gb_trunc.sd1_out4,gb_trunc.sd1_out3], inputs=gb_trunc.sd1_out0, grad_outputs=[grad_loss_sd2_out4,grad_loss_sd2_out3], retain_graph=True)
-    grad_sd1_out43_sd1_out1 = torch.autograd.grad(outputs=[gb_trunc.sd1_out4,gb_trunc.sd1_out3], inputs=gb_trunc.sd1_out1, grad_outputs=[grad_loss_sd2_out4,grad_loss_sd2_out3], retain_graph=True)
+    grad_loss_sd2_out4 = [0]*chunk_amount
+    grad_loss_sd2_out3 = [0]*chunk_amount
+    grad_sd1_out43_sd1_out0 = [0]*chunk_amount
+    grad_sd1_out43_sd1_out1 = [0]*chunk_amount
     
-    # SD0
-    gb_trunc.sd0_out1.backward(grad_sd1_out43_sd1_out1, retain_graph=True)
-    gb_trunc.sd0_out0.backward(grad_sd1_out43_sd1_out0, retain_graph=True)
-                               
-    manual_grads = {name: param.grad.clone() if param.grad is not None else torch.zeros_like(param) for name, param in gb_trunc.named_parameters()}
+    for chunk_id in range(chunk_amount-1, -1, -1):
+        # PATTERN:
+        # 1. Compute the backward of every output in the subdomain
+        # 2. Compute the autograd.grad of every output in the subdomain with respect to each input in a for-loop
+        # SD2
+        loss_trunc[chunk_id].backward(retain_graph=True)
+        grad_loss_sd2_out4[chunk_id] = torch.autograd.grad(outputs=loss_trunc[chunk_id], inputs=gb_trunc.sd2_out4[chunk_id], retain_graph=True)[0]
+        grad_loss_sd2_out3[chunk_id] = torch.autograd.grad(outputs=loss_trunc[chunk_id], inputs=gb_trunc.sd2_out3[chunk_id], retain_graph=True)[0]
+
+        # SD1
+        gb_trunc.sd1_out4[chunk_id].backward(grad_loss_sd2_out4[chunk_id], retain_graph=True)
+        gb_trunc.sd1_out3[chunk_id].backward(grad_loss_sd2_out3[chunk_id], retain_graph=True)
+        grad_sd1_out43_sd1_out0[chunk_id] = torch.autograd.grad(outputs=[gb_trunc.sd1_out4[chunk_id], gb_trunc.sd1_out3[chunk_id]], inputs=gb_trunc.sd1_out0[chunk_id], grad_outputs=[grad_loss_sd2_out4[chunk_id], grad_loss_sd2_out3[chunk_id]], retain_graph=True)
+        grad_sd1_out43_sd1_out1[chunk_id] = torch.autograd.grad(outputs=[gb_trunc.sd1_out4[chunk_id], gb_trunc.sd1_out3[chunk_id]], inputs=gb_trunc.sd1_out1[chunk_id], grad_outputs=[grad_loss_sd2_out4[chunk_id], grad_loss_sd2_out3[chunk_id]], retain_graph=True)
+        
+        # SD0
+        gb_trunc.sd0_out1[chunk_id].backward(grad_sd1_out43_sd1_out1[chunk_id], retain_graph=True)
+        gb_trunc.sd0_out0[chunk_id].backward(grad_sd1_out43_sd1_out0[chunk_id], retain_graph=True)
+                                
+    manual_grads = {name: param.grad.clone()/chunk_amount if param.grad is not None else torch.zeros_like(param) for name, param in gb_trunc.named_parameters()}
 
     # Compare manually computed gradients with global model gradients
     diff = False
