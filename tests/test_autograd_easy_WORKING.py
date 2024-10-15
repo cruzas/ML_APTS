@@ -49,7 +49,7 @@ class GlobalModelTruncated(nn.Module):
         self.sd2_out5 = torch.relu(self.layer5(self.sd2_out4)) + self.sd2_out3
         return self.sd2_out5
 
-for _ in range(200):
+for _ in range(1):
     # Create the global model, loss function, and input
     gb = GlobalModel()
     gb_trunc = GlobalModelTruncated()
@@ -83,26 +83,25 @@ for _ in range(200):
     # SD2
     grad_loss_sd2_out4 = torch.autograd.grad(outputs=loss_trunc, inputs=gb_trunc.sd2_out4, retain_graph=True)[0]
     grad_loss_sd2_out3 = torch.autograd.grad(outputs=loss_trunc, inputs=gb_trunc.sd2_out3, retain_graph=True)[0]
-    grad_loss_sd2_out5 = torch.autograd.grad(outputs=loss_trunc, inputs=gb_trunc.sd2_out5, retain_graph=True)[0]
-    layer5_grads = torch.autograd.grad(outputs=gb_trunc.sd2_out5, inputs=gb_trunc.layer5.parameters(), grad_outputs=grad_loss_sd2_out5, retain_graph=True)
-    update_params(gb_trunc.layer5, layer5_grads)
+    loss_trunc.backward(retain_graph=True)
 
     # SD1
-    layer4_grads = torch.autograd.grad(outputs=gb_trunc.sd1_out4, inputs=gb_trunc.layer4.parameters(), grad_outputs=grad_loss_sd2_out4, retain_graph=True)
-    update_params(gb_trunc.layer4, layer4_grads)
-    
-    grad_data_through_layer4_sd1_out0 = torch.autograd.grad(outputs=gb_trunc.sd1_out4, inputs=gb_trunc.sd1_out0, grad_outputs=grad_loss_sd2_out4, retain_graph=True)[0]
-    grad_data_through_layer4_sd1_out1 = torch.autograd.grad(outputs=gb_trunc.sd1_out4, inputs=gb_trunc.sd1_out1, grad_outputs=grad_loss_sd2_out4, retain_graph=True)[0]
-    
-    layer3_grads = torch.autograd.grad(outputs=gb_trunc.sd1_out3, inputs=gb_trunc.layer3.parameters(), grad_outputs=grad_loss_sd2_out3 + grad_data_through_layer4_sd1_out0, retain_graph=True)
-    update_params(gb_trunc.layer3, layer3_grads)
-    
-    grad_data_through_layer3_sd1_out0 = torch.autograd.grad(outputs=gb_trunc.sd1_out3, inputs=gb_trunc.sd1_out0, grad_outputs=grad_loss_sd2_out3, retain_graph=True)[0]
-    grad_data_through_layer3_sd1_out1 = torch.autograd.grad(outputs=gb_trunc.sd1_out3, inputs=gb_trunc.sd1_out1, grad_outputs=grad_loss_sd2_out3, retain_graph=True)[0]
-    
-    layer2_grads = torch.autograd.grad(outputs=gb_trunc.sd1_out2, inputs=gb_trunc.layer2.parameters(), grad_outputs=grad_data_through_layer3_sd1_out1, retain_graph=True)
-    update_params(gb_trunc.layer2, layer2_grads)
+    # layer4_grads = torch.autograd.grad(outputs=gb_trunc.sd1_out4, inputs=gb_trunc.layer4.parameters(), grad_outputs=grad_loss_sd2_out4, retain_graph=True)
+    gb_trunc.sd1_out4.backward(grad_loss_sd2_out4, retain_graph=True)
+    gb_trunc.sd1_out3.backward(grad_loss_sd2_out3, retain_graph=True)
+    # grad_sd1_out4_sd1_out0 = torch.autograd.grad(outputs=gb_trunc.sd1_out4, inputs=gb_trunc.sd1_out0, grad_outputs=grad_loss_sd2_out4, retain_graph=True)[0]
+    # grad_sd1_out4_sd1_out1 = torch.autograd.grad(outputs=gb_trunc.sd1_out4, inputs=gb_trunc.sd1_out1, grad_outputs=grad_loss_sd2_out4, retain_graph=True)[0]
+    # grad_sd1_out3_sd1_out0 = torch.autograd.grad(outputs=gb_trunc.sd1_out3, inputs=gb_trunc.sd1_out0, grad_outputs=grad_loss_sd2_out3, retain_graph=True)[0]
+    # grad_sd1_out3_sd1_out1 = torch.autograd.grad(outputs=gb_trunc.sd1_out3, inputs=gb_trunc.sd1_out1, grad_outputs=grad_loss_sd2_out3, retain_graph=True)[0]
+    grad_sd1_out43_sd1_out0, grad_sd1_out43_sd1_out1 = torch.autograd.grad(outputs=[gb_trunc.sd1_out4,gb_trunc.sd1_out3], inputs=[gb_trunc.sd1_out0,gb_trunc.sd1_out1], grad_outputs=[grad_loss_sd2_out4,grad_loss_sd2_out3], retain_graph=True)
+    # grad_sd1_out43_sd1_out1 = torch.autograd.grad(outputs=[gb_trunc.sd1_out4,gb_trunc.sd1_out3], inputs=gb_trunc.sd1_out1, grad_outputs=[grad_loss_sd2_out4,grad_loss_sd2_out3], retain_graph=True)[0]
 
+    # SD0
+    # gb_trunc.sd0_out1.backward(grad_sd1_out4_sd1_out1+grad_sd1_out3_sd1_out1, retain_graph=True)
+    # gb_trunc.sd0_out0.backward(grad_sd1_out4_sd1_out0+grad_sd1_out3_sd1_out0, retain_graph=True)
+    gb_trunc.sd0_out1.backward(grad_sd1_out43_sd1_out1, retain_graph=True)
+    gb_trunc.sd0_out0.backward(grad_sd1_out43_sd1_out0, retain_graph=True)
+                               
     
 
     
