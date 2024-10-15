@@ -19,8 +19,8 @@ class GlobalModel(nn.Module):
         self.out1 = torch.relu(self.layer1(self.out0))
         self.out2 = torch.relu(self.layer2(self.out1))
         self.out3 = torch.relu(self.layer3(self.out2)) + self.out0
-        self.out4 = torch.relu(self.layer4(self.out3)) + 2*self.out1 - self.out2
-        self.out5 = torch.relu(self.layer5(self.out4)) - self.out3
+        self.out4 = torch.relu(self.layer4(self.out3)) + self.out1 + self.out2
+        self.out5 = torch.relu(self.layer5(self.out4)) + self.out3
         return self.out5
     
 class GlobalModelTruncated(nn.Module):
@@ -42,11 +42,11 @@ class GlobalModelTruncated(nn.Module):
         self.sd1_out1 = self.sd0_out1.detach().clone().requires_grad_(True)
         self.sd1_out2 = torch.relu(self.layer2(self.sd1_out1))
         self.sd1_out3 = torch.relu(self.layer3(self.sd1_out2)) + self.sd1_out0
-        self.sd1_out4 = torch.relu(self.layer4(self.sd1_out3)) + 2*self.sd1_out1 - self.sd1_out2
+        self.sd1_out4 = torch.relu(self.layer4(self.sd1_out3)) + self.sd1_out1 + self.sd1_out2
         # SD2
         self.sd2_out4 = self.sd1_out4.detach().clone().requires_grad_(True)
         self.sd2_out3 = self.sd1_out3.detach().clone().requires_grad_(True)
-        self.sd2_out5 = torch.relu(self.layer5(self.sd2_out4)) - self.sd2_out3
+        self.sd2_out5 = torch.relu(self.layer5(self.sd2_out4)) + self.sd2_out3
         return self.sd2_out5
 
 for _ in range(200):
@@ -83,34 +83,28 @@ for _ in range(200):
     # SD2
     grad_loss_sd2_out4 = torch.autograd.grad(outputs=loss_trunc, inputs=gb_trunc.sd2_out4, retain_graph=True)[0]
     grad_loss_sd2_out3 = torch.autograd.grad(outputs=loss_trunc, inputs=gb_trunc.sd2_out3, retain_graph=True)[0]
-    loss_trunc.backward(retain_graph=True)
+    grad_loss_sd2_out5 = torch.autograd.grad(outputs=loss_trunc, inputs=gb_trunc.sd2_out5, retain_graph=True)[0]
+    layer5_grads = torch.autograd.grad(outputs=gb_trunc.sd2_out5, inputs=gb_trunc.layer5.parameters(), grad_outputs=grad_loss_sd2_out5, retain_graph=True)
+    update_params(gb_trunc.layer5, layer5_grads)
 
     # SD1
-    grad_sd1_out3_sd1_out0 = torch.autograd.grad(outputs=gb_trunc.sd1_out3, inputs=gb_trunc.sd1_out0, grad_outputs=grad_loss_sd2_out3, retain_graph=True)[0]
-    grad_sd1_out3_sd1_out1 = torch.autograd.grad(outputs=gb_trunc.sd1_out3, inputs=gb_trunc.sd1_out1, grad_outputs=grad_loss_sd2_out3, retain_graph=True)[0]
-    grad_sd1_out4_sd1_out0 = torch.autograd.grad(outputs=gb_trunc.sd1_out4, inputs=gb_trunc.sd1_out0, grad_outputs=grad_loss_sd2_out4, retain_graph=True)[0]
-    grad_sd1_out4_sd1_out1 = torch.autograd.grad(outputs=gb_trunc.sd1_out4, inputs=gb_trunc.sd1_out1, grad_outputs=grad_loss_sd2_out4, retain_graph=True)[0]
     layer4_grads = torch.autograd.grad(outputs=gb_trunc.sd1_out4, inputs=gb_trunc.layer4.parameters(), grad_outputs=grad_loss_sd2_out4, retain_graph=True)
     update_params(gb_trunc.layer4, layer4_grads)
-
-    # grad_thorugh_layer4 = torch.autograd.grad(outputs=gb_trunc.sd1_out4, inputs=[gb_trunc.sd1_out0,gb_trunc.sd1_out1], grad_outputs=grad_loss_sd2_out4, retain_graph=True)[0]
-    # layer3_grads = torch.autograd.grad(outputs=gb_trunc.sd1_out3, inputs=gb_trunc.layer3.parameters(), grad_outputs=grad_thorugh_layer4+grad_loss_sd2_out4, retain_graph=True)
-    layer3_grads = torch.autograd.grad(outputs=gb_trunc.sd1_out3, inputs=gb_trunc.layer3.parameters(), grad_outputs=grad_sd1_out3_sd1_out0 + grad_sd1_out4_sd1_out0, retain_graph=True)
+    
+    grad_data_through_layer4_sd1_out0 = torch.autograd.grad(outputs=gb_trunc.sd1_out4, inputs=gb_trunc.sd1_out0, grad_outputs=grad_loss_sd2_out4, retain_graph=True)[0]
+    grad_data_through_layer4_sd1_out1 = torch.autograd.grad(outputs=gb_trunc.sd1_out4, inputs=gb_trunc.sd1_out1, grad_outputs=grad_loss_sd2_out4, retain_graph=True)[0]
+    
+    layer3_grads = torch.autograd.grad(outputs=gb_trunc.sd1_out3, inputs=gb_trunc.layer3.parameters(), grad_outputs=grad_loss_sd2_out3 + grad_data_through_layer4_sd1_out0, retain_graph=True)
     update_params(gb_trunc.layer3, layer3_grads)
     
-    layer2_grads = torch.autograd.grad(outputs=gb_trunc.sd1_out3, inputs=gb_trunc.layer2.parameters(), grad_outputs=grad_sd1_out3_sd1_out0 + grad_sd1_out4_sd1_out0, retain_graph=True)
+    grad_data_through_layer3_sd1_out0 = torch.autograd.grad(outputs=gb_trunc.sd1_out3, inputs=gb_trunc.sd1_out0, grad_outputs=grad_loss_sd2_out3, retain_graph=True)[0]
+    grad_data_through_layer3_sd1_out1 = torch.autograd.grad(outputs=gb_trunc.sd1_out3, inputs=gb_trunc.sd1_out1, grad_outputs=grad_loss_sd2_out3, retain_graph=True)[0]
+    
+    layer2_grads = torch.autograd.grad(outputs=gb_trunc.sd1_out2, inputs=gb_trunc.layer2.parameters(), grad_outputs=grad_data_through_layer3_sd1_out1, retain_graph=True)
     update_params(gb_trunc.layer2, layer2_grads)
-    
-    # # SD0
-    # layer1_grads = torch.autograd.grad(outputs=gb_trunc.sd0_out1, inputs=gb_trunc.layer1.parameters(), grad_outputs=grad_loss_sd1_out1, retain_graph=True)
-    # update_params(gb_trunc.layer1, layer1_grads)
 
-    # layer0_grads = torch.autograd.grad(outputs=gb_trunc.sd0_out0, inputs=gb_trunc.layer0.parameters(), grad_outputs=grad_loss_sd1_out0, retain_graph=True) 
-    # update_params(gb_trunc.layer0, layer0_grads)
     
-    # temp_grad_data_through_layer1 = torch.autograd.grad(outputs=gb_trunc.sd0_out1, inputs=gb_trunc.sd0_out0, grad_outputs=grad_loss_sd1_out1, retain_graph=True)
-    # layer0_grads = torch.autograd.grad(outputs=gb_trunc.sd0_out0, inputs=gb_trunc.layer0.parameters(), grad_outputs=temp_grad_data_through_layer1, retain_graph=True)
-    # update_params(gb_trunc.layer0, layer0_grads)
+
     
     manual_grads = {name: param.grad.clone() if param.grad is not None else torch.zeros_like(param) for name, param in gb_trunc.named_parameters()}
 
