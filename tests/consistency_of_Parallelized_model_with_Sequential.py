@@ -42,10 +42,8 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             x.size(0), -1))  # Reshape the tensor
     ])
 
-    train_dataset_par = datasets.MNIST(
-        root='./data', train=True, download=True, transform=transform)
-    test_dataset_par = datasets.MNIST(
-        root='./data', train=False, download=True, transform=transform)
+    train_dataset_par = datasets.MNIST(root='./data', train=True, download=True, transform=transform)
+    test_dataset_par = datasets.MNIST(root='./data', train=False, download=True, transform=transform)
 
     criterion = torch.nn.CrossEntropyLoss()
     model_dict = get_model_dict()
@@ -60,17 +58,19 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
 
     par_model = ParallelizedModel(model_handler=model_handler, sample=random_input)
     # Save the par_model state_dict
-    par_dict = par_model.state_dict()
-    GM_rank = -1
-    if par_dict is not None:
-        GM_rank = rank
+    dst_rank = 0
+    par_dict = par_model.state_dict(dst_rank=dst_rank)
+    if rank == dst_rank:
         global_model = GlobalModel()
         global_model.load_state_dict(par_dict)
+        global_model = global_model.to(device)
+        sequential_train_loader = torch.utils.data.DataLoader(train_dataset_par, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True)
+        sequential_test_loader = torch.utils.data.DataLoader(test_dataset_par, batch_size=len(test_dataset_par), shuffle=False, num_workers=0, pin_memory=True)
+        global_optimizer = torch.optim.SGD(global_model.parameters(), lr=learning_rage)
     
     train_loader = GeneralizedDistributedDataLoader(model_handler=model_handler, dataset=train_dataset_par, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True)
-    test_loader = GeneralizedDistributedDataLoader(model_handler=model_handler, dataset=test_dataset_par, batch_size=len(
-        test_dataset_par), shuffle=False, num_workers=0, pin_memory=True)
-
+    test_loader = GeneralizedDistributedDataLoader(model_handler=model_handler, dataset=test_dataset_par, batch_size=len(test_dataset_par), shuffle=False, num_workers=0, pin_memory=True)
+    
     subdomain_optimizer = torch.optim.SGD
     glob_opt_params = {
         'lr': 0.01,
@@ -91,7 +91,6 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         dist.barrier()
         if rank == 0:
             print(f'____________ EPOCH {epoch} ____________')
-        dist.barrier()
         loss_total_par = 0
         counter_par = 0
         # Parallel training loop
@@ -110,8 +109,11 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
 
             loss_total_par += par_loss
             par_model.sync_params()
-            # print(f"(ACTUAL PARALLEL) stage {rank} param norm: {torch.norm(torch.cat([p.flatten() for p in par_model.parameters()]))}, grad norm: {torch.norm(torch.cat([p.grad.flatten() for p in par_model.parameters()]))}")
+            # print(f"(ACTUAL PARALLEL) {rank} param norm: {torch.norm(torch.cat([p.flatten() for p in par_model.parameters()]))}, grad norm: {torch.norm(torch.cat([p.grad.flatten() for p in par_model.parameters()]))}")
 
+        if rank == 0:
+            print(f'Epoch {epoch}, Parallel avg loss: {loss_total_par/counter_par}')
+            
         # Parallel testing loop
         with torch.no_grad():  # TODO: Make this work also with NCCL
             correct = 0
@@ -137,10 +139,39 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
                 accuracy /= len(model_handler.get_stage_ranks(stage_name='last', mode='global'))
                 print(f'Epoch {epoch}, Parallel accuracy: {accuracy}')
 
-        if rank == 0:
-            print(
-                f'Epoch {epoch}, Parallel avg loss: {loss_total_par/counter_par}')
+        # -------------------------------------- Sequential training loop --------------------------------------
+        if rank == dst_rank:
+            loss = 0; counter = 0
+            for _, (x, y) in enumerate(sequential_train_loader):
+                counter += 1
+                x = x.to(device)
+                y = y.to(device)
 
+                def closure():
+                    global_optimizer.zero_grad()
+                    global_outputs = global_model(x)
+                    global_loss = criterion(global_outputs, y)
+                    global_loss.backward()
+                    return global_loss
+
+                loss += global_optimizer.step(closure)
+                
+            print(f'Epoch {epoch}, Sequential loss: {loss/counter}')
+            # params = [param for param in global_model.parameters()]
+            # print(f"(ACTUAL SEQUENTIAL) param norm: {torch.norm(torch.cat([p.flatten() for p in global_model.parameters()]))}, grad norm: {torch.norm(torch.cat([p.grad.flatten() for p in global_model.parameters()]))}")
+
+            # -------------------------------------- Sequential testing loop --------------------------------------
+            with torch.no_grad():
+                correct = 0
+                total = 0
+                for images, labels in sequential_test_loader:
+                    images, labels = images.to(device), labels.to(device)
+                    outputs = global_model(images)
+                    _, predicted = torch.max(outputs.data, 1)
+                    total += labels.size(0)
+                    correct += (predicted == labels).sum().item()
+                accuracy = 100 * correct / total
+                print(f'Epoch {epoch}, Sequential accuracy: {accuracy}')
 
 if __name__ == '__main__':
     torch.manual_seed(0)
