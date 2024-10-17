@@ -11,8 +11,8 @@ from pmw.parallelized_model import ParallelizedModel
 from pmw.model_handler import *
 import utils
 
-num_subdomains = 1
-num_replicas_per_subdomain = 1
+num_subdomains = 2
+num_replicas_per_subdomain = 2
 num_stages = 2 # 1 or 2
 num_shards = 1
 
