@@ -24,12 +24,12 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         rank, master_addr, master_port, world_size, is_cuda_enabled=True)
     utils.check_gpus_per_rank()
     # _________ Some parameters __________
-    batch_size = 28000
+    batch_size = 1000
     data_chunks_amount = 10
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
     seed = 0
     torch.manual_seed(seed)
-    learning_rage = 1
+    learning_rage = 0.1
     APTS_in_data_sync_strategy = 'average'  # 'sum' or 'average'
     is_sharded = False
     # ____________________________________
@@ -118,19 +118,19 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
                 closuree = utils.closure(
                     images, labels, criterion, par_model, compute_grad=False, zero_grad=True, return_output=True)
                 _, test_outputs = closuree()
-                if dist.get_rank() in par_model.all_final_stages_main_rank:
+                if model_handler.is_last_stage():
                     test_outputs = torch.cat(test_outputs)
                     _, predicted = torch.max(test_outputs.data, 1)
                     total += labels.size(0)
                     correct += (predicted ==
                                 labels.to(predicted.device)).sum().item()
 
-            if dist.get_rank() in par_model.all_final_stages_main_rank:
+            if model_handler.is_last_stage():
                 accuracy = 100 * correct / total
                 # here we dist all reduce the accuracy
                 accuracy = torch.tensor(accuracy).to(device)
-                dist.all_reduce(accuracy, op=dist.ReduceOp.SUM, group=par_model.all_final_stages_main_rank_group)
-                accuracy /= len(par_model.all_final_stages_main_rank)
+                dist.all_reduce(accuracy, op=dist.ReduceOp.SUM, group=model_handler.get_layers_copy_group(mode='global'))
+                accuracy /= len(model_handler.get_stage_ranks(stage_name='last', mode='global'))
                 print(f'Epoch {epoch}, Parallel accuracy: {accuracy}')
 
         if rank == 0:
