@@ -11,8 +11,8 @@ from pmw.parallelized_model import ParallelizedModel
 from pmw.model_handler import *
 import utils
 
-num_subdomains = 1
-num_replicas_per_subdomain = 1
+num_subdomains = 2
+num_replicas_per_subdomain = 4
 num_stages = 2 # 1 or 2
 num_shards = 1
 
@@ -22,8 +22,8 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         rank, master_addr, master_port, world_size, is_cuda_enabled=True)
     utils.check_gpus_per_rank()
     # _________ Some parameters __________
-    batch_size = 60000 # NOTE: Setting a bach size lower than the dataset size will cause the two dataloader (sequential and parallel) to have different batches, hence different losses and accuracies
-    data_chunks_amount = 1
+    batch_size = 1000 # NOTE: Setting a bach size lower than the dataset size will cause the two dataloader (sequential and parallel) to have different batches, hence different losses and accuracies
+    data_chunks_amount = 2
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
     seed = 2456456
     torch.manual_seed(seed)
@@ -55,16 +55,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     random_input = torch.randn(10, 1, 784, device=device)
 
     par_model = ParallelizedModel(model_handler=model_handler, sample=random_input)
-    # Save the par_model state_dict
-    dst_rank = 0
-    par_dict = par_model.state_dict(dst_rank=dst_rank)
-    if rank == dst_rank:
-        global_model = GlobalModel()
-        global_model.load_state_dict(par_dict)
-        global_model = global_model.to(device)
-        sequential_train_loader = torch.utils.data.DataLoader(train_dataset_par, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True)
-        sequential_test_loader = torch.utils.data.DataLoader(test_dataset_par, batch_size=len(test_dataset_par), shuffle=False, num_workers=0, pin_memory=True)
-        global_optimizer = torch.optim.SGD(global_model.parameters(), lr=learning_rage)
+
     
     train_loader = GeneralizedDistributedDataLoader(model_handler=model_handler, dataset=train_dataset_par, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True)
     test_loader = GeneralizedDistributedDataLoader(model_handler=model_handler, dataset=test_dataset_par, batch_size=len(test_dataset_par), shuffle=False, num_workers=0, pin_memory=True)
@@ -83,9 +74,10 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         'norm_type': 2
     }
     par_optimizer = APTS(model=par_model, subdomain_optimizer=subdomain_optimizer, subdomain_optimizer_defaults={'lr': learning_rage},
-                         global_optimizer=TR, global_optimizer_defaults=glob_opt_params, lr=learning_rage, max_subdomain_iter=5, dogleg=True, APTS_in_data_sync_strategy='average', step_strategy='mean')
+                         global_optimizer=TR, global_optimizer_defaults=glob_opt_params, lr=learning_rage, max_subdomain_iter=2, dogleg=False, APTS_in_data_sync_strategy='average', step_strategy='mean')
 
     for epoch in range(40):
+        dist.barrier()
         if rank == 0:
             print(f'____________ EPOCH {epoch} ____________')
         loss_total_par = 0
@@ -98,9 +90,16 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             # Gather parallel model norm
             par_optimizer.zero_grad()
             counter_par += 1
+            
+            def final_subdomain_loss(out):
+                losses = []
+                ys = y.chunk(len(out))
+                for i, o in enumerate(out):
+                    losses.append(criterion(o, ys[i]))   
+                return losses
 
-            par_loss = par_optimizer.step(closure=utils.closure(
-                x, y, criterion=criterion, model=par_model, data_chunks_amount=data_chunks_amount, compute_grad=True)) 
+            par_loss = par_optimizer.step(closure=utils.closure(x, y, criterion=criterion, model=par_model, data_chunks_amount=data_chunks_amount, compute_grad=True),
+                                          final_subdomain_loss=final_subdomain_loss) 
 
             loss_total_par += par_loss
 
@@ -125,12 +124,14 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
                                 labels.to(predicted.device)).sum().item()
 
             if model_handler.is_last_stage():
+                last_stage_ranks = model_handler.get_stage_ranks(stage_name='last', mode='global')
                 accuracy = 100 * correct / total
                 # here we dist all reduce the accuracy
                 accuracy = torch.tensor(accuracy).to(device)
                 dist.all_reduce(accuracy, op=dist.ReduceOp.SUM, group=model_handler.get_layers_copy_group(mode='global'))
                 accuracy /= len(model_handler.get_stage_ranks(stage_name='last', mode='global'))
-                print(f'Epoch {epoch}, Parallel accuracy: {accuracy}')
+                if rank == last_stage_ranks[0]:
+                    print(f'Epoch {epoch}, Parallel accuracy: {accuracy}')
 
 
 
