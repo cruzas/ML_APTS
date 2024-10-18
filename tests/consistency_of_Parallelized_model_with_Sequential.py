@@ -12,22 +12,19 @@ from pmw.model_handler import *
 import utils
 
 num_subdomains = 1
-num_replicas_per_subdomain = 1
+num_replicas_per_subdomain = 4
 num_stages = 2 # 1 or 2
 num_shards = 1
 
-#TODO: Make sure that even in case layers are set to be non trainable, the code doesn't crash
-
-# TODO: return dummy variables in the generalized dataloader for first and last ranks
 def main(rank=None, master_addr=None, master_port=None, world_size=None):
     utils.prepare_distributed_environment(
         rank, master_addr, master_port, world_size, is_cuda_enabled=True)
     utils.check_gpus_per_rank()
     # _________ Some parameters __________
-    batch_size = 1000
-    data_chunks_amount = 10
+    batch_size = 60000 # NOTE: Setting a bach size lower than the dataset size will cause the two dataloader (sequential and parallel) to have different batches, hence different losses and accuracies
+    data_chunks_amount = 1
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
-    seed = 0
+    seed = 2456456
     torch.manual_seed(seed)
     learning_rage = 0.1
     # ____________________________________
@@ -70,22 +67,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     
     train_loader = GeneralizedDistributedDataLoader(model_handler=model_handler, dataset=train_dataset_par, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True)
     test_loader = GeneralizedDistributedDataLoader(model_handler=model_handler, dataset=test_dataset_par, batch_size=len(test_dataset_par), shuffle=False, num_workers=0, pin_memory=True)
-    
-    subdomain_optimizer = torch.optim.SGD
-    glob_opt_params = {
-        'lr': 0.01,
-        'max_lr': 1.0,
-        'min_lr': 0.0001,
-        'nu': 0.5,
-        'inc_factor': 2.0,
-        'dec_factor': 0.5,
-        'nu_1': 0.25,
-        'nu_2': 0.75,
-        'max_iter': 5,
-        'norm_type': 2
-    }
-    # par_optimizer = APTS(model=par_model, subdomain_optimizer=subdomain_optimizer, subdomain_optimizer_defaults={'lr': learning_rage},
-    #                      global_optimizer=TR, global_optimizer_defaults=glob_opt_params, lr=learning_rage, max_subdomain_iter=5, dogleg=True, APTS_in_data_sync_strategy=APTS_in_data_sync_strategy)
+
     par_optimizer = torch.optim.SGD(par_model.parameters(), lr=learning_rage)
     for epoch in range(40):
         dist.barrier()

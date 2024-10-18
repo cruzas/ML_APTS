@@ -6,29 +6,28 @@ from torchvision import datasets, transforms
 
 from dataloaders import GeneralizedDistributedDataLoader
 from optimizers import APTS, TR
+from models.model_dict import *
 from pmw.parallelized_model import ParallelizedModel
+from pmw.model_handler import *
 import utils
 
 num_subdomains = 1
 num_replicas_per_subdomain = 1
-stages_amount = 1 # 1 or 3
+num_stages = 2 # 1 or 2
+num_shards = 1
 
-#TODO: Make sure that even in case layers are set to be non trainable, the code doesn't crash
 
-# TODO: return dummy variables in the generalized dataloader for first and last ranks
 def main(rank=None, master_addr=None, master_port=None, world_size=None):
     utils.prepare_distributed_environment(
         rank, master_addr, master_port, world_size, is_cuda_enabled=True)
     utils.check_gpus_per_rank()
     # _________ Some parameters __________
-    batch_size = 28000
-    data_chunks_amount = 10
+    batch_size = 60000 # NOTE: Setting a bach size lower than the dataset size will cause the two dataloader (sequential and parallel) to have different batches, hence different losses and accuracies
+    data_chunks_amount = 1
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
-    seed = 0
+    seed = 2456456
     torch.manual_seed(seed)
-    learning_rage = 1
-    APTS_in_data_sync_strategy = 'average'  # 'sum' or 'average'
-    is_sharded = False
+    learning_rage = 0.1
     # ____________________________________
 
     rank = dist.get_rank() if dist.get_backend() == 'nccl' else rank
@@ -41,71 +40,35 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
             x.size(0), -1))  # Reshape the tensor
     ])
 
-    train_dataset_par = datasets.MNIST(
-        root='./data', train=True, download=True, transform=transform)
-    test_dataset_par = datasets.MNIST(
-        root='./data', train=False, download=True, transform=transform)
+    train_dataset_par = datasets.MNIST(root='./data', train=True, download=True, transform=transform)
+    test_dataset_par = datasets.MNIST(root='./data', train=False, download=True, transform=transform)
 
     criterion = torch.nn.CrossEntropyLoss()
+    model_dict = get_model_dict()
+    if num_stages == 1:
+        # Go through every key in dictionary and set the field stage to 0
+        for key in model_dict.keys():
+            model_dict[key]['stage'] = 0
+    model_handler = ModelHandler(model_dict, num_subdomains, num_replicas_per_subdomain, available_ranks=None)
 
-    if stages_amount == 1:
-        NN1 = [nn.Flatten, nn.Linear, nn.ReLU, nn.Linear, nn.ReLU, 
-               nn.Linear, nn.ReLU, 
-               nn.Linear, nn.Sigmoid, nn.LogSoftmax]
-               
-        NN1_dict_list = [{'start_dim': 1}, {'in_features': 784, 'out_features': 256}, {}, {'in_features': 256, 'out_features': 256},{}, # NN1
-                        {'in_features': 256, 'out_features': 128}, {}, # NN2
-                        {'in_features': 128, 'out_features': 10}, {}, {'dim': 1}] # NN3
-
-        stage_list = [
-            (NN1, NN1_dict_list),  # Stage 1
-        ]
-    elif stages_amount == 2:
-        NN1 = [nn.Flatten, nn.Linear, nn.ReLU, nn.Linear, nn.ReLU]
-        NN1_dict_list = [{'start_dim': 1},
-                        {'in_features': 784, 'out_features': 256},
-                        {},
-                        {'in_features': 256, 'out_features': 256},
-                        {}]
-
-        NN2 = [nn.Linear, nn.ReLU, nn.Linear, nn.Sigmoid, nn.LogSoftmax]
-        NN2_dict_list = [{'in_features': 256, 'out_features': 128}, {}, {'in_features': 128, 'out_features': 10}, {}, {'dim': 1}]
-
-        stage_list = [
-            (NN1, NN1_dict_list),  # Stage 1
-            (NN2, NN2_dict_list)  # Stage 2
-        ]
-    else:
-        NN1 = [nn.Flatten, nn.Linear, nn.ReLU, nn.Linear, nn.ReLU]
-        NN1_dict_list = [{'start_dim': 1},
-                        {'in_features': 784, 'out_features': 256},
-                        {},
-                        {'in_features': 256, 'out_features': 256},
-                        {}]
-
-        NN2 = [nn.Linear, nn.ReLU]
-        NN2_dict_list = [{'in_features': 256, 'out_features': 128}, {}]
-
-        NN3 = [nn.Linear, nn.Sigmoid, nn.LogSoftmax]
-        NN3_dict_list = [{'in_features': 128, 'out_features': 10}, {}, {'dim': 1}]
-
-        stage_list = [
-            (NN1, NN1_dict_list),  # Stage 1
-            (NN2, NN2_dict_list),  # Stage 2
-            (NN3, NN3_dict_list)  # Stage 3
-        ]
-
-    #  sharded first layer into [0,1] -> dataloader should upload batch to 0 only
+    # Sharded first layer into [0,1] -> dataloader should upload batch to 0 only
     random_input = torch.randn(10, 1, 784, device=device)
-    par_model = ParallelizedModel(stage_list=stage_list, 
-                                  sample=random_input,
-                                  num_replicas_per_subdomain=num_replicas_per_subdomain, num_subdomains=num_subdomains, is_sharded=is_sharded)
 
-    train_loader = GeneralizedDistributedDataLoader(model_structure=par_model.all_model_ranks, dataset=train_dataset_par, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True)
-    test_loader = GeneralizedDistributedDataLoader(model_structure=par_model.all_model_ranks, dataset=test_dataset_par, batch_size=len(
-        test_dataset_par), shuffle=False, num_workers=0, pin_memory=True)
-
-
+    par_model = ParallelizedModel(model_handler=model_handler, sample=random_input)
+    # Save the par_model state_dict
+    dst_rank = 0
+    par_dict = par_model.state_dict(dst_rank=dst_rank)
+    if rank == dst_rank:
+        global_model = GlobalModel()
+        global_model.load_state_dict(par_dict)
+        global_model = global_model.to(device)
+        sequential_train_loader = torch.utils.data.DataLoader(train_dataset_par, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True)
+        sequential_test_loader = torch.utils.data.DataLoader(test_dataset_par, batch_size=len(test_dataset_par), shuffle=False, num_workers=0, pin_memory=True)
+        global_optimizer = torch.optim.SGD(global_model.parameters(), lr=learning_rage)
+    
+    train_loader = GeneralizedDistributedDataLoader(model_handler=model_handler, dataset=train_dataset_par, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True)
+    test_loader = GeneralizedDistributedDataLoader(model_handler=model_handler, dataset=test_dataset_par, batch_size=len(test_dataset_par), shuffle=False, num_workers=0, pin_memory=True)
+    
     subdomain_optimizer = torch.optim.SGD
     glob_opt_params = {
         'lr': 0.01,
@@ -120,31 +83,30 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
         'norm_type': 2
     }
     par_optimizer = APTS(model=par_model, subdomain_optimizer=subdomain_optimizer, subdomain_optimizer_defaults={'lr': learning_rage},
-                         global_optimizer=TR, global_optimizer_defaults=glob_opt_params, lr=learning_rage, max_subdomain_iter=5, dogleg=True, APTS_in_data_sync_strategy=APTS_in_data_sync_strategy)
+                         global_optimizer=TR, global_optimizer_defaults=glob_opt_params, lr=learning_rage, max_subdomain_iter=5, dogleg=True, APTS_in_data_sync_strategy='average', step_strategy='mean')
 
     for epoch in range(40):
-        dist.barrier()
         if rank == 0:
             print(f'____________ EPOCH {epoch} ____________')
-        dist.barrier()
         loss_total_par = 0
         counter_par = 0
         # Parallel training loop
         for _, (x, y) in enumerate(train_loader):
-            dist.barrier()
-            # dist.barrier()
             x = x.to(device)
             y = y.to(device)
 
             # Gather parallel model norm
             par_optimizer.zero_grad()
             counter_par += 1
-            par_loss = par_optimizer.step(closure=utils.closure(
-                x, y, criterion=criterion, model=par_model, data_chunks_amount=data_chunks_amount, compute_grad=True))
-            loss_total_par += par_loss
-            par_model.sync_params()
-            # print(f"(ACTUAL PARALLEL) stage {rank} param norm: {torch.norm(torch.cat([p.flatten() for p in par_model.parameters()]))}, grad norm: {torch.norm(torch.cat([p.grad.flatten() for p in par_model.parameters()]))}")
 
+            par_loss = par_optimizer.step(closure=utils.closure(
+                x, y, criterion=criterion, model=par_model, data_chunks_amount=data_chunks_amount, compute_grad=True)) 
+
+            loss_total_par += par_loss
+
+        if rank == 0:
+            print(f'Epoch {epoch}, Parallel avg loss: {loss_total_par/counter_par}')
+            
         # Parallel testing loop
         with torch.no_grad():  # TODO: Make this work also with NCCL
             correct = 0
@@ -155,24 +117,22 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
                 closuree = utils.closure(
                     images, labels, criterion, par_model, compute_grad=False, zero_grad=True, return_output=True)
                 _, test_outputs = closuree()
-                if dist.get_rank() in par_model.all_final_stages_main_rank:
+                if model_handler.is_last_stage():
                     test_outputs = torch.cat(test_outputs)
                     _, predicted = torch.max(test_outputs.data, 1)
                     total += labels.size(0)
                     correct += (predicted ==
                                 labels.to(predicted.device)).sum().item()
 
-            if dist.get_rank() in par_model.all_final_stages_main_rank:
+            if model_handler.is_last_stage():
                 accuracy = 100 * correct / total
                 # here we dist all reduce the accuracy
                 accuracy = torch.tensor(accuracy).to(device)
-                dist.all_reduce(accuracy, op=dist.ReduceOp.SUM, group=par_model.all_final_stages_main_rank_group)
-                accuracy /= len(par_model.all_final_stages_main_rank)
+                dist.all_reduce(accuracy, op=dist.ReduceOp.SUM, group=model_handler.get_layers_copy_group(mode='global'))
+                accuracy /= len(model_handler.get_stage_ranks(stage_name='last', mode='global'))
                 print(f'Epoch {epoch}, Parallel accuracy: {accuracy}')
 
-        if rank == 0:
-            print(
-                f'Epoch {epoch}, Parallel avg loss: {loss_total_par/counter_par}')
+
 
 
 if __name__ == '__main__':
@@ -187,6 +147,6 @@ if __name__ == '__main__':
 
         MASTER_ADDR = 'localhost'
         MASTER_PORT = '12345'
-        WORLD_SIZE = num_subdomains*num_replicas_per_subdomain*stages_amount
+        WORLD_SIZE = num_subdomains*num_replicas_per_subdomain*num_stages*num_shards
         mp.spawn(main, args=(MASTER_ADDR, MASTER_PORT, WORLD_SIZE),
                  nprocs=WORLD_SIZE, join=True)
