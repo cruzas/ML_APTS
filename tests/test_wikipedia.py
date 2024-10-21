@@ -2,11 +2,12 @@ import os
 import torch
 import torch.nn as nn
 import math
-from transformers import GPT2Tokenizer
+from transformers import GPT2TokenizerFast
 import torch.optim as optim
 from datasets import load_dataset
 from torch.utils.data import DataLoader
-# from dataloaders import Power_DL
+
+print("Entered test_wikipedia.py...")
 
 class TokenEmbedding(nn.Module):
     def __init__(self, vocab_size, d_model):
@@ -127,22 +128,26 @@ def initialize_weights(m):
         nn.init.xavier_uniform_(m.weight.data)
 
 # Tokenizer and dataset setup
-tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
+print("Creating tokenizer...")
+tokenizer = GPT2TokenizerFast.from_pretrained('gpt2')
 tokenizer.add_special_tokens({'pad_token': '[PAD]'})  # Ensure there is a pad token
 vocab_size = len(tokenizer)
 
-train_dataset = load_dataset("wikitext", "wikitext-2-raw-v1", split="train")
-test_dataset = load_dataset("wikitext", "wikitext-2-raw-v1", split="test")
+print("Loading dataset...")
+train_dataset = load_dataset("wikitext", "wikitext-2-raw-v1", split="train", cache_dir="./tests/wikitext-2-raw-v1")
+test_dataset = load_dataset("wikitext", "wikitext-2-raw-v1", split="test", cache_dir="./tests/wikitext-2-raw-v1")
 
 def tokenize_function(examples):
     return tokenizer(examples['text'], truncation=True, padding="max_length", max_length=128)
 
+print("Tokenizing dataset...")
 tokenized_train_dataset = train_dataset.map(tokenize_function, batched=True, remove_columns=["text"])
 tokenized_train_dataset.set_format(type="torch", columns=["input_ids", "attention_mask"])
 
 tokenized_test_dataset = test_dataset.map(tokenize_function, batched=True, remove_columns=["text"])
 tokenized_test_dataset.set_format(type="torch", columns=["input_ids", "attention_mask"])
 
+print("Creating dataloaders...")
 train_dataloader = DataLoader(tokenized_train_dataset, batch_size=32, shuffle=True)
 test_dataloader = DataLoader(tokenized_test_dataset, batch_size=32, shuffle=False)
 
@@ -176,6 +181,7 @@ optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 model = model.to('cuda')
 prev_loss = float('inf')
 
+print("Training model...")
 with torch.autograd.detect_anomaly():
     for epoch in range(num_epochs):
         avg_loss = 0
@@ -200,9 +206,6 @@ with torch.autograd.detect_anomaly():
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             
             optimizer.step()
-            
-            if i > 2:
-                break
             
         avg_loss /= len(train_dataloader)
         if prev_loss > avg_loss:
