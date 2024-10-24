@@ -6,6 +6,7 @@ from torch.utils.data import Dataset, DataLoader
 from dataclasses import dataclass
 import requests
 
+
 # -----------------------------
 # Model Components Definitions
 # -----------------------------
@@ -356,3 +357,6 @@ generated_tokens = generate(model, start_tokens, max_new_tokens=200, tokenizer=t
 generated_text = tokenizer.decode(generated_tokens[0].tolist())
 print("\nGenerated Text:\n")
 print(generated_text)
+
+# save the model params
+torch.save(model.state_dict(), 'shakespeare_model.pth')

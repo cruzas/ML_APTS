@@ -14,18 +14,8 @@ import utils
 
 num_subdomains = 2
 num_replicas_per_subdomain = 2
-num_stages = 2 # 1 or 2
+num_stages = 1 # 1 or 2
 num_shards = 1
-
-@dataclass
-class GPTConfig:
-    block_size: int = 256
-    vocab_size: int = None  # Will set this later based on tokenizer
-    n_layer: int = 6        # Reduced layers for faster training
-    n_head: int = 6         # Reduced heads
-    n_embd: int = 384       # Reduced embedding size
-    dropout: float = 0.2
-    bias: bool = True       # Use bias in Linear and LayerNorm layers
 
 # TODO: return dummy variables in the generalized dataloader for first and last ranks
 def main(rank=None, master_addr=None, master_port=None, world_size=None):
@@ -34,6 +24,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     utils.check_gpus_per_rank()
     # _________ Some parameters __________
     batch_size = 1000
+    block_size = 256
     data_chunks_amount = 10
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
     seed = 0
@@ -42,9 +33,11 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
     APTS_in_data_sync_strategy = 'average'  # 'sum' or 'average'
     is_sharded = False
     # ____________________________________
-
+    
+    train_dataset_par, test_dataset_par, tokenizer = load_shakespeare(train_split=0.8, block_size=block_size)
+    
     config = GPTConfig(
-        block_size=256,
+        block_size=block_size,
         vocab_size=tokenizer.vocab_size,
         n_layer=6,
         n_head=6,
@@ -55,9 +48,7 @@ def main(rank=None, master_addr=None, master_port=None, world_size=None):
 
     rank = dist.get_rank() if dist.get_backend() == 'nccl' else rank
 
-    train_dataset_par, test_dataset_par, tokenizer = load_shakespeare(train_split=0.8, batch_size=batch_size)
-
-    model_dict = get_model_dict() 
+    model_dict = get_model_dict(config) 
     if num_stages == 1:
         # Go through every key in dictionary and set the field stage to 0
         for key in model_dict.keys():

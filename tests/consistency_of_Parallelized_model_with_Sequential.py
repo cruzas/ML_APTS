@@ -12,8 +12,8 @@ from pmw.model_handler import *
 import utils
 
 num_subdomains = 1
-num_replicas_per_subdomain = 4
-num_stages = 2 # 1 or 2
+num_replicas_per_subdomain = 1
+num_stages = 1 # 1 or 2
 num_shards = 1
 
 def main(rank=None, master_addr=None, master_port=None, world_size=None):
