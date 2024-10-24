@@ -190,8 +190,50 @@ model = LanguageModel(vocab_size, d_model, num_heads,
 # Check if SLM_model_wikitext-2-raw-v1.pth exists
 if os.path.exists("SLM_model_wikitext-2-raw-v1.pth"):
     model.load_state_dict(torch.load("SLM_model_wikitext-2-raw-v1.pth"))
+    model.to('cuda')
 else:
     model.apply(initialize_weights)
+
+
+TEST = True
+if TEST:
+    while True:
+        def generate_text(model, tokenizer, prompt, max_length=50):
+            model.eval()
+            input_ids = tokenizer.encode(prompt, return_tensors='pt').to('cuda')
+            generated = input_ids
+
+            with torch.no_grad():
+                for _ in range(max_length):
+                    seq_len = generated.size(1)
+                    mask = generate_subsequent_mask(seq_len).to('cuda')
+                    logits = model(generated, mask=mask)
+                    next_token_logits = logits[:, -1, :]
+
+                    # Optionally apply temperature or top-k sampling
+                    next_token = torch.argmax(next_token_logits, dim=-1).unsqueeze(0)
+
+                    generated = torch.cat((generated, next_token), dim=1)
+
+                    # Stop generation if the model outputs the end-of-sequence token
+                    if next_token.item() == tokenizer.eos_token_id:
+                        break
+
+            output_text = tokenizer.decode(generated.squeeze().tolist(), skip_special_tokens=True)
+            return output_text
+
+
+        # Prompt the user for a question
+        user_question = input("Enter your question: ")
+
+        # Generate an answer using the trained model
+        answer = generate_text(model, tokenizer, user_question, max_length=50)
+
+        print("\nModel's Answer:")
+        print(answer)
+
+
+
 
 criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.pad_token_id)
 optimizer = optim.Adam(model.parameters(), lr=learning_rate)
@@ -253,36 +295,4 @@ with torch.autograd.detect_anomaly():
         model.train()
 
 
-# def generate_text(model, tokenizer, prompt, max_length=50):
-#     model.eval()
-#     input_ids = tokenizer.encode(prompt, return_tensors='pt').to('cuda')
-#     generated = input_ids
 
-#     with torch.no_grad():
-#         for _ in range(max_length):
-#             seq_len = generated.size(1)
-#             mask = generate_subsequent_mask(seq_len).to('cuda')
-#             logits = model(generated, mask=mask)
-#             next_token_logits = logits[:, -1, :]
-
-#             # Optionally apply temperature or top-k sampling
-#             next_token = torch.argmax(next_token_logits, dim=-1).unsqueeze(0)
-
-#             generated = torch.cat((generated, next_token), dim=1)
-
-#             # Stop generation if the model outputs the end-of-sequence token
-#             if next_token.item() == tokenizer.eos_token_id:
-#                 break
-
-#     output_text = tokenizer.decode(generated.squeeze().tolist(), skip_special_tokens=True)
-#     return output_text
-
-
-# # Prompt the user for a question
-# user_question = input("Enter your question: ")
-
-# # Generate an answer using the trained model
-# answer = generate_text(model, tokenizer, user_question, max_length=50)
-
-# print("\nModel's Answer:")
-# print(answer)
