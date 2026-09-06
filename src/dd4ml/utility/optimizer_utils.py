@@ -5,8 +5,6 @@ import torch
 import torch.distributed as dist
 from torch import Tensor
 
-from dd4ml.pmw.weight_parallelized_tensor import WeightParallelizedTensor
-
 
 def _get_world_size_and_scale(config):
     """Helper to get world size and delta scaling factor."""
