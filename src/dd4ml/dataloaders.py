@@ -1,6 +1,6 @@
 # overlap_sampler.py
 import math
-from typing import Iterator, List, Optional, Sequence, Union
+from collections.abc import Iterator
 
 import numpy as np
 import torch
@@ -26,7 +26,7 @@ class OverlapBatchSampler(BatchSampler):
         self,
         base_sampler: Sampler[int],
         batch_size: int,
-        overlap: Union[float, int] = 0.0,
+        overlap: float | int = 0.0,
         drop_last: bool = False,
     ):
         # Don't call super().__init__ to avoid conflicts
@@ -53,7 +53,7 @@ class OverlapBatchSampler(BatchSampler):
             self._cached_indices = list(self.base_sampler)
         return self._cached_indices
 
-    def __iter__(self) -> Iterator[List[int]]:
+    def __iter__(self) -> Iterator[list[int]]:
         idxs = self._get_indices()
         n = len(idxs)
 
@@ -141,11 +141,11 @@ class MicroBatchOverlapSampler:
         self.num_subdomains = num_subdomains
         self.allow_empty_microbatches = allow_empty_microbatches
 
-    def __iter__(self) -> Iterator[List[List[int]]]:
+    def __iter__(self) -> Iterator[list[list[int]]]:
         for mini_batch in self.overlap_sampler:
             yield self._split_mini_batch(mini_batch)
 
-    def _split_mini_batch(self, mini_batch: List[int]) -> List[List[int]]:
+    def _split_mini_batch(self, mini_batch: list[int]) -> list[list[int]]:
         unique_size = min(len(mini_batch), self.overlap_sampler.batch_size)
         unique = mini_batch[:unique_size]
         overlap = mini_batch[unique_size:]
@@ -213,7 +213,7 @@ class MicroBatchFlattenSampler(BatchSampler):
         self.micro_batch_sampler = micro_batch_sampler
         # Don't call super().__init__()
 
-    def __iter__(self) -> Iterator[List[int]]:
+    def __iter__(self) -> Iterator[list[int]]:
         for micro_batches in self.micro_batch_sampler:
             for micro_batch in micro_batches:
                 if micro_batch:  # Only yield non-empty micro-batches
@@ -228,7 +228,6 @@ from torch.utils.data import RandomSampler, SequentialSampler
 
 
 class GeneralizedDistributedDataLoader(DataLoader):
-
     def __init__(
         self,
         model_handler,
@@ -337,7 +336,7 @@ class MockDataset(Dataset):
             device (optional): The device to be used. Defaults to None.
             first (optional): A boolean indicating if it is the first dataset. Defaults to True.
         """
-        super(MockDataset, self).__init__()
+        super().__init__()
         self.amount_of_batches = amount_of_batches
         self.dataset = dataset
         self.first = first
@@ -375,8 +374,8 @@ class GeneralizedDistributedSampler(DistributedSampler):
         self,
         layer_ranks,
         dataset: Dataset,
-        num_replicas: Optional[int] = None,
-        rank: Optional[int] = None,
+        num_replicas: int | None = None,
+        rank: int | None = None,
         shuffle: bool = True,
         seed: int = 0,
         drop_last: bool = False,
@@ -417,7 +416,7 @@ class GeneralizedDistributedSampler(DistributedSampler):
                 "drop_last": drop_last,
             }
         )
-        super(GeneralizedDistributedSampler, self).__init__(**kwargs)
+        super().__init__(**kwargs)
         # super(GeneralizedDistributedSampler, self).__init__(dataset=dataset, num_replicas=len(first_layer_ranks), rank=rank, shuffle=shuffle, seed=seed, drop_last=drop_last, **kwargs)
 
 

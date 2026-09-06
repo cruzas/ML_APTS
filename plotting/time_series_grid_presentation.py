@@ -4,15 +4,14 @@ import json
 import math
 import os
 import time
-from functools import lru_cache
+from functools import cache
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from matplotlib.lines import Line2D
-
 import wandb
+from matplotlib.lines import Line2D
 
 # ==========================================
 # PRESENTATION STYLE SETTINGS
@@ -367,7 +366,7 @@ def plot_presentation_pair(
             print("No runs found. Skipping.")
         return
 
-    @lru_cache(maxsize=None)
+    @cache
     def get_history(run_id):
         return _load_history_cached_by_id(
             api, project_path, run_id, cache_dir, dataset_name

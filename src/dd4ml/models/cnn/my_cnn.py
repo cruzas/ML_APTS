@@ -4,7 +4,6 @@ from .base_cnn import BaseCNN, ConvBlock, FullyConnectedBlock
 
 
 class MyCNN(BaseCNN):
-
     @staticmethod
     def get_default_config():
         C = BaseCNN.get_default_config()

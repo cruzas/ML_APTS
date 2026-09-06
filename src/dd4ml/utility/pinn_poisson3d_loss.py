@@ -1,6 +1,7 @@
 import math
+
 import torch
-import torch.nn as nn
+
 from .base_pinn_loss import BasePINNLoss
 
 
@@ -33,6 +34,11 @@ class Poisson3DPINNLoss(BasePINNLoss):
 
         laplace_u = grad2_u_x + grad2_u_y + grad2_u_z
 
-        rhs = 3 * math.pi ** 2 * torch.sin(math.pi * coords[:, 0:1]) * torch.sin(math.pi * coords[:, 1:2]) * torch.sin(math.pi * coords[:, 2:3])
+        rhs = (
+            3
+            * math.pi**2
+            * torch.sin(math.pi * coords[:, 0:1])
+            * torch.sin(math.pi * coords[:, 1:2])
+            * torch.sin(math.pi * coords[:, 2:3])
+        )
         return (-laplace_u - rhs).squeeze()
-

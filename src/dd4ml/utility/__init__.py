@@ -34,6 +34,11 @@ from .optimizer_utils import (
     solve_tr_first_order,
     solve_tr_second_order,
 )
+from .pinn_allencahn_loss import AllenCahnPINNLoss
+from .pinn_allencahn_time_loss import AllenCahnTimePINNLoss
+from .pinn_poisson2d_loss import Poisson2DPINNLoss
+from .pinn_poisson3d_loss import Poisson3DPINNLoss
+from .pinn_poisson_loss import PoissonPINNLoss
 from .trainer_setup import generic_run
 
 # .utils and .dist_utils both define a `broadcast_dict` with different
@@ -49,8 +54,3 @@ from .wandb_utils import (
     compute_metrics,
     fetch_run_data,
 )
-from .pinn_poisson_loss import PoissonPINNLoss
-from .pinn_poisson2d_loss import Poisson2DPINNLoss
-from .pinn_poisson3d_loss import Poisson3DPINNLoss
-from .pinn_allencahn_loss import AllenCahnPINNLoss
-from .pinn_allencahn_time_loss import AllenCahnTimePINNLoss

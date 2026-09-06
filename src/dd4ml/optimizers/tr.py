@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable
 from functools import reduce
-from typing import Callable, Iterable, Tuple
 
 import torch
 from torch.optim import Optimizer
@@ -143,7 +143,7 @@ class TR(Optimizer):
         for g in self.param_groups:
             g["lr"] = self.delta
 
-    def step(self, closure, **_) -> Tuple[float, torch.Tensor]:
+    def step(self, closure, **_) -> tuple[float, torch.Tensor]:
         # Evaluate loss and gradient
         loss = _["loss"] if "loss" in _ else closure(compute_grad=True)
         grad = _["grad"] if "grad" in _ else self._flat_grad()
@@ -159,8 +159,10 @@ class TR(Optimizer):
         current_memory_size = 0
         if self.second_order and self.hess is not None:
             current_memory_size = len(self.hess._S)
-            if (current_memory_size > 0 and 
-                self._precomputed_for_size != current_memory_size):
+            if (
+                current_memory_size > 0
+                and self._precomputed_for_size != current_memory_size
+            ):
                 self.hess.precompute()
                 self._precomputed_for_size = current_memory_size
 

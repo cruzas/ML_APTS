@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
 import hashlib
 import json
-import math
 import os
 import time
-from functools import lru_cache
+from functools import cache
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from matplotlib.lines import Line2D
-
 import wandb
+from matplotlib.lines import Line2D
 
 # ==========================================
 # PRESENTATION STYLE SETTINGS
@@ -349,7 +347,7 @@ def generate_summary_table(
 
     # --- PASS 3: GENERATE THE TABLE ---
     with open(file_path, "w") as f:
-        f.write(f"\\begin{{table}}[htbp]\n  \\centering\n")
+        f.write("\\begin{table}[htbp]\n  \\centering\n")
         f.write(f"  \\caption{{{table_caption}}}\n")
         f.write(f"  \\label{{tab:{dataset}_{regime}_scaling}}\n")
         f.write("  \\resizebox{\\textwidth}{!}{\n")
@@ -517,7 +515,7 @@ def plot_grid_presentation(
     dataset_name = filters_base.get("config.dataset_name", "dataset").lower()
     prog_key = "iter" if "tinyshakespeare" in dataset_name else "epoch"
 
-    @lru_cache(maxsize=None)
+    @cache
     def get_history(run_id):
         return _load_history_cached_by_id(
             api, project_path, run_id, cache_dir, dataset_name

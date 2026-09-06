@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable
 from functools import reduce
-from typing import Callable, Iterable, List
 
 import torch
 from torch import Tensor, nn
@@ -105,7 +105,7 @@ class ASNTR(Optimizer):
 
         # precompute shapes and offsets for flatten/unflatten
         params = self.param_groups[0]["params"]
-        shapes: List[torch.Size] = []
+        shapes: list[torch.Size] = []
         offsets = [0]
         for p in params:
             n = p.numel()
@@ -191,7 +191,7 @@ class ASNTR(Optimizer):
         # evaluate objective and gradient
         fN_old = _["loss"] if "loss" in _ else closure_main(compute_grad=True)
         g = _["grad"] if "grad" in _ else self._flat_grads_fn()
-        
+
         fD_old = closure_d(compute_grad=True)
         g_bar = self._flat_grads_fn()
 
@@ -296,7 +296,7 @@ class ASNTR(Optimizer):
 
         # adjust delta
         if rho_N < self.eta_1:
-            self.delta = max(self.min_delta, self.delta*self.tau_1)
+            self.delta = max(self.min_delta, self.delta * self.tau_1)
         elif (
             rho_N > self.eta_2
             and torch.norm(step, p=self.norm_type) > self.tau_2 * self.delta

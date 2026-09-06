@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from functools import reduce
-from typing import List, Optional
 
 import torch
 
@@ -27,7 +26,7 @@ class LSR1:
         gamma: float = 1.0,
         memory_length: int = 10,
         tol: float = 1e-6,
-        device: Optional[torch.device] = None,
+        device: torch.device | None = None,
         dtype: torch.dtype | None = None,
     ):
         self.memory_length = int(memory_length)
@@ -45,8 +44,8 @@ class LSR1:
         self.gamma = torch.tensor(float(gamma), device=self.device, dtype=self.dtype)
 
         # Memory of curvature pairs
-        self._S: List[torch.Tensor] = []  # each tensor is shape (n,)
-        self._Y: List[torch.Tensor] = []
+        self._S: list[torch.Tensor] = []  # each tensor is shape (n,)
+        self._Y: list[torch.Tensor] = []
 
         # Pre-allocated workspace matrices for efficiency
         self._S_matrix: torch.Tensor | None = None  # (n, memory_length)
