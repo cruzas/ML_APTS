@@ -490,6 +490,14 @@ class APTS_Base(Optimizer):
         else:
             pred_red = pred
 
+        # pred_red is only ever compared against tolerances and used as the
+        # ratio denominator below -- it is never backpropagated through. The
+        # closures deliberately return graph-attached losses (see their
+        # docstrings), so pred derived from them arrives still attached, which
+        # both warns on the float() conversion and keeps the graph alive for
+        # the whole acceptance test. Detach it once, here.
+        pred_red = pred_red.detach()
+
         # Compute rho = (f(init) − f(trial)) / pred
         if abs(float(pred_red)) < self.tol:
             rho = float("inf")

@@ -93,7 +93,11 @@ class MyCNN(BaseCNN):
         for name in model_dict:
             model_dict[name]["stage"] = 0
 
-        return self.set_stage(model_dict, config.num_stages)
+        # BaseModel.set_stage() takes no arguments: it reads self.model_dict and
+        # self.config.num_stages, which is what was being passed positionally.
+        self.model_dict = model_dict
+        self.set_stage()
+        return model_dict
 
     def forward(self, x):
         # Forward logic implemented in pipeline
