@@ -12,7 +12,6 @@ from torch.utils.data import (
     DistributedSampler,
     Sampler,
 )
-from torch.utils.data.distributed import DistributedSampler
 
 
 class OverlapBatchSampler(BatchSampler):
@@ -287,9 +286,7 @@ class GeneralizedDistributedDataLoader(DataLoader):
             return RandomSampler(ds) if do_shuffle else SequentialSampler(ds)
 
         # dispatch by pipeline position
-        if model_handler.num_stages == 1:
-            layer_ranks = first_ranks
-        elif rank in first_ranks:
+        if model_handler.num_stages == 1 or rank in first_ranks:
             layer_ranks = first_ranks
         elif rank in last_ranks:
             layer_ranks = last_ranks
@@ -365,9 +362,9 @@ class MockDataset(Dataset):
         Returns:
             tuple: A tuple containing the item at the specified index.
         """
-        if self.first == True:
+        if self.first is True:
             return (self.dataset[idx][0], 1)
-        elif self.first == False:
+        elif self.first is False:
             return (1, self.dataset[idx][1])
         else:
             return (1, 1)
@@ -546,7 +543,7 @@ class Power_DL:
                 .to(self.device)
                 .type(dtype)
             )
-        except:
+        except Exception:
             # self.dataset.targets = torch.from_numpy(np.array(self.dataset.targets)).type(torch.LongTensor).to(self.device)
             # if torch.cuda.is_available():
             #     self.dataset.targets = torch.from_numpy(np.array(self.dataset.targets)).to(self.device).type(dtype)

@@ -3,7 +3,6 @@ import math
 import torch
 import torch.autograd as autograd
 import torch.nn as nn
-from torch import autograd
 
 from dd4ml.models.base_model import BaseModel
 from dd4ml.utility import is_function_module
@@ -46,9 +45,11 @@ class ShardedLayer(BasePMWModel):
                             self.layer = obj(**layer_dict["callable"]["settings"]).to(
                                 self.tensor_device
                             )
-                    except Exception as e:
-                        print("asd")
-                        raise e
+                    except Exception as exc:
+                        raise RuntimeError(
+                            f"Failed to construct layer {obj!r} with settings "
+                            f"{layer_dict['callable']['settings']!r}"
+                        ) from exc
 
                     # Optional initialization
                     if isinstance(self.layer, nn.Linear):
