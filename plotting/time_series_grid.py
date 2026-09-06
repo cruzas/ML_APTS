@@ -69,7 +69,7 @@ def _metric_label(metric: str) -> str:
 def _safe_int(v):
     try:
         return int(float(v))
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):
         return -1
 
 
@@ -340,7 +340,7 @@ def generate_summary_table(
         f"SAPTS configuration: global optimizer: {format_opt_name(glob_opt)}, local optimizer: {format_opt_name(loc_opt)}, $\\Delta^{{(0)}} = {delta}$. "
         f"Learning rates for SGD: {lr_str}. "
         f"Values are evaluated at {eval_point:.0f} {prog_label}s. "
-        f"An overlap of approximately 33\% was applied between consecutive mini-batches and micro-batches. "
+        f"An overlap of approximately 33\\% was applied between consecutive mini-batches and micro-batches. "
         f"Format for certain metrics: mean $\\pm$ standard deviation."
     )
 

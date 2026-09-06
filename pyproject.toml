@@ -89,6 +89,12 @@ dd4ml = ["rawdata/*.txt"]
 minversion = "8.0"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+# "." puts the repo root on sys.path so tests can import the top-level
+# `plotting` package, which is not part of the installed distribution. "src"
+# lets the suite run against a working tree without an editable install.
+# Bare `pytest` (what CI runs) does not add the invocation directory to
+# sys.path -- only `python -m pytest` does -- so this cannot be left implicit.
+pythonpath = [".", "src"]
 addopts = [
     "--strict-markers",
     "--strict-config",

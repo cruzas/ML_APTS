@@ -76,7 +76,7 @@ def _safe_int(v):
     """Safely converts value to int, handling strings/floats."""
     try:
         return int(float(v))
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):
         return -1
 
 
@@ -223,7 +223,7 @@ def get_style_for_combo(optimizer_name, n_val):
     opt = str(optimizer_name).lower()
     try:
         n = int(n_val)
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):
         n = 1
 
     if "sgd" in opt:
