@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import reduce
 from typing import Callable, Iterable, List
 
 import torch
@@ -71,9 +72,20 @@ class ASNTR(Optimizer):
         if self.dogleg and not self.second_order:
             raise ValueError("Dogleg is only applicable in second-order mode")
 
+        # Working dtype for every buffer this optimizer owns. Taken from the
+        # parameters, promoted to the widest present, so a float64 model is not
+        # silently truncated. See the flat-buffer allocation below.
+        self._param_dtype = reduce(
+            torch.promote_types, (p.dtype for p in self.param_groups[0]["params"])
+        )
+
         # SR1 memory and OBS solver
         self.hess = LSR1(
-            gamma=gamma, memory_length=mem_length, device=self.device, tol=self.tol
+            gamma=gamma,
+            memory_length=mem_length,
+            device=self.device,
+            dtype=self._param_dtype,
+            tol=self.tol,
         )
         self.obs = OBS()
 
@@ -92,9 +104,10 @@ class ASNTR(Optimizer):
         self.k = 0
 
         # precompute shapes and offsets for flatten/unflatten
+        params = self.param_groups[0]["params"]
         shapes: List[torch.Size] = []
         offsets = [0]
-        for p in self.param_groups[0]["params"]:
+        for p in params:
             n = p.numel()
             shapes.append(p.shape)
             offsets.append(offsets[-1] + n)
@@ -108,7 +121,11 @@ class ASNTR(Optimizer):
             st["flat_wk"] = flat_params.clone()
             st["flat_gk"] = flat_params.clone()
         else:
-            buf = torch.zeros(total_size, device=self.device)
+            # Take the dtype from the parameters rather than the global default.
+            # Every step stages parameters and gradients through these buffers,
+            # so allocating float32 here silently truncated a float64 model on
+            # each flatten/unflatten round trip.
+            buf = torch.zeros(total_size, device=self.device, dtype=self._param_dtype)
             st["flat_wk"] = buf
             st["flat_gk"] = buf.clone()
 
