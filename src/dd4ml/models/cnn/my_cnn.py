@@ -1,4 +1,6 @@
-from .base_cnn import *
+import torch.nn as nn
+
+from .base_cnn import BaseCNN, ConvBlock, FullyConnectedBlock
 
 
 class MyCNN(BaseCNN):

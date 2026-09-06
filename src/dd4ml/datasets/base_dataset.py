@@ -1,9 +1,10 @@
 from abc import ABC, abstractmethod
 from collections import Counter
 
+import torch
 from torch.utils.data import DataLoader, Dataset
 
-from dd4ml.utility import *
+from dd4ml.utility import CfgNode
 
 
 class BaseDataset(Dataset, ABC):

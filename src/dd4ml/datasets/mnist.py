@@ -1,6 +1,6 @@
 from torchvision import datasets, transforms
 
-from .base_dataset import *
+from .base_dataset import BaseDataset
 
 
 class MNISTDataset(BaseDataset):

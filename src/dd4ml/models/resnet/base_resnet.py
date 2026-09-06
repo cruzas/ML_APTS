@@ -1,6 +1,6 @@
 from abc import abstractmethod
 
-from dd4ml.models.base_model import *
+from dd4ml.models.base_model import BaseModel
 
 
 class BaseResNet(BaseModel):

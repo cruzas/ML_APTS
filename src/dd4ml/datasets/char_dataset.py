@@ -1,6 +1,8 @@
 import torch
 
-from .base_dataset import *
+from dd4ml.utility import dprint
+
+from .base_dataset import BaseDataset
 
 
 class CharDataset(BaseDataset):
