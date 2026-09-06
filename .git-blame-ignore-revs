@@ -1,0 +1,8 @@
+# Revisions to skip when running `git blame`.
+# Enable locally with:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# Repository-wide `ruff check --fix` and `ruff format` pass (78 files). Entirely
+# mechanical: unused-import removal, import sorting, typing modernisation and
+# reformatting. No behavioural changes.
+c6af42a3a72a053fc349a22ec7505f28acae050d
