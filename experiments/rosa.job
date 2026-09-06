@@ -16,7 +16,7 @@
 #SBATCH --exclusive
 
 # Source common environment files
-source ~/.tests_runpath
+source ~/.tests_runpath # Define TESTS_RUNPATH here: the absolute path to this repo's experiments/ directory
 cd "$TESTS_RUNPATH" || exit
 
 module purge

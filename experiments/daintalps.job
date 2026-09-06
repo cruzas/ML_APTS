@@ -19,7 +19,7 @@ source ~/.slurm_env # You should define SLURM_ACCOUNT in this file
 #SBATCH --account=$SLURM_ACCOUNT
 
 # Source common environment files
-source ~/.tests_runpath # You should define TESTS_RUNPATH in this file
+source ~/.tests_runpath # Define TESTS_RUNPATH here: the absolute path to this repo's experiments/ directory
 cd "$TESTS_RUNPATH" || exit
 
 # Load required modules

@@ -112,7 +112,7 @@ filterwarnings = [
 [tool.ruff]
 line-length = 88
 target-version = "py310"
-src = ["src", "tests"]
+src = ["src", "tests", "experiments"]
 extend-exclude = [
     "src/dd4ml/models/gpt/nanogpt",  # vendored from karpathy/minGPT
     "src/dd4ml/rawdata",
@@ -139,13 +139,9 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# Star imports remain in datasets/ and models/ and in dd4ml.utility's re-export
-# hub. Converting these to explicit imports is the same refactor already applied
-# to dd4ml/optimizers/; until it lands, F403/F405 stay scoped to the files that
-# still rely on the pattern instead of being ignored globally.
-"src/dd4ml/utility/__init__.py" = ["F401", "F403"]
-"src/dd4ml/datasets/*.py" = ["F403", "F405"]
-"src/dd4ml/models/**/*.py" = ["F403", "F405"]
+# Package __init__ files re-export names for callers, so an "unused" import is
+# the point. No F403/F405 exemptions remain: the star imports that once needed
+# them are gone from datasets/, models/ and dd4ml.utility's re-export hub.
 "**/__init__.py" = ["F401"]
 
 [tool.ruff.lint.isort]

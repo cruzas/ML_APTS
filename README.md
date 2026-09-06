@@ -58,16 +58,25 @@ In a ***local*** environment (e.g. PC), for example, you can run:
 ```bash
 open -a Docker
 wandb server start
-python3 ./tests/run_config_file.py --sweep_config="./tests/config_files/<config_file>.yaml"
+python3 ./experiments/run_config_file.py --sweep_config="./experiments/config_files/<config_file>.yaml"
 ```
-See `tests/config_files/` for the available configurations.
+See `experiments/config_files/` for the available configurations.
 
 In a ***cluster*** environment, e.g. managed by SLURM, you can run:
 ```bash
-cd tests
+cd experiments
 ./submit_jobs.sh --config <config_name>
 ```
-`<config_name>` must match a file in `tests/job_configs/` (without the `.conf` extension); it defines the optimizers, datasets, models and sweep parameters for the job. `submit_jobs.sh` and `submit_jobs_common.sh` take care of the job name, wandb usage, and picking the right cluster job template (`rosa.job` or `daintalps.job`, selected automatically based on the environment) — there's nothing to edit by hand. Change the time/number of GPUs/etc. directly in the relevant `.conf` file or job template if needed.
+`<config_name>` must match a file in `experiments/job_configs/` (without the `.conf` extension); it defines the optimizers, datasets, models and sweep parameters for the job. `submit_jobs.sh` and `submit_jobs_common.sh` take care of the job name, wandb usage, and picking the right cluster job template (`rosa.job` or `daintalps.job`, selected automatically based on the environment) — there's nothing to edit by hand. Change the time/number of GPUs/etc. directly in the relevant `.conf` file or job template if needed.
+
+Cluster runs also need three files in your home directory on the cluster:
+`~/.tests_runpath` (defining `TESTS_RUNPATH`, the absolute path to this repo's
+`experiments/` directory), `~/.slurm_env` (defining `SLURM_ACCOUNT`, daint-alps
+only) and `~/.wandb_env` (wandb credentials, sourced only when wandb is
+enabled). `TESTS_RUNPATH` is a legacy name from when these scripts lived under
+`tests/` — it must point at `experiments/`. See
+[experiments/README.md](experiments/README.md) for the details and for how to
+switch to `EXPERIMENTS_RUNPATH` instead.
 
 Note: 
 - The code works with or without wandb. If you need it, make sure to install wandb accordingly.
@@ -76,6 +85,12 @@ Note:
 
 ## Structure
 This library is meant to be general. 
+
+The repository is laid out as follows:
+- `src/dd4ml` — the installable library
+- `tests` — the pytest suite, and nothing else
+- `experiments` — run configurations, SLURM job templates, sweep submission scripts and analysis helpers
+- `plotting` — figure and table generation
 
 The src folder is structured as follows:
 - datasets (for processing data in rawdata)

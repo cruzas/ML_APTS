@@ -30,10 +30,10 @@ htmlcov/
 /data
 /rawdata
 /src/dd4ml/rawdata
-/tests/data
-/tests/rawdata
-/tests/IndexedMNIST
-/tests/MNIST
+/experiments/data
+/experiments/rawdata
+/experiments/IndexedMNIST
+/experiments/MNIST
 /MNIST
 plotting/data/
 
@@ -42,19 +42,19 @@ plotting/data/
 *.json
 *.pdf
 *.gz
-tests/log_files/
-tests/config_files/*trial*
+experiments/log_files/
+experiments/config_files/*trial*
 saved_networks/
 
 # Experiment tracker files (optional - uncomment if you don't want to commit tracking data)
-# tests/.experiment_tracker_*.json
-# tests/.example_tracker.json
+# experiments/.experiment_tracker_*.json
+# experiments/.example_tracker.json
 
 # Weights & Biases
 /wandb
-/tests/wandb/
-tests/wandb_sweep/wandb/
-tests/wandb_sweep/sweep_id.txt
+/experiments/wandb/
+experiments/wandb_sweep/wandb/
+experiments/wandb_sweep/sweep_id.txt
 
 # IDE
 .vscode/
