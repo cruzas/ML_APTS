@@ -65,12 +65,12 @@ See `tests/config_files/` for the available configurations.
 In a ***cluster*** environment, e.g. managed by SLURM, you can run:
 ```bash
 cd tests
-./submit_job.sh
+./submit_jobs.sh --config <config_name>
 ```
+`<config_name>` must match a file in `tests/job_configs/` (without the `.conf` extension); it defines the optimizers, datasets, models and sweep parameters for the job. `submit_jobs.sh` and `submit_jobs_common.sh` take care of the job name, wandb usage, and picking the right cluster job template (`rosa.job` or `daintalps.job`, selected automatically based on the environment) — there's nothing to edit by hand. Change the time/number of GPUs/etc. directly in the relevant `.conf` file or job template if needed.
 
 Note: 
-- The code works with or without wandb. If you need it, make sure to install wandb accordingly. 
-- In a cluster environment, you can set wandb usage by setting ```export USE_WANDB=1``` in ```./tests/submit_job.sh```.
+- The code works with or without wandb. If you need it, make sure to install wandb accordingly.
 - The ```Factory``` class defined in ```src/dd4ml/utility/factory.py``` allows you to dynamically add new classes, datasets, etc.
 - Ensure that the configured ```batch_size``` is at least the number of processes (```world_size```). If it is smaller, each process defaults to a per-process batch size of 1.
 
