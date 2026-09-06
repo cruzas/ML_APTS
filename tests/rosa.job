@@ -12,7 +12,7 @@
 #SBATCH --gres=gpu:${ntasks_per_node}           # Dynamically set tasks per node
 
 #SBATCH --hint=nomultithread
-#SBATCH --partition=gpu
+#SBATCH --partition=${partition} # Dynamically set partition
 #SBATCH --exclusive
 
 # Source common environment files
