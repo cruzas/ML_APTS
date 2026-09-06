@@ -48,9 +48,9 @@ parameters:
   model_name:
     value: "minigpt"
   width:
-    value: None
+    value: null
   num_layers:
-    value: None
+    value: null
   criterion:
     value: "cross_entropy_transformers"
   gradient_accumulation:

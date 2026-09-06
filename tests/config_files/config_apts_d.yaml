@@ -48,9 +48,9 @@ parameters:
   model_name:
     value: "medium_ffnn"
   width:
-    value: None
+    value: null
   num_layers:
-    value: None
+    value: null
   criterion:
     value: "cross_entropy"
   gradient_accumulation:

@@ -42,7 +42,7 @@ parameters:
   gradient_accumulation:
     value: false
   accumulation_steps:
-    value: None
+    value: null
   batch_inc_factor:
     value: 1.5
   overlap:

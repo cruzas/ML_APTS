@@ -21,9 +21,9 @@ parameters:
   model_name:
     value: "ffnn"
   width:
-    value: None
+    value: null
   num_layers:
-    value: None
+    value: null
   criterion:
     value: "cross_entropy"
   seed:
@@ -43,7 +43,7 @@ parameters:
   gradient_accumulation:
     value: False
   accumulation_steps:
-    value: None
+    value: null
   batch_inc_factor:
     value: 1.0
   overlap:
