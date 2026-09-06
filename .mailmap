@@ -1,0 +1,29 @@
+# Canonical author identities.
+#
+# Commits made from the CSCS login nodes picked up a per-node hostname as the
+# email domain, so a single person appears as a dozen contributors in
+# `git shortlog`, `git blame` and anything built on them. Mapping them here
+# collapses those back to one identity without rewriting any history.
+#
+# Format: Canonical Name <canonical@email> Commit Name <commit@email>
+#
+# Note: GitHub's own contributor graph does not read .mailmap -- it links
+# commits to accounts by the email recorded in each commit. This affects local
+# git tooling only.
+
+Samuel A. Cruz Alegría <cruzas@usi.ch> Samuel Cruz <cruzas@users.noreply.github.com>
+Samuel A. Cruz Alegría <cruzas@usi.ch> cruzas <cruzas@usi.ch>
+Samuel A. Cruz Alegría <cruzas@usi.ch> cruzas@usi.ch <cruzas@usi.ch>
+Samuel A. Cruz Alegría <cruzas@usi.ch> Samuel Adolfo Cruz Alegria <scruzale@daint-ln001.cscs.ch>
+Samuel A. Cruz Alegría <cruzas@usi.ch> Samuel Adolfo Cruz Alegria <scruzale@daint-ln002.cscs.ch>
+Samuel A. Cruz Alegría <cruzas@usi.ch> Samuel Adolfo Cruz Alegria <scruzale@daint-ln003.cscs.ch>
+Samuel A. Cruz Alegría <cruzas@usi.ch> Samuel Adolfo Cruz Alegria <scruzale@daint-ln004.cscs.ch>
+Samuel A. Cruz Alegría <cruzas@usi.ch> Samuel Adolfo Cruz Alegria <scruzale@daint101.login.cscs.ch>
+Samuel A. Cruz Alegría <cruzas@usi.ch> Samuel Adolfo Cruz Alegria <scruzale@daint102.login.cscs.ch>
+Samuel A. Cruz Alegría <cruzas@usi.ch> Samuel Adolfo Cruz Alegria <scruzale@daint103.login.cscs.ch>
+Samuel A. Cruz Alegría <cruzas@usi.ch> Samuel Adolfo Cruz Alegria <scruzale@daint104.login.cscs.ch>
+Samuel A. Cruz Alegría <cruzas@usi.ch> Samuel Adolfo Cruz Alegria <scruzale@daint105.login.cscs.ch>
+Samuel A. Cruz Alegría <cruzas@usi.ch> Samuel Adolfo Cruz Alegria <scruzale@daint106.login.cscs.ch>
+
+# Name-only correction; the commit email is left untouched.
+Marc Salvadó Benasco <marcsalvado4@gmail.com> Marc Salvado Benasco <marcsalvado4@gmail.com>

@@ -10,13 +10,17 @@ Domain decomposition methods for machine learning.
 The code uses minGPT and builds from it: https://github.com/karpathy/minGPT/tree/master
 
 ## Authors
-* Samuel A. Cruz Alegría (1, 3); cruzas@usi.ch.
+* Dr. Samuel A. Cruz Alegría (1, 3); cruzas@usi.ch
 * Dr. Ken Trotti (2); ken.trotti@usi.ch
 * Marc Salvadó Benasco (1, 3, 4); marc.salvado@usi.ch
 * Shega Likaj (1, 2, 3); shega.likaj@usi.ch
-* Bindi Capriqi (1, 2, 3); bindi.capriqi@kaust.edu.sa
+* Bindi Çapriqi (1, 2, 3); bindi.capriqi@kaust.edu.sa
 * Armando Maria Monforte (3, 5); armandomaria.monforte01@universitadipavia.it
 * Prof. Dr. Rolf Krause (2, 3); rolf.krause@kaust.edu.sa
+
+## Maintainers
+The library is developed and maintained by Dr. Samuel A. Cruz Alegría and
+Dr. Ken Trotti.
 
 ## Collaborators
 * Prof. Dr. Alena Kopaničáková (6)
@@ -27,7 +31,23 @@ The code uses minGPT and builds from it: https://github.com/karpathy/minGPT/tree
 3. UniDistance Suisse
 4. Universitat Politècnica de Catalunya (UPC)
 5. University of Pavia
-6. University of Toulouse
+6. Université de Genève
+
+## Publications
+The methods implemented here are described in the following papers:
+
+* K. Trotti, S. A. Cruz Alegría, A. Kopaničáková, R. Krause.
+  **Parallel trust-region approaches in neural network training.**
+  *Proceedings of the MATH+ Thematic Einstein Semester*, 107–120, 2023.
+* S. A. Cruz Alegría, K. Trotti, A. Kopaničáková, R. Krause.
+  **Data-parallel neural network training via nonlinearly preconditioned
+  trust-region method.**
+  *Numerical Mathematics and Advanced Applications ENUMATH 2023*, Volume 1,
+  34–43, 2025.
+* S. Cruz Alegría, B. Çapriqi, S. Likaj, K. Trotti, R. Krause.
+  **An additively preconditioned trust region strategy for machine learning.**
+  *arXiv preprint* [arXiv:2512.14286](https://arxiv.org/abs/2512.14286), 2025.
+  Submitted for review.
 
 ## Requirements
 See ``pyproject.toml`` file. 

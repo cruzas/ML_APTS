@@ -23,12 +23,13 @@ authors = [
     { name = "Ken Trotti", email = "ken.trotti@usi.ch" },
     { name = "Marc Salvadó Benasco", email = "marc.salvado@usi.ch" },
     { name = "Shega Likaj", email = "shega.likaj@usi.ch" },
-    { name = "Bindi Capriqi", email = "bindi.capriqi@kaust.edu.sa" },
+    { name = "Bindi Çapriqi", email = "bindi.capriqi@kaust.edu.sa" },
     { name = "Armando Maria Monforte", email = "armandomaria.monforte01@universitadipavia.it" },
     { name = "Rolf Krause", email = "rolf.krause@kaust.edu.sa" },
 ]
 maintainers = [
     { name = "Samuel Adolfo Cruz Alegría", email = "cruzas@usi.ch" },
+    { name = "Ken Trotti", email = "ken.trotti@usi.ch" },
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
