@@ -69,7 +69,7 @@ def _metric_label(metric: str) -> str:
 def _safe_int(v):
     try:
         return int(float(v))
-    except:
+    except (ValueError, TypeError):
         return -1
 
 
@@ -79,7 +79,7 @@ def _loose_match(actual, target):
     try:
         if abs(float(actual) - float(target)) < 1e-6:
             return True
-    except:
+    except (ValueError, TypeError):
         pass
     return False
 
@@ -92,7 +92,7 @@ def _load_history_cached_by_id(api, project_path, run_id, cache_dir, dataset):
     if path and os.path.exists(path):
         try:
             return pd.read_pickle(path)
-        except:
+        except Exception:
             pass
     try:
         run = api.run(f"{project_path}/{run_id}")
@@ -114,7 +114,7 @@ def _load_history_cached_by_id(api, project_path, run_id, cache_dir, dataset):
             os.makedirs(os.path.dirname(path), exist_ok=True)
             df.to_pickle(path)
         return df
-    except:
+    except Exception:
         return pd.DataFrame()
 
 
@@ -135,7 +135,7 @@ def _list_runs_cached(api, project_path, filters, cache_dir, dataset):
     ):
         try:
             return pd.read_pickle(path)["runs"]
-        except:
+        except Exception:
             pass
     runs = api.runs(project_path, filters=filters)
     recs = [
@@ -276,7 +276,6 @@ def generate_summary_table(
 
     is_strong = regime.lower() == "strong"
     bs_acronym = "GBS" if is_strong else "EBS"
-    bs_full = "global batch size (GBS)" if is_strong else "effective batch size (EBS)"
 
     metric_col_name = "Speedup" if is_strong else "Efficiency"
 

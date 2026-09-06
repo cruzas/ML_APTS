@@ -76,7 +76,7 @@ def _safe_int(v):
     """Safely converts value to int, handling strings/floats."""
     try:
         return int(float(v))
-    except:
+    except (ValueError, TypeError):
         return -1
 
 
@@ -97,7 +97,7 @@ def _loose_match(actual, target):
         f_tgt = float(target)
         if abs(f_act - f_tgt) < 1e-6:
             return True
-    except:
+    except (ValueError, TypeError):
         pass
 
     return False
@@ -164,7 +164,7 @@ def _load_history_cached_by_id(api, project_path, run_id, cache_dir, dataset):
         if cache_dir and path:
             try:
                 df.to_pickle(path)
-            except:
+            except Exception:
                 pass
         return df
 
@@ -195,7 +195,7 @@ def _list_runs_cached(api, project_path, filters, cache_dir, dataset, max_age_ho
                 # Return cached runs if fresh enough
                 if now - payload["_fetched_at"] <= max_age_hours * 3600:
                     return payload["runs"]
-            except:
+            except Exception:
                 pass
 
     print(f"  -> [Network] Fetching run list for filter: {filters} ...")
@@ -210,7 +210,7 @@ def _list_runs_cached(api, project_path, filters, cache_dir, dataset, max_age_ho
     if cache_dir:
         try:
             pd.to_pickle({"_fetched_at": time.time(), "runs": records}, path)
-        except:
+        except Exception:
             pass
 
     return records
@@ -223,7 +223,7 @@ def get_style_for_combo(optimizer_name, n_val):
     opt = str(optimizer_name).lower()
     try:
         n = int(n_val)
-    except:
+    except (ValueError, TypeError):
         n = 1
 
     if "sgd" in opt:
@@ -517,7 +517,7 @@ def plot_presentation_pair(
                 if ov_val is not None:
                     try:
                         overlap_str = f"{float(ov_val):g}"
-                    except:
+                    except (ValueError, TypeError):
                         overlap_str = str(ov_val)
 
                 if "sgd" in opt_lower:
@@ -525,7 +525,7 @@ def plot_presentation_pair(
                     if raw_lr is not None:
                         try:
                             lr_str = f"{float(raw_lr):g}"
-                        except:
+                        except (ValueError, TypeError):
                             lr_str = str(raw_lr)
 
                 if "apts" in opt_lower:
@@ -535,17 +535,17 @@ def plot_presentation_pair(
                     if d is not None:
                         try:
                             delta_str = f"{float(d):g}"
-                        except:
+                        except (ValueError, TypeError):
                             delta_str = str(d)
                     if md is not None:
                         try:
                             max_delta_str = f"{float(md):g}"
-                        except:
+                        except (ValueError, TypeError):
                             max_delta_str = str(md)
                     if mind is not None:
                         try:
                             min_delta_str = f"{float(mind):g}"
-                        except:
+                        except (ValueError, TypeError):
                             min_delta_str = str(mind)
 
                 g_opt = first_cfg.get("glob_opt") or first_cfg.get("global_optimizer")

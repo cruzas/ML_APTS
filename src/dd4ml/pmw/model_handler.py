@@ -133,10 +133,13 @@ class ModelHandler:
             print(
                 f"Rank {self.rank}/{dist.get_world_size() - 1} is assigned to SD {self.sd}, Rep {self.rep}, S {self.s}, SH {self.sh}."
             )
-        except:
+        except KeyError as exc:
+            # Only a missing cache entry means the rank is unassigned. A bare
+            # except also caught anything raised by the print above and
+            # reported it under this message, which is misleading.
             raise ValueError(
                 f"Rank {self.rank}/{dist.get_world_size() - 1} is not assigned to any subdomain, replica, stage, or shard."
-            )
+            ) from exc
         self._ = self.rank_to_position()  # Ensures caching within rank_to_position.
         self._stage_data = self.stage_data()
         self.get_list_of_consecutive_layers()  # Caches the consecutive layers.

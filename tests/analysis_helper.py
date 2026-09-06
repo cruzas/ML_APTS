@@ -284,7 +284,7 @@ def calculate_params(model_type: str, config: dict) -> int | None:
                 blk = l * (10 * e * e + 4 * e)  # Simplified GPT block estimate
                 head = 2 * e + e * v
                 return emb + blk + head
-    except:
+    except Exception:
         return None
     return None
 

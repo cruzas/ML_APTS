@@ -183,14 +183,13 @@ def closure(
         ):
             # Use specified precision for distributed operations
             # Ensure consistent precision throughout the reduction
-            original_dtype = loss.dtype
             loss = loss.to(precision_dtype)
             dist.all_reduce(loss, op=dist.ReduceOp.SUM)
             loss.div_(
                 dist.get_world_size()
             )  # In-place division (safe after all_reduce)
-            # Convert back to original dtype if needed (but keep precision_dtype for training)
-            # loss = loss.to(original_dtype) if original_dtype != precision_dtype else loss
+            # The loss deliberately stays in precision_dtype rather than being
+            # converted back: training continues at that precision.
 
         # Compute gradients
         if compute_grad and torch.is_grad_enabled():
