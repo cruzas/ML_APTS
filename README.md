@@ -1,5 +1,6 @@
 # DD4ML
 
+[![CI](https://github.com/cruzas/DD4ML/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/cruzas/DD4ML/actions/workflows/ci.yml)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue.svg)](pyproject.toml)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-D7FF64.svg)](https://github.com/astral-sh/ruff)
