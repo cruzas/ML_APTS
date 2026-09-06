@@ -1,77 +1,68 @@
 # Byte-compiled files
 *.pyc
-*__pycache__/
+__pycache__/
 
-# Virtual environment
+# Virtual environments
 .env/
 venv/
 dd4ml-venv/
+/myvenv
+
+# Build / packaging
+build/
+dist/
+*.egg-info/
+
+# Test, coverage and tool caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
 
 # PyTorch checkpoint files
 *.pth
 *.pt
 
-# Results and logs
-tests/wandb_sweep/wandb/
-tests/wandb_sweep/sweep_id.txt
+# Datasets and raw data caches
+/data
+/rawdata
+/src/dd4ml/rawdata
+/tests/data
+/tests/rawdata
+/tests/IndexedMNIST
+/tests/MNIST
+/MNIST
+plotting/data/
+
+# Results, logs and generated artifacts
 *.csv
+*.json
+*.pdf
+*.gz
+tests/log_files/
+tests/config_files/*trial*
+saved_networks/
 
 # Experiment tracker files (optional - uncomment if you don't want to commit tracking data)
 # tests/.experiment_tracker_*.json
 # tests/.example_tracker.json
 
-# IDE files
+# Weights & Biases
+/wandb
+/tests/wandb/
+tests/wandb_sweep/wandb/
+tests/wandb_sweep/sweep_id.txt
+
+# IDE
 .vscode/
 .idea/
-
-# Build files
-build/
-dist/
-*.egg-info/
 
 # OS files
 .DS_Store
 Thumbs.db
-*.gz
-/tests/rawdata/cifar-10-batches-py
-/src/rawdata
-/tests/rawdata
-/tests/wandb/wandb
-/tests/wandb
-/wandb
-tests/log_files/
-/rawdata
-/myvenv
-/data
-/tests/data
-/src/datasets
-/src/models
-/src/optimizers/
-/src/utility
-/tests/pinns
 
-tests/config_files/config_files/*trial*
-/MNIST
-/tests/IndexedMNIST
-/tests/MNIST
-/tests/config_files/*trial*
-
-*.pdf
-*.json
-
+# Claude Code
 .claude
-.idea
-.vscode
-./saved_networks
-plotting/data/MNIST/raw/train-labels-idx1-ubyte
-plotting/data/MNIST/raw/train-images-idx3-ubyte
-plotting/data/MNIST/raw/t10k-labels-idx1-ubyte
-plotting/data/MNIST/raw/t10k-images-idx3-ubyte
-plotting/data/cifar-10-batches-py/test_batch
-plotting/data/cifar-10-batches-py/readme.html
-plotting/data/cifar-10-batches-py/data_batch_5
-plotting/data/cifar-10-batches-py/data_batch_4
-plotting/data/cifar-10-batches-py/data_batch_3
-plotting/data/cifar-10-batches-py/data_batch_2
-plotting/data/cifar-10-batches-py/data_batch_1
-plotting/data/cifar-10-batches-py/batches.meta

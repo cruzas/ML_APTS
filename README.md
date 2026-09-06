@@ -1,4 +1,9 @@
 # DD4ML
+
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue.svg)](pyproject.toml)
+[![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-D7FF64.svg)](https://github.com/astral-sh/ruff)
+
 Domain decomposition methods for machine learning.
 
 The code uses minGPT and builds from it: https://github.com/karpathy/minGPT/tree/master
@@ -52,8 +57,9 @@ In a ***local*** environment (e.g. PC), for example, you can run:
 ```bash
 open -a Docker
 wandb server start
-python3 ./tests/run_config_file.py --sweep_config="./tests/config_files/config_sgd.yaml"
+python3 ./tests/run_config_file.py --sweep_config="./tests/config_files/<config_file>.yaml"
 ```
+See `tests/config_files/` for the available configurations.
 
 In a ***cluster*** environment, e.g. managed by SLURM, you can run:
 ```bash
@@ -78,12 +84,6 @@ The src folder is structured as follows:
 - utility
 
 You can extend the library by adding your own files in any of these modules. If you create a new folder within them, make sure to add an ```__init__.py``` file and then re-run ```python3 -m pip install .```, or ```python3 -m pip install --force-reinstall .``` if necessary.
-
-### DeepONet Example
-This project includes a basic DeepONet implementation (`deeponet`) together with
-a small synthetic dataset (`deeponet_sine`). To try it out locally you can run
-`tests/run_config_file.py` with `--model_name deeponet --dataset_name deeponet_sine`.
-For batch testing on a cluster, see `tests/submit_jobs_deeponet.sh`.
 
 ## Note
 In case it's necessary, you may need to run the following:
