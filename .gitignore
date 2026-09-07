@@ -42,6 +42,9 @@ plotting/data/
 *.json
 *.pdf
 *.gz
+# default outputs of the example scripts (anchored: docs/ figures are committed)
+/quickstart.png
+/pinn_poisson_exact.png
 experiments/log_files/
 experiments/config_files/*trial*
 saved_networks/

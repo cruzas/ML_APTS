@@ -37,6 +37,76 @@ For ***GPU support***, install the appropriate CUDA-enabled version of PyTorch b
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 ```
 
+## Quickstart
+No Docker, no wandb, no cluster — this runs in a few seconds and scores every
+method against a known optimum:
+
+```bash
+python3 experiments/examples/quickstart.py
+```
+
+It minimizes a convex quadratic `f(w) = ½(w − w*)ᵀA(w − w*)` with condition
+number 10⁶, where `f(w*) = 0` exactly, so results are measured against the truth
+rather than against a loss curve. Both baselines get a learning-rate sweep and
+are scored at their best, so nothing hinges on a badly chosen step size.
+
+```
+  1. Does the ill-conditioning align with the coordinate axes?
+     Hessian                         SGD       Adam           TR
+     diagonal                        inf   2.45e-18     5.91e-19
+     rotated                         inf   7.83e+01     1.19e-20
+
+  2. Does the SR1 memory capture the curvature? (rotated problem)
+     SR1 memory                 final f(w)
+     5                            1.44e+02
+     10                           2.08e+01
+     20                           1.19e-20  <- memory = n, SR1 is exact for a quadratic
+```
+
+![Convergence on a rotated ill-conditioned quadratic](docs/quickstart.png)
+
+Two conditions decide the outcome, and together they say when these optimizers
+are worth reaching for. **First**, whether the ill-conditioning is
+coordinate-aligned: Adam reaches machine precision on the diagonal problem,
+because its per-parameter scaling *is* a diagonal preconditioner — that is its
+best case, not a hard one. Rotating the same spectrum leaves the condition
+number untouched but no per-coordinate rescaling can undo it, and Adam stalls
+twenty orders of magnitude short while the trust-region method is unaffected.
+**Second**, whether the limited-memory SR1 model has enough curvature pairs:
+with `n` pairs it reproduces the Hessian of an `n`-dimensional quadratic
+exactly, and the trust-region step becomes a Newton step.
+
+### A physics-informed network
+
+The same reasoning says where these methods do *not* dominate. On a large
+network with a well-conditioned loss and memory far below the parameter count,
+a cheap diagonal preconditioner is hard to beat.
+
+```bash
+python3 experiments/examples/pinn_poisson_exact.py
+```
+
+This solves `-u''(x) = sin(pi x)` on `(0, 1)` with `u(0) = u(1) = 0` using a
+physics-informed network. The exact solution `u(x) = sin(πx)/π²` is known, so
+the script reports the **relative L2 error against the truth** rather than a
+training loss:
+
+```
+  first-order   relative L2 error 7.417e-01   residual loss 2.34e-04   2.5s
+  second-order  relative L2 error 6.214e-02   residual loss 2.59e-05   8.3s
+
+  second-order is 11.9x more accurate for the same budget
+```
+
+![1D Poisson solved with a physics-informed network](docs/pinn_poisson.png)
+
+The second-order method is 2× to 20× more accurate here depending on the seed —
+a real gain, but nothing like the margin on the rotated quadratic above. In the
+plot the first-order result visibly fails to satisfy the boundary conditions,
+while the second-order curve tracks the exact solution. Well-tuned Adam is
+competitive on this problem, which is exactly what the two conditions above
+predict.
+
 ## Usage
 In a ***local*** environment (e.g. PC), for example, you can run:
 ```bash
