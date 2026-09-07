@@ -18,7 +18,7 @@ without ever forming a Hessian.
 In practice this means a training loop that is parallel by construction, has a
 principled acceptance test for every step rather than a hand-tuned learning
 rate, and applies equally to standard supervised learning and to
-physics-informed networks. The methods are described in the
+physics-informed neural networks (PINNs). The methods are described in the
 [publications](#publications) below.
 
 The code uses minGPT and builds from it: https://github.com/karpathy/minGPT/tree/master
@@ -80,7 +80,7 @@ twenty orders of magnitude short while the trust-region method is unaffected.
 with `n` pairs it reproduces the Hessian of an `n`-dimensional quadratic
 exactly, and the trust-region step becomes a Newton step.
 
-### A physics-informed network
+### A physics-informed neural network
 
 The same reasoning says where these methods do *not* dominate. On a large
 network with a well-conditioned loss and memory far below the parameter count,
@@ -91,9 +91,9 @@ python3 experiments/examples/pinn_poisson_exact.py
 ```
 
 This solves `-u''(x) = sin(pi x)` on `(0, 1)` with `u(0) = u(1) = 0` using a
-physics-informed network. The exact solution `u(x) = sin(πx)/π²` is known, so
-the script reports the **relative L2 error against the truth** rather than a
-training loss:
+physics-informed neural network. The exact solution `u(x) = sin(πx)/π²` is
+known, so the script reports the **relative L2 error against the truth** rather
+than a training loss:
 
 ```
   first-order   relative L2 error 7.417e-01   residual loss 2.34e-04   2.5s
@@ -102,7 +102,7 @@ training loss:
   second-order is 11.9x more accurate for the same budget
 ```
 
-![1D Poisson solved with a physics-informed network](docs/pinn_poisson.png)
+![1D Poisson solved with a physics-informed neural network](docs/pinn_poisson.png)
 
 The second-order method is 2× to 20× more accurate here depending on the seed —
 a real gain, but nothing like the margin on the rotated quadratic above. In the

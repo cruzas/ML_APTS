@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Quickstart: solve a 1D Poisson problem with a physics-informed network.
+"""Quickstart: solve a 1D Poisson problem with a physics-informed neural network.
 
 Run it with no arguments and no infrastructure -- no Docker, no wandb, no
 cluster:
@@ -150,7 +150,7 @@ def main() -> None:
         )
     plt.xlabel("$x$")
     plt.ylabel("$u(x)$")
-    plt.title("1D Poisson via a physics-informed network")
+    plt.title("1D Poisson via a physics-informed neural network")
     plt.legend()
     plt.tight_layout()
     plt.savefig(args.output, dpi=150)
