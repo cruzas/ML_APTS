@@ -460,7 +460,7 @@ def generic_run(
     # Adjust args for apts_d optimizer.
     if (
         "apts" in wandb_config.get("optimizer", "").lower()
-        and not "apts_ip" == wandb_config.get("optimizer", "").lower()
+        and not wandb_config.get("optimizer", "").lower() == "apts_ip"
     ):
         args["use_pmw"] = False
         args["num_subdomains"] = dist.get_world_size() if dist.is_initialized() else 1
