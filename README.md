@@ -109,6 +109,12 @@ are pinned in both directions so a float64 model is never silently truncated to
 float32. A separate check imports every module in isolation, which is the only
 way to catch a circular import that the usual entry points happen to mask.
 
+That effort is concentrated where correctness is hardest to eyeball: the
+optimizers and the trust-region subproblem solver sit at 73% line coverage
+(46% across the package as a whole). Most of the remainder is the model-parallel
+layer, which needs a multi-rank distributed job and so cannot execute on a
+single-process CI runner.
+
 ## Troubleshooting
 In case it's necessary, you may need to run the following:
 ```bash
