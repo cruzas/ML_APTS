@@ -109,7 +109,7 @@ class OBS:
         # part, C = V_r Sigma_r^{-1/2} makes Q = Psi C an orthonormal basis of
         # range(Psi), and R_r = Sigma_r^{1/2} V_r^T takes over the role of the
         # Cholesky factor, since Q^T Psi = R_r. The compact representation
-        # B = gamma I + Psi M Psi^T is untouched; only the factorisation used to
+        # B = gamma I + Psi M Psi^T is untouched; only the factorization used to
         # diagonalise it changes. No curvature information is discarded -- the
         # directions dropped are exactly those Psi does not span, on which B
         # already acts as gamma I.

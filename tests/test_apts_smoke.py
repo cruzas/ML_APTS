@@ -1,12 +1,12 @@
 """Smoke tests for the APTS optimizer family.
 
 Unlike the trust-region optimizers in ``test_optimizers_smoke.py``, the APTS
-methods do not minimise a bare function: they take ``step(inputs, labels)`` and
+methods do not minimize a bare function: they take ``step(inputs, labels)`` and
 drive a model through a criterion. The problem with a known solution used here
 is therefore a supervised one -- two tight, well-separated Gaussian clusters,
 whose exact solution is "every point classified correctly, loss 0".
 
-These tests initialise a real single-rank ``gloo`` process group rather than
+These tests initialize a real single-rank ``gloo`` process group rather than
 mocking ``torch.distributed``, so the collective calls inside APTS execute for
 real (on one rank a reduction is a no-op, but the code path is taken).
 """

@@ -1122,7 +1122,7 @@ class Trainer:
                 and self.optimizer.loc_model is not None
             ):
                 # APTS-based optimizers keep a separate local model that
-                # is cloned during initialisation.  When switching the main
+                # is cloned during initialization.  When switching the main
                 # model to ``float64`` we must also convert this local copy,
                 # otherwise forward passes inside the optimizer will mix
                 # ``float32`` weights with ``float64`` inputs, triggering
@@ -1204,7 +1204,7 @@ class Trainer:
         self.model = self.model.double()
         if hasattr(self.optimizer, "loc_model"):
             # APTS-based optimizers keep a separate local model that
-            # is cloned during initialisation.  When switching the main
+            # is cloned during initialization.  When switching the main
             # model to ``float64`` we must also convert this local copy,
             # otherwise forward passes inside the optimizer will mix
             # ``float32`` weights with ``float64`` inputs, triggering

@@ -9,7 +9,7 @@ The reference is:
 
 Equation numbers below refer to that paper:
 
-    (4)  Q_k(p) = 0.5 p^T B_k p + g_k^T p,      minimised over ||p|| <= delta_k
+    (4)  Q_k(p) = 0.5 p^T B_k p + g_k^T p,      minimized over ||p|| <= delta_k
     (6)  rho_{N_k} = (f_{N_k}(w_t) - r_{N_k}) / Q_k(p_k)
     (7)  r_{N_k}   = f_{N_k}(w_k) + t_k * delta_k
     (9)  rho_{D_k} = (f_{D_k}(w_t) - r_{D_k}) / L_k(-g_bar_k),  L_k(v) = v^T g_bar_k
@@ -42,8 +42,8 @@ TINY_NONMONOTONE = {"c_1": 1e-9, "c_2": 1e-9, "alpha": 1.1}
 def _make_problem(w0, n_scale=1.0, d_center=0.0, d_scale=1.0):
     """Return (param, closure_main, closure_d) for two quadratics.
 
-    f_N(w) = 0.5 * n_scale * ||w||^2               (minimiser at 0)
-    f_D(w) = 0.5 * d_scale * ||w - d_center||^2    (minimiser at d_center)
+    f_N(w) = 0.5 * n_scale * ||w||^2               (minimizer at 0)
+    f_D(w) = 0.5 * d_scale * ||w - d_center||^2    (minimizer at d_center)
 
     Each closure writes its own gradient into ``param.grad`` when asked, which
     is what ASNTR's flat-gradient hook reads back.
@@ -122,7 +122,7 @@ def test_trust_region_grows_on_very_good_step():
 def test_worsening_step_is_rejected_and_radius_shrinks():
     """A trial point that raises f_N gives rho_N < eta_1: reject and shrink.
 
-    Starting at w = -0.05 with delta = 0.2, the step overshoots the minimiser to
+    Starting at w = -0.05 with delta = 0.2, the step overshoots the minimizer to
     w_t = 0.15, so f_N increases and the iterate must be restored.
     """
     param, cm, cd = _make_problem([-0.05])
@@ -141,7 +141,7 @@ def test_worsening_step_is_rejected_and_radius_shrinks():
 def test_rho_d_can_veto_an_otherwise_good_step():
     """Eq. (9)/(10): when subsampled, both ratios must clear their thresholds.
 
-    f_D is centred at 2.0, so stepping 1.0 -> 0.9 moves away from the D-minimiser:
+    f_D is centred at 2.0, so stepping 1.0 -> 0.9 moves away from the D-minimizer:
         f_D(w_k) = 0.5, f_D(w_t) = 0.605, g_bar = -1
         L_k(-g_bar) = -||g_bar||^2 = -1              (Eq. 9 denominator)
         r_{D_k} ~= 0.5                               (Eq. 10, ttilde_k ~ 0)
@@ -182,7 +182,7 @@ def test_agreeing_subsample_accepts_the_step():
 
 
 def test_converges_on_quadratic():
-    """Repeated steps drive the iterate toward the minimiser of f_N."""
+    """Repeated steps drive the iterate toward the minimizer of f_N."""
     param, cm, cd = _make_problem([1.0])
     opt = _opt(param, delta=0.25)
 
@@ -220,7 +220,7 @@ def test_flat_buffers_adopt_the_parameter_dtype():
     assert opt.state["flat_wk"].dtype == torch.float64
     assert opt.state["flat_gk"].dtype == torch.float64
 
-    # This step is rejected (it overshoots the minimiser), so w_k must come back
+    # This step is rejected (it overshoots the minimizer), so w_k must come back
     # bit-for-bit, not merely to within float32 precision.
     opt.step(closure_main=cm, closure_d=cd, hNk=0.0)
     assert param.detach().item() == -0.05

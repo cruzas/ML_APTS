@@ -6,7 +6,7 @@ Reference:
     subproblems", Computational Optimization and Applications 66:245-266 (2017).
     https://arxiv.org/pdf/1506.07222
 
-OBS minimises the quadratic model
+OBS minimizes the quadratic model
 
     m(p) = g^T p + 0.5 p^T B p     subject to   ||p|| <= delta
 
@@ -14,7 +14,7 @@ where B is held in the compact L-SR1 form  B = gamma I + Psi M Psi^T, with
 Minv = M^-1 supplied by dd4ml.optimizers.lsr1.LSR1.
 
 The core of this module is a comparison against an exact dense solve. B is small
-enough here to diagonalise outright, so the true constrained minimiser can be
+enough here to diagonalise outright, so the true constrained minimizer can be
 computed independently and OBS held to it. That is what exposed the missing
 1/tau factor in ComputeSBySMW, which had made every step this solver returned
 wrong by a factor of tau; a smoke test that only asked "does it run" passed
@@ -30,9 +30,9 @@ DTYPE = torch.float64
 
 
 def exact_tr_solution(B, g, delta):
-    """Exact minimiser of g^T p + 0.5 p^T B p over ||p|| <= delta.
+    """Exact minimizer of g^T p + 0.5 p^T B p over ||p|| <= delta.
 
-    Diagonalise B and apply the Moré-Sorensen characterisation: the solution is
+    Diagonalise B and apply the Moré-Sorensen characterization: the solution is
     p(sigma) = -Q (Q^T g)/(lambda + sigma) for the unique sigma >= max(0,
     -lambda_min) that puts ||p|| on the boundary, or the unconstrained Newton
     point when that already lies inside. sigma is found by bisection, which is

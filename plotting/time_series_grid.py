@@ -180,7 +180,6 @@ def save_latex_figure_code(
     present_variants,
     eval_point,
     data_cache,
-    get_history_fn,
 ):
     os.makedirs(tex_dir, exist_ok=True)
     filename = f"{dataset}_{regime}_{xax}_grid.tex"
@@ -861,9 +860,6 @@ def main():
                     variants,
                     cfg["eval_point"],
                     data_cache,
-                    lambda rid: _load_history_cached_by_id(
-                        api, proj, rid, cache_dir, dataset
-                    ),
                 )
 
                 if xax == "grad_evals":

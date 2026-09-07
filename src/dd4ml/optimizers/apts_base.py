@@ -245,7 +245,7 @@ class APTS_Base(Optimizer):
         loss = self.criterion(self.loc_model(self.inputs), self.labels.long())
         if compute_grad:
             # ``loss`` may be used for multiple backward passes within the
-            # trust-region optimisation loop.  Retaining the graph prevents
+            # trust-region optimization loop.  Retaining the graph prevents
             # PyTorch from freeing intermediate tensors too early, avoiding
             # ``RuntimeError: Trying to backward through the graph a second
             # time`` when the closure is re-evaluated.
@@ -327,7 +327,7 @@ class APTS_Base(Optimizer):
             # ``loss`` can be reused by the trust-region solver for multiple
             # gradient evaluations.  Retaining the graph avoids the
             # "backward through the graph a second time" runtime error when
-            # the closure is invoked repeatedly within a single optimisation
+            # the closure is invoked repeatedly within a single optimization
             # step.
             loss.backward(retain_graph=True)
             self.loc_grad_evals += 1

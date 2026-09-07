@@ -13,7 +13,7 @@ def get_device(device=None):
     if device is not None:
         return device
 
-    # If distributed is initialised, respect its backend.
+    # If distributed is initialized, respect its backend.
     if dist.is_initialized():
         backend = dist.get_backend()
         if backend == "gloo":
@@ -26,7 +26,7 @@ def get_device(device=None):
             else "cpu"
         )
 
-    # Dist not initialised -> prefer CUDA if available
+    # Dist not initialized -> prefer CUDA if available
     return f"cuda:{torch.cuda.current_device()}" if torch.cuda.is_available() else "cpu"
 
 

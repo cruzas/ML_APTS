@@ -65,7 +65,7 @@ class LSSR1_TR(Optimizer):
         # Ensure at least one parameter is provided
         param_list = list(params)
         if not param_list:
-            raise ValueError("Optimiser got an empty parameter list")
+            raise ValueError("Optimizer got an empty parameter list")
 
         # Only lr remains in defaults
         super().__init__(param_list, {"lr": lr})
@@ -359,7 +359,7 @@ class LSSR1_TR(Optimizer):
                 # Check curvature condition
                 if abs(dphi_j) <= -c_2 * dphi_0:
                     return alpha_j, phi_j, grad_j
-                # If derivative signs imply we passed the minimiser
+                # If derivative signs imply we passed the minimizer
                 if dphi_j * (alpha_hi - alpha_lo) >= 0:
                     alpha_hi, phi_hi, dphi_hi = alpha_lo, phi_lo, dphi_lo
                 # Move lower bound up
@@ -497,7 +497,7 @@ class LSSR1_TR(Optimizer):
 
     def step(self, closure: Callable[[], Tensor], **_) -> tuple[float, float]:
         """
-        Perform a single optimisation step.
+        Perform a single optimization step.
         Returns tuple (new_loss, flat_gradient).
         """
         # Evaluate or retrieve precomputed loss and gradient
@@ -566,7 +566,7 @@ class LSSR1_TR(Optimizer):
         vk = st["flat_vk"]
         # vk <- mu*vk + (w_k - w_{k-1}). This used to read st["old_wk"] after it
         # had already been reassigned to wk a few lines above, so the increment
-        # was identically zero: vk stayed at its zero initialisation forever and
+        # was identically zero: vk stayed at its zero initialization forever and
         # the momentum term never contributed anything.
         if prev_wk is not None:
             vk.mul_(self.mu).add_(wk - prev_wk)
@@ -635,7 +635,7 @@ class LSSR1_TR(Optimizer):
             # rho was pinned at 0.0 -- which is below tau_2, so the radius was
             # shrunk on every single iteration regardless of how well the step
             # had actually done. delta collapsed to min_delta within a dozen
-            # iterations and the method stalled short of the minimiser.
+            # iterations and the method stalled short of the minimizer.
             rho = (loss - new_loss) / pred_red if (alpha > 0 and pred_red > 0) else 0.0
 
         # Use cached norm if available and step is just scaled version

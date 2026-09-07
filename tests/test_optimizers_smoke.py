@@ -2,16 +2,16 @@
 
 The point of this module is coverage of the *execution path*. Each optimizer is
 driven for a fixed number of iterations on two textbook problems whose exact
-minimisers are known in closed form:
+minimizers are known in closed form:
 
-    Rosenbrock   f(x, y) = (1 - x)^2 + 100 (y - x^2)^2      minimiser (1, 1), f* = 0
-    SPD quadratic f(w)   = (w - w*)^T diag(1, 5) (w - w*)   minimiser (1, 2), f* = 0
+    Rosenbrock   f(x, y) = (1 - x)^2 + 100 (y - x^2)^2      minimizer (1, 1), f* = 0
+    SPD quadratic f(w)   = (w - w*)^T diag(1, 5) (w - w*)   minimizer (1, 2), f* = 0
 
 Rosenbrock's curved, ill-conditioned valley is the standard stress case; the
 quadratic is the easy control, so a method that fails on it is definitely broken
 rather than merely under-iterated.
 
-The four optimizers here minimise a function directly. The APTS family
+The four optimizers here minimize a function directly. The APTS family
 (``apts_d``, ``apts_p``, ``apts_ip``, ``apts_pinn``) takes ``step(inputs, labels)``
 against a model and criterion instead, so it needs a different harness and is
 covered in ``test_apts_smoke.py``.
@@ -175,7 +175,7 @@ def test_optimizer_runs_and_reduces_objective(name, problem):
     ],
 )
 def test_converges_on_quadratic(name, tol):
-    """The SPD quadratic has a unique minimiser at (1, 2)."""
+    """The SPD quadratic has a unique minimizer at (1, 2)."""
     _, final, w = _run(name, "quadratic", iters=500)
 
     assert final < tol, f"{name} did not reach the minimum: f = {final}"
@@ -194,7 +194,7 @@ def test_makes_substantial_progress_on_rosenbrock(name):
 
 
 def test_tradam_solves_rosenbrock_given_enough_iterations():
-    """With a longer budget TRAdam reaches the Rosenbrock minimiser (1, 1)."""
+    """With a longer budget TRAdam reaches the Rosenbrock minimizer (1, 1)."""
     _, final, w = _run("tradam", "rosenbrock", iters=2000)
 
     assert final < 1e-4, f"expected convergence, got f = {final}"
@@ -212,14 +212,14 @@ def test_tradam_solves_rosenbrock_given_enough_iterations():
 #
 #   * OBS took a Cholesky factor of Psi^T Psi. Psi loses column rank whenever
 #     the memory outgrows the problem dimension or the iterates stop varying,
-#     and Psi^T Psi squares the condition number, so the factorisation failed
+#     and Psi^T Psi squares the condition number, so the factorization failed
 #     long before Psi was numerically singular. It now uses a rank-revealing
 #     eigendecomposition (see dd4ml/solvers/obs.py).
 #   * ComputeSBySMW dropped the 1/tau factor on the Woodbury update term, so
 #     every step it produced was wrong -- verified against an exact dense
 #     trust-region solve in tests/test_obs_solver.py.
 #
-# The second bug was hidden behind the first: fixing only the factorisation
+# The second bug was hidden behind the first: fixing only the factorization
 # made the optimizers diverge instead of crash.
 
 
@@ -246,7 +246,7 @@ def test_second_order_paths(name, problem):
 def test_second_order_beats_first_order_on_the_quadratic(name):
     """Curvature information should pay for itself on a quadratic.
 
-    All three land on the exact minimiser here.
+    All three land on the exact minimizer here.
     """
     _, first_order, _ = _run(name, "quadratic", iters=500)
     _, second_order, w = _run(name, "quadratic", iters=500, second_order=True)
@@ -261,7 +261,7 @@ def test_second_order_beats_first_order_on_the_quadratic(name):
 
 @pytest.mark.parametrize("name", ["asntr", "lssr1_tr"])
 def test_second_order_solves_rosenbrock(name):
-    """ASNTR and LSSR1_TR reach the Rosenbrock minimiser exactly.
+    """ASNTR and LSSR1_TR reach the Rosenbrock minimizer exactly.
 
     Their first-order modes only get f down to ~0.2 and ~2e-3 respectively in
     the same budget. TR is excluded: it reaches f ~ 5e-3, a large improvement on

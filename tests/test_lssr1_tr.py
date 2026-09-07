@@ -4,7 +4,7 @@ LSSR1_TR is a trust-region method with a strong Wolfe line search layered on
 top: the trust region sets the direction and scale, the line search picks the
 step length along it, and a heavy-ball term carries momentum between steps.
 
-Three defects made it stall well short of the minimiser even after LSR1 and OBS
+Three defects made it stall well short of the minimizer even after LSR1 and OBS
 were repaired. Each is pinned below, because each is silent -- the optimizer
 still ran and still reduced the objective a little, so nothing failed loudly.
 """
@@ -20,15 +20,15 @@ DTYPE = torch.float64
 
 
 def _quadratic_problem(n=10, seed=0):
-    """SPD quadratic with a known minimiser, well conditioned by construction."""
+    """SPD quadratic with a known minimizer, well conditioned by construction."""
     gen = torch.Generator().manual_seed(seed)
     A = torch.rand(n, n, generator=gen, dtype=DTYPE)
     Q = A @ A.T + n * torch.eye(n, dtype=DTYPE)
-    minimiser = torch.arange(1.0, n + 1, dtype=DTYPE) / n
+    minimizer = torch.arange(1.0, n + 1, dtype=DTYPE) / n
     w = torch.nn.Parameter(torch.zeros(n, dtype=DTYPE))
 
     def objective():
-        diff = w - minimiser
+        diff = w - minimizer
         return 0.5 * diff @ Q @ diff
 
     def closure(compute_grad=False):
@@ -39,7 +39,7 @@ def _quadratic_problem(n=10, seed=0):
             loss.backward()
         return loss.detach()
 
-    return w, objective, closure, minimiser
+    return w, objective, closure, minimizer
 
 
 def _optimizer(w, **kw):
@@ -127,7 +127,7 @@ def test_momentum_term_accumulates():
 
     ``vk <- mu*vk + (w_k - w_{k-1})`` read ``st["old_wk"]`` after it had been
     reassigned to the current iterate a few lines earlier, so the increment was
-    identically zero. vk stayed at its zero initialisation forever and the
+    identically zero. vk stayed at its zero initialization forever and the
     heavy-ball term contributed nothing.
     """
     w, objective, closure, _ = _quadratic_problem()
@@ -157,8 +157,8 @@ def test_momentum_is_disabled_by_mu_zero():
 
 
 def test_converges_on_a_quadratic():
-    """End to end: all three fixes together reach the known minimiser."""
-    w, objective, closure, minimiser = _quadratic_problem()
+    """End to end: all three fixes together reach the known minimizer."""
+    w, objective, closure, minimizer = _quadratic_problem()
     opt = _optimizer(w)
 
     initial = float(objective().detach())
@@ -166,6 +166,6 @@ def test_converges_on_a_quadratic():
     final = float(objective().detach())
 
     assert final < 1e-12, f"did not converge: {initial} -> {final}"
-    assert torch.allclose(w.detach(), minimiser, atol=1e-6), (
-        f"converged to {w.detach()} instead of {minimiser}"
+    assert torch.allclose(w.detach(), minimizer, atol=1e-6), (
+        f"converged to {w.detach()} instead of {minimizer}"
     )

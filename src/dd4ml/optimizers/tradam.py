@@ -84,7 +84,7 @@ class TRAdam(Optimizer):
                     p.add_(self._step_buf[s:e].view(self.shapes[i]) * sign)
 
     def step(self, closure=None) -> None | float:
-        """Perform a single optimisation step."""
+        """Perform a single optimization step."""
         self.t += 1
         loss = closure() if closure is not None else None
         grad = self._flat_grad()

@@ -4,7 +4,7 @@ make_scaling_tables.py
 
 Generate summary tables (mean ± std, sample count, speedup, efficiency—and accuracy
 for selected datasets) for strong and weak scaling across specified batch sizes
-and datasets, grouping by optimiser and a parallelism key.
+and datasets, grouping by optimizer and a parallelism key.
 
 New:
 - Reuses on-disk caches produced by time_series_grid.py when available:

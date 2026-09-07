@@ -9,7 +9,7 @@ import wandb
 
 
 def _format_axis_name(name: str) -> str:
-    # Make labels nicer: replace separators with spaces and normalise whitespace
+    # Make labels nicer: replace separators with spaces and normalize whitespace
     return re.sub(r"\s+", " ", re.sub(r"[._/]+", " ", name.strip()))
 
 

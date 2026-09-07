@@ -127,7 +127,7 @@ def main(
         # make group_cols reusable by converting zip to list
         group_cols = list(zip(["learning_rate", "batch_size"], ["lr", "bs"]))
         table = prepare_hyperparam_table(gdf, group_cols)
-        # for each bs: find lr that minimises loss_mean and that maximises acc_mean
+        # for each bs: find lr that minimizes loss_mean and that maximizes acc_mean
         best = (
             table.groupby("bs")
             .apply(
