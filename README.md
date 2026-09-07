@@ -50,7 +50,7 @@ The methods implemented here are described in the following papers:
   Submitted for review.
 
 ## Requirements
-See ``pyproject.toml`` file. 
+See ``pyproject.toml`` file.
 
 ## Installation
 This project is still in development. To install it in editable mode, you can run:
@@ -98,13 +98,13 @@ enabled). `TESTS_RUNPATH` is a legacy name from when these scripts lived under
 [experiments/README.md](experiments/README.md) for the details and for how to
 switch to `EXPERIMENTS_RUNPATH` instead.
 
-Note: 
+Note:
 - The code works with or without wandb. If you need it, make sure to install wandb accordingly.
 - The ```Factory``` class defined in ```src/dd4ml/utility/factory.py``` allows you to dynamically add new classes, datasets, etc.
 - Ensure that the configured ```batch_size``` is at least the number of processes (```world_size```). If it is smaller, each process defaults to a per-process batch size of 1.
 
 ## Structure
-This library is meant to be general. 
+This library is meant to be general.
 
 The repository is laid out as follows:
 - `src/dd4ml` — the installable library
@@ -114,7 +114,7 @@ The repository is laid out as follows:
 
 The src folder is structured as follows:
 - datasets (for processing data in rawdata)
-- models 
+- models
 - optimizers
 - pmw
 - utility
@@ -139,4 +139,4 @@ You will need your API key: https://wandb.ai/authorize
 Once you have done this, your credentials are saved. For more information, please consult: https://docs.wandb.ai/quickstart/
 
 ## Funding
-This work was initially supported by the Swiss Platform for Advanced Scientific Computing (PASC) project **ExaTrain** (funding periods 2017-2021 and 2021-2024) and by the Swiss National Science Foundation through the projects "ML<sup>2</sup> -- Multilevel and Domain Decomposition Methods for Machine Learning" (197041) and "Multilevel training of DeepONets -- multiscale and multiphysics applications" (206745). 
+This work was initially supported by the Swiss Platform for Advanced Scientific Computing (PASC) project **ExaTrain** (funding periods 2017-2021 and 2021-2024) and by the Swiss National Science Foundation through the projects "ML<sup>2</sup> -- Multilevel and Domain Decomposition Methods for Machine Learning" (197041) and "Multilevel training of DeepONets -- multiscale and multiphysics applications" (206745).
