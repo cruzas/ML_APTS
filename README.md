@@ -50,6 +50,10 @@ number 10⁶, where `f(w*) = 0` exactly, so results are measured against the tru
 rather than against a loss curve. Both baselines get a learning-rate sweep and
 are scored at their best, so nothing hinges on a badly chosen step size.
 
+`SGD` and `Adam` are the `torch.optim` implementations; **`TR` is this
+library's trust-region method**, with a limited-memory SR1 model of the
+curvature.
+
 ```
   1. Does the ill-conditioning align with the coordinate axes?
      Hessian                         SGD       Adam           TR

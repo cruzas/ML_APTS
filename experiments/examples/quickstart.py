@@ -145,7 +145,8 @@ def main() -> None:
         f"f(w) = 0.5 (w - w*)^T A (w - w*),  n = {n},  condition number = {kappa:.0e}"
     )
     print(f"optimal value f(w*) = 0;  {args.iterations} iterations;  seed {args.seed}")
-    print("baselines are swept over learning rates and scored at their best\n")
+    print("baselines are swept over learning rates and scored at their best")
+    print("SGD and Adam are torch.optim; TR is this library's trust-region method\n")
 
     print("  1. Does the ill-conditioning align with the coordinate axes?")
     print(f"     {'Hessian':<24} {'SGD':>10} {'Adam':>10} {'TR':>12}")
@@ -177,10 +178,13 @@ def main() -> None:
     # shared log axis, so the view is clipped to a readable window. Curves that
     # leave it simply run off the top or bottom edge.
     low, high = 1e-25, 1e8
+    legend_names = {"TR": "TR (trust-region)"}
     plt.figure(figsize=(7, 4.5))
     for label, history in curves.items():
         series = [min(max(v, low), high) if v == v else float("nan") for v in history]
-        plt.semilogy(series, lw=2, label=f"{label} (best of sweep)")
+        plt.semilogy(
+            series, lw=2, label=f"{legend_names.get(label, label)}, best of sweep"
+        )
     plt.ylim(low, high)
     plt.xlabel("iteration")
     plt.ylabel("$f(w)$   (optimum $= 0$)")
